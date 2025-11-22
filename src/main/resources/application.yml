@@ -1,0 +1,17 @@
+spring:
+  config:
+    import:
+      - optional:file:.env[.properties]
+  application:
+    name: spring-house
+  mvc:
+    servlet:
+      path: /api
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}
+    name: ${DB_NAME:spring_house_db}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASS:12345}
+
+server:
+  port: ${PORT:8080}

@@ -1,0 +1,11 @@
+services:
+  postgres:
+    image: postgres:18
+    container_name: db
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASS}
+      TZ: ${DB_ZONE}
+    ports:
+      - '5432:5432'
