@@ -8,10 +8,26 @@ spring:
     servlet:
       path: /api
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}
-    name: ${DB_NAME:spring_house_db}
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:spring_house_db}
     username: ${DB_USER:postgres}
-    password: ${DB_PASS:12345}
+    password: ${DB_PASS}
+  data:
+    redis:
+      host: ${CACHE_HOST:localhost}
+      port: ${CACHE_PORT:6379}
+      username: ${CACHE_USER:default}
+      password: ${CACHE_PASS}
 
 server:
   port: ${PORT:8080}
+
+app:
+  client:
+    origin: ${CLIENT_ORIGIN}
+
+security:
+  access-token:
+    secret-key: ${AT_SK}
+    expiration-time: ${AT_ET}
+  refresh-token:
+    expiration-time: ${RT_ET}
