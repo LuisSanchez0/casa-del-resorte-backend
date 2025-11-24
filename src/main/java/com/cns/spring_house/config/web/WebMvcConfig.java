@@ -6,7 +6,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
-import com.cns.spring_house.config.ClientProperties;
+import com.cns.spring_house.config.properties.ClientProperties;
 
 import lombok.RequiredArgsConstructor;
 

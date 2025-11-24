@@ -15,7 +15,7 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class SecurityConfig {
 
-    private final JwtAuthenticationConverter converter;
+    private final JwtAuthenticationConverter authenticationConverter;
 
     @Bean
     SecurityFilterChain customSecurityFilterChain(HttpSecurity security) {
@@ -32,7 +32,8 @@ public class SecurityConfig {
                 .sessionManagement(session -> session
                         .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .oauth2ResourceServer(oauth -> oauth
-                        .jwt(jwt -> jwt.jwtAuthenticationConverter(converter)));
+                        .jwt(jwt -> jwt
+                                .jwtAuthenticationConverter(authenticationConverter)));
         return security.build();
     }
 

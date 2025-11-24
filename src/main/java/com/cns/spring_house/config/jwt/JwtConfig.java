@@ -13,44 +13,41 @@ import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 
-import com.cns.spring_house.config.SecurityProperties;
+import com.cns.spring_house.config.properties.SecurityProperties;
 import com.nimbusds.jose.jwk.source.ImmutableSecret;
 
-import lombok.RequiredArgsConstructor;
-
 @Configuration
-@RequiredArgsConstructor
 public class JwtConfig {
 
-    private final SecurityProperties properties;
+    private final SecretKey KEY;
+
+    public JwtConfig(SecurityProperties properties) {
+        this.KEY = new SecretKeySpec(
+                properties.getAccessToken().getSecretKey().getBytes(),
+                MacAlgorithm.HS384.name());
+    }
 
     @Bean
     JwtEncoder customJwtEncoder() {
-        SecretKey key = new SecretKeySpec(
-                properties.getAccessToken().getSecretKey().getBytes(),
-                MacAlgorithm.HS384.name());
-        return new NimbusJwtEncoder(new ImmutableSecret<>(key));
+        return new NimbusJwtEncoder(new ImmutableSecret<>(this.KEY));
     }
 
     @Bean
     JwtDecoder customJwtDecoder() {
-        SecretKey key = new SecretKeySpec(
-                properties.getAccessToken().getSecretKey().getBytes(),
-                MacAlgorithm.HS384.name());
         return NimbusJwtDecoder
-                .withSecretKey(key)
+                .withSecretKey(this.KEY)
                 .macAlgorithm(MacAlgorithm.HS384)
                 .build();
     }
 
     @Bean
     JwtAuthenticationConverter customJwtAuthenticationConverter() {
-        JwtGrantedAuthoritiesConverter authoritiesConverter = new JwtGrantedAuthoritiesConverter();
-        authoritiesConverter.setAuthoritiesClaimName("role");
-        authoritiesConverter.setAuthorityPrefix("ROLE_");
-        JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
-        converter.setJwtGrantedAuthoritiesConverter(authoritiesConverter);
-        return converter;
+        JwtGrantedAuthoritiesConverter grantedAuthoritiesConverter = new JwtGrantedAuthoritiesConverter();
+        grantedAuthoritiesConverter.setAuthoritiesClaimName("role");
+        grantedAuthoritiesConverter.setAuthorityPrefix("ROLE_");
+        JwtAuthenticationConverter authenticationConverter = new JwtAuthenticationConverter();
+        authenticationConverter.setJwtGrantedAuthoritiesConverter(grantedAuthoritiesConverter);
+        return authenticationConverter;
     }
 
 }

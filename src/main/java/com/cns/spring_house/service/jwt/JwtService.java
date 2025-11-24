@@ -1,7 +1,9 @@
 package com.cns.spring_house.service.jwt;
 
+import java.util.UUID;
+
 public interface JwtService {
 
-    String generateToken(String username, String role);
+    String generateToken(UUID userId, String role);
 
 }
