@@ -8,7 +8,7 @@ import org.mapstruct.NullValuePropertyMappingStrategy;
 
 import com.cns.spring_house.dto.useraccount.CreateUserAccountRequestDTO;
 import com.cns.spring_house.dto.useraccount.UpdateUserAccountRequestDTO;
-import com.cns.spring_house.dto.useraccount.UserAccountReponseDTO;
+import com.cns.spring_house.dto.useraccount.UserAccountResponseDTO;
 import com.cns.spring_house.model.useraccount.UserAccount;
 
 @Mapper(componentModel = "spring")
@@ -18,6 +18,7 @@ public interface UserAccountMapper {
     @Mapping(target = "isActive", ignore = true)
     @Mapping(target = "employee", ignore = true)
     @Mapping(target = "role", ignore = true)
+    @Mapping(target = "password", ignore = true)
     @Mapping(target = "createdAt", ignore = true)
     @Mapping(target = "updatedAt", ignore = true)
     UserAccount toUserAccount(CreateUserAccountRequestDTO requestDTO);
@@ -31,6 +32,6 @@ public interface UserAccountMapper {
     @Mapping(target = "updatedAt", ignore = true)
     void updateUserAccountFromDTO(UpdateUserAccountRequestDTO requestDTO, @MappingTarget UserAccount userAccount);
 
-    UserAccountReponseDTO toResponse(UserAccount userAccount);
+    UserAccountResponseDTO toResponse(UserAccount userAccount);
 
 }

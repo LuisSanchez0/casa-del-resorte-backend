@@ -6,21 +6,29 @@ import java.util.concurrent.TimeUnit;
 
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.DisabledException;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.cns.spring_house.config.properties.SecurityProperties;
 import com.cns.spring_house.dto.auth.LoginRequestDTO;
+import com.cns.spring_house.dto.useraccount.UserAccountResponseDTO;
+import com.cns.spring_house.exception.EntityNotFoundException;
+import com.cns.spring_house.mapper.useraccount.UserAccountMapper;
 import com.cns.spring_house.model.useraccount.UserAccount;
 import com.cns.spring_house.repository.redis.RedisRepository;
 import com.cns.spring_house.repository.useraccount.UserAccountRepository;
 import com.cns.spring_house.service.jwt.JwtService;
+import com.cns.spring_house.util.RedisKeys;
 import com.cns.spring_house.util.Token;
 
 import lombok.RequiredArgsConstructor;
 import tools.jackson.databind.ObjectMapper;
 
 @Service
+@Transactional
 @RequiredArgsConstructor
 public class AuthServiceImpl implements AuthService {
 
@@ -30,6 +38,7 @@ public class AuthServiceImpl implements AuthService {
 	private final SecurityProperties securityProperties;
 	private final PasswordEncoder passwordEncoder;
 	private final ObjectMapper objectMapper;
+	private final UserAccountMapper mapper;
 
 	@Override
 	public Map<String, String> login(LoginRequestDTO requestDTO) {
@@ -37,7 +46,7 @@ public class AuthServiceImpl implements AuthService {
 				.findByUsername(requestDTO.username())
 				.orElseThrow(() -> new BadCredentialsException(
 						"Nombre de usuario o contraseña incorrectos"));
-		if (!passwordEncoder.matches(requestDTO.passoword(), userAccount.getPassword())) {
+		if (!passwordEncoder.matches(requestDTO.password(), userAccount.getPassword())) {
 			throw new BadCredentialsException(
 					"Nombre de usuario o contraseña incorrectos");
 		}
@@ -46,7 +55,8 @@ public class AuthServiceImpl implements AuthService {
 
 	@Override
 	public Map<String, String> refresh(String refreshToken) {
-		Object value = redisRepository.findValueAndDelete(refreshToken);
+		String key = RedisKeys.REFRESH_TOKEN + refreshToken;
+		Object value = redisRepository.findValueAndDelete(key);
 		if (value == null) {
 			throw new BadCredentialsException("El token es invalido");
 		}
@@ -64,7 +74,8 @@ public class AuthServiceImpl implements AuthService {
 
 	@Override
 	public void logout(String refreshToken) {
-		redisRepository.delete(refreshToken);
+		String key = RedisKeys.REFRESH_TOKEN + refreshToken;
+		redisRepository.delete(key);
 	}
 
 	private Map<String, String> buildAuthTokens(UserAccount userAccount) {
@@ -75,14 +86,28 @@ public class AuthServiceImpl implements AuthService {
 				userAccount.getId(),
 				userAccount.getRole().getName());
 		String refreshToken = Token.generateSecureToken(32);
+		String key = RedisKeys.REFRESH_TOKEN + refreshToken;
 		redisRepository.save(
-				refreshToken,
+				key,
 				userAccount.getId(),
 				securityProperties.getRefreshToken().getExpirationTime(),
 				TimeUnit.MILLISECONDS);
 		return Map.of(
 				"accessToken", accessToken,
 				"refreshToken", refreshToken);
+	}
+
+	@Override
+	public UserAccountResponseDTO getUserAccount() {
+		JwtAuthenticationToken authenticationToken = (JwtAuthenticationToken) SecurityContextHolder
+				.getContext()
+				.getAuthentication();
+		UUID id = UUID.fromString(authenticationToken.getName());
+		UserAccount userAccount = userAccountRepository
+				.findById(id)
+				.orElseThrow(() -> new EntityNotFoundException(
+						"No existe la cuenta de usuario solicitada"));
+		return mapper.toResponse(userAccount);
 	}
 
 }

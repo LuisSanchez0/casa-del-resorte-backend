@@ -6,10 +6,20 @@ import java.util.stream.Collectors;
 
 import org.springframework.validation.FieldError;
 
-public class NotValidException {
+public class Exception {
 
-    private NotValidException() {
+    private Exception() {
 
+    }
+
+    public static boolean isCausedBy(Throwable cause, Class<? extends Throwable> exceptionType) {
+        while (cause != null) {
+            if (exceptionType.isInstance(cause)) {
+                return true;
+            }
+            cause = cause.getCause();
+        }
+        return false;
     }
 
     public static Map<String, String> extractFieldErrors(List<FieldError> errors) {

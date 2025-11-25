@@ -23,6 +23,6 @@ public class Workshop extends Auditable {
     private UUID id;
     private String name;
     private String address;
-    private Boolean isActive;
+    private Boolean isActive = true;
 
 }

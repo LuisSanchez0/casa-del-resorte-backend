@@ -5,6 +5,7 @@ import java.util.UUID;
 
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.cns.spring_house.dto.workshop.CreateWorkshopRequestDTO;
 import com.cns.spring_house.dto.workshop.SearchWorkshopRequestDTO;
@@ -19,6 +20,7 @@ import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 
 @Service
+@Transactional
 @RequiredArgsConstructor
 public class WorkshopServiceImpl implements WorkshopService {
 

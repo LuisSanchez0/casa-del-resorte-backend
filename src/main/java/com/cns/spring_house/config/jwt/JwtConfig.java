@@ -15,6 +15,8 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtGra
 
 import com.cns.spring_house.config.properties.SecurityProperties;
 import com.nimbusds.jose.jwk.source.ImmutableSecret;
+import com.nimbusds.jose.jwk.source.JWKSource;
+import com.nimbusds.jose.proc.SecurityContext;
 
 @Configuration
 public class JwtConfig {
@@ -24,12 +26,13 @@ public class JwtConfig {
     public JwtConfig(SecurityProperties properties) {
         this.KEY = new SecretKeySpec(
                 properties.getAccessToken().getSecretKey().getBytes(),
-                MacAlgorithm.HS384.name());
+                MacAlgorithm.HS384.getName());
     }
 
     @Bean
     JwtEncoder customJwtEncoder() {
-        return new NimbusJwtEncoder(new ImmutableSecret<>(this.KEY));
+        JWKSource<SecurityContext> source = new ImmutableSecret<>(this.KEY);
+        return new NimbusJwtEncoder(source);
     }
 
     @Bean

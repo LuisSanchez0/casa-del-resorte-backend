@@ -4,15 +4,14 @@ import java.util.List;
 import java.util.UUID;
 
 import org.springframework.data.jpa.domain.Specification;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.cns.spring_house.dto.useraccount.CreateUserAccountRequestDTO;
 import com.cns.spring_house.dto.useraccount.SearchUserAccountRequestDTO;
 import com.cns.spring_house.dto.useraccount.UpdateUserAccountRequestDTO;
-import com.cns.spring_house.dto.useraccount.UserAccountReponseDTO;
+import com.cns.spring_house.dto.useraccount.UserAccountResponseDTO;
 import com.cns.spring_house.exception.EntityAlreadyExistsException;
 import com.cns.spring_house.exception.EntityNotFoundException;
 import com.cns.spring_house.mapper.useraccount.UserAccountMapper;
@@ -27,6 +26,7 @@ import com.cns.spring_house.repository.useraccount.UserAccountSpecs;
 import lombok.RequiredArgsConstructor;
 
 @Service
+@Transactional
 @RequiredArgsConstructor
 public class UserAccountServiceImpl implements UserAccountService {
 
@@ -37,7 +37,7 @@ public class UserAccountServiceImpl implements UserAccountService {
     private final PasswordEncoder passwordEncoder;
 
     @Override
-    public List<UserAccountReponseDTO> getAll(
+    public List<UserAccountResponseDTO> getAll(
             SearchUserAccountRequestDTO requestDTO) {
         Specification<UserAccount> specs = Specification.allOf(
                 UserAccountSpecs.hasActive(requestDTO.active()),
@@ -52,11 +52,7 @@ public class UserAccountServiceImpl implements UserAccountService {
     }
 
     @Override
-    public UserAccountReponseDTO get() {
-        JwtAuthenticationToken authenticationToken = (JwtAuthenticationToken) SecurityContextHolder
-                .getContext()
-                .getAuthentication();
-        UUID id = UUID.fromString(authenticationToken.getName());
+    public UserAccountResponseDTO get(UUID id) {
         UserAccount userAccount = userAccountRepository
                 .findById(id)
                 .orElseThrow(() -> new EntityNotFoundException(
@@ -65,16 +61,7 @@ public class UserAccountServiceImpl implements UserAccountService {
     }
 
     @Override
-    public UserAccountReponseDTO get(UUID id) {
-        UserAccount userAccount = userAccountRepository
-                .findById(id)
-                .orElseThrow(() -> new EntityNotFoundException(
-                        "No existe la cuenta de usuario solicitada"));
-        return mapper.toResponse(userAccount);
-    }
-
-    @Override
-    public UserAccountReponseDTO create(CreateUserAccountRequestDTO requestDTO) {
+    public UserAccountResponseDTO create(CreateUserAccountRequestDTO requestDTO) {
         if (userAccountRepository.existsByEmployeeId(requestDTO.employee())) {
             throw new EntityAlreadyExistsException(
                     "El empleado especificado ya tiene una cuenta de usuario");
@@ -94,12 +81,13 @@ public class UserAccountServiceImpl implements UserAccountService {
                 .orElseThrow(() -> new EntityNotFoundException(
                         "No existe el role especificado"));
         userAccount.setRole(role);
+        userAccount.setPassword(passwordEncoder.encode(requestDTO.password()));
         userAccount = userAccountRepository.save(userAccount);
         return mapper.toResponse(userAccount);
     }
 
     @Override
-    public UserAccountReponseDTO update(UUID id, UpdateUserAccountRequestDTO requestDTO) {
+    public UserAccountResponseDTO update(UUID id, UpdateUserAccountRequestDTO requestDTO) {
         UserAccount userAccount = userAccountRepository
                 .findById(id)
                 .orElseThrow(() -> new EntityNotFoundException(

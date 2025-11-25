@@ -5,6 +5,7 @@ import java.util.UUID;
 
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.cns.spring_house.dto.employee.CreateEmployeeRequestDTO;
 import com.cns.spring_house.dto.employee.EmployeeResponseDTO;
@@ -22,6 +23,7 @@ import com.cns.spring_house.repository.workshop.WorkshopRespository;
 import lombok.RequiredArgsConstructor;
 
 @Service
+@Transactional
 @RequiredArgsConstructor
 public class EmployeeServiceImpl implements EmployeeService {
 
@@ -83,7 +85,8 @@ public class EmployeeServiceImpl implements EmployeeService {
         if (requestDTO.workshop() != null) {
             Workshop workshop = workshopRespository
                     .findById(requestDTO.workshop())
-                    .orElseThrow(() -> new EntityNotFoundException("No existe el taller especificado"));
+                    .orElseThrow(() -> new EntityNotFoundException(
+                            "No existe el taller especificado"));
             employee.setWorkshop(workshop);
         }
         employee = employeeRepository.save(employee);

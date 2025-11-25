@@ -34,6 +34,6 @@ public class UserAccount extends Auditable {
     private Employee employee;
     private String username;
     private String password;
-    private Boolean isActive;
+    private Boolean isActive = true;
 
 }

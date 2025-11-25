@@ -6,18 +6,16 @@ import java.util.UUID;
 import com.cns.spring_house.dto.useraccount.CreateUserAccountRequestDTO;
 import com.cns.spring_house.dto.useraccount.SearchUserAccountRequestDTO;
 import com.cns.spring_house.dto.useraccount.UpdateUserAccountRequestDTO;
-import com.cns.spring_house.dto.useraccount.UserAccountReponseDTO;
+import com.cns.spring_house.dto.useraccount.UserAccountResponseDTO;
 
 public interface UserAccountService {
 
-    List<UserAccountReponseDTO> getAll(SearchUserAccountRequestDTO requestDTO);
+    List<UserAccountResponseDTO> getAll(SearchUserAccountRequestDTO requestDTO);
 
-    UserAccountReponseDTO get();
+    UserAccountResponseDTO get(UUID id);
 
-    UserAccountReponseDTO get(UUID id);
+    UserAccountResponseDTO create(CreateUserAccountRequestDTO requestDTO);
 
-    UserAccountReponseDTO create(CreateUserAccountRequestDTO requestDTO);
-
-    UserAccountReponseDTO update(UUID id, UpdateUserAccountRequestDTO requestDTO);
+    UserAccountResponseDTO update(UUID id, UpdateUserAccountRequestDTO requestDTO);
 
 }

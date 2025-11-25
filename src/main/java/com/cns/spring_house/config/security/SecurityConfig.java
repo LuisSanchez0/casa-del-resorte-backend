@@ -30,7 +30,8 @@ public class SecurityConfig {
                                 "/v3/api-docs/**")
                         .permitAll()
                         .anyRequest()
-                        .authenticated())
+                        .permitAll())
+                // .authenticated())
                 .sessionManagement(session -> session
                         .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .oauth2ResourceServer(oauth -> oauth
@@ -43,6 +44,5 @@ public class SecurityConfig {
     PasswordEncoder customPasswordEncoder() {
         return new BCryptPasswordEncoder();
     }
-
 
 }

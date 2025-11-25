@@ -4,6 +4,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.cns.spring_house.dto.auth.AuthResponseDTO;
 import com.cns.spring_house.dto.auth.LoginRequestDTO;
+import com.cns.spring_house.dto.useraccount.UserAccountResponseDTO;
 import com.cns.spring_house.service.auth.AuthService;
 import com.cns.spring_house.util.Cookie;
 
@@ -17,6 +18,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CookieValue;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -27,6 +29,14 @@ import org.springframework.web.bind.annotation.RequestMapping;
 public class AuthController {
 
     private final AuthService authService;
+
+    @GetMapping("/me")
+    public ResponseEntity<UserAccountResponseDTO> get() {
+        UserAccountResponseDTO userAccount = authService.getUserAccount();
+        return ResponseEntity
+                .status(HttpStatus.OK)
+                .body(userAccount);
+    }
 
     @PostMapping("/login")
     public ResponseEntity<AuthResponseDTO> login(

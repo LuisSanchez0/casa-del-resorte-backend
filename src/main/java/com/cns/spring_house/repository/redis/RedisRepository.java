@@ -10,7 +10,7 @@ import lombok.RequiredArgsConstructor;
 @Repository
 @RequiredArgsConstructor
 public class RedisRepository {
-    
+
     private final RedisTemplate<String, Object> template;
 
     public void save(String key, Object value, long timeToLive, TimeUnit unit) {

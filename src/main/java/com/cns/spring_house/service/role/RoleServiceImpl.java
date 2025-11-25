@@ -4,6 +4,7 @@ import java.util.List;
 
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.cns.spring_house.dto.role.RoleResponseDTO;
 import com.cns.spring_house.dto.role.SearchRoleRequestDTO;
@@ -15,6 +16,7 @@ import com.cns.spring_house.repository.role.RoleSpecs;
 import lombok.RequiredArgsConstructor;
 
 @Service
+@Transactional
 @RequiredArgsConstructor
 public class RoleServiceImpl implements RoleService {
 

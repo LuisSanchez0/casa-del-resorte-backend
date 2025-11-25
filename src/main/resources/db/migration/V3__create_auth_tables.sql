@@ -13,7 +13,7 @@ CREATE TABLE user_account (
     employee_id UUID NOT NULL UNIQUE,
     username VARCHAR(50) NOT NULL UNIQUE,
     password TEXT NOT NULL,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    is_active BOOLEAN NOT NULL,
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL,
     CONSTRAINT fk_user_role FOREIGN KEY (role_id) REFERENCES role(id),

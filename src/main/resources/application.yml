@@ -15,9 +15,7 @@ spring:
     redis:
       host: ${CACHE_HOST:localhost}
       port: ${CACHE_PORT:6379}
-      username: ${CACHE_USER:default}
-      password: ${CACHE_PASS}
-
+      
 server:
   port: ${PORT:8080}
 

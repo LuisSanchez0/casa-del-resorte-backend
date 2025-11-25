@@ -13,6 +13,5 @@ services:
   redis:
     image: redis:8.4
     container_name: cache
-    command: redis-server --requirepass ${CACHE_PASS}
     ports:
       - ${CACHE_PORT}:6379

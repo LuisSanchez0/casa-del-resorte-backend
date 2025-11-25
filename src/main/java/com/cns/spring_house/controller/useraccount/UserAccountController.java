@@ -6,7 +6,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.cns.spring_house.dto.useraccount.CreateUserAccountRequestDTO;
 import com.cns.spring_house.dto.useraccount.SearchUserAccountRequestDTO;
 import com.cns.spring_house.dto.useraccount.UpdateUserAccountRequestDTO;
-import com.cns.spring_house.dto.useraccount.UserAccountReponseDTO;
+import com.cns.spring_house.dto.useraccount.UserAccountResponseDTO;
 import com.cns.spring_house.service.useraccount.UserAccountService;
 
 import jakarta.validation.Valid;
@@ -28,52 +28,44 @@ import org.springframework.web.bind.annotation.RequestBody;
 @RequestMapping("/v1/user-accounts")
 public class UserAccountController {
 
-    private final UserAccountService service;
+        private final UserAccountService service;
 
-    @GetMapping
-    public ResponseEntity<List<UserAccountReponseDTO>> getAll(
-            SearchUserAccountRequestDTO requestDTO) {
-        List<UserAccountReponseDTO> userAccounts = service
-                .getAll(requestDTO);
-        return ResponseEntity
-                .status(HttpStatus.OK)
-                .body(userAccounts);
-    }
+        @GetMapping
+        public ResponseEntity<List<UserAccountResponseDTO>> getAll(
+                        SearchUserAccountRequestDTO requestDTO) {
+                List<UserAccountResponseDTO> userAccounts = service
+                                .getAll(requestDTO);
+                return ResponseEntity
+                                .status(HttpStatus.OK)
+                                .body(userAccounts);
+        }
 
-    @GetMapping("/me")
-    public ResponseEntity<UserAccountReponseDTO> get() {
-        UserAccountReponseDTO userAccount = service.get();
-        return ResponseEntity
-                .status(HttpStatus.OK)
-                .body(userAccount);
-    }
+        @GetMapping("/{id}")
+        public ResponseEntity<UserAccountResponseDTO> get(
+                        @PathVariable UUID id) {
+                UserAccountResponseDTO userAccount = service.get(id);
+                return ResponseEntity
+                                .status(HttpStatus.OK)
+                                .body(userAccount);
+        }
 
-    @GetMapping("/{id}")
-    public ResponseEntity<UserAccountReponseDTO> get(
-            @PathVariable UUID id) {
-        UserAccountReponseDTO userAccount = service.get(id);
-        return ResponseEntity
-                .status(HttpStatus.OK)
-                .body(userAccount);
-    }
+        @PostMapping
+        public ResponseEntity<UserAccountResponseDTO> create(
+                        @RequestBody @Valid CreateUserAccountRequestDTO requestDTO) {
+                UserAccountResponseDTO userAccount = service.create(requestDTO);
+                return ResponseEntity
+                                .status(HttpStatus.CREATED)
+                                .body(userAccount);
+        }
 
-    @PostMapping
-    public ResponseEntity<UserAccountReponseDTO> create(
-            @RequestBody @Valid CreateUserAccountRequestDTO requestDTO) {
-        UserAccountReponseDTO userAccount = service.create(requestDTO);
-        return ResponseEntity
-                .status(HttpStatus.CREATED)
-                .body(userAccount);
-    }
-
-    @PatchMapping("/{id}")
-    public ResponseEntity<UserAccountReponseDTO> create(
-            @PathVariable UUID id,
-            @RequestBody @Valid UpdateUserAccountRequestDTO requestDTO) {
-        UserAccountReponseDTO userAccount = service.update(id, requestDTO);
-        return ResponseEntity
-                .status(HttpStatus.OK)
-                .body(userAccount);
-    }
+        @PatchMapping("/{id}")
+        public ResponseEntity<UserAccountResponseDTO> create(
+                        @PathVariable UUID id,
+                        @RequestBody @Valid UpdateUserAccountRequestDTO requestDTO) {
+                UserAccountResponseDTO userAccount = service.update(id, requestDTO);
+                return ResponseEntity
+                                .status(HttpStatus.OK)
+                                .body(userAccount);
+        }
 
 }
