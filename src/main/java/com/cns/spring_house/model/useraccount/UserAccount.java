@@ -6,6 +6,7 @@ import org.hibernate.annotations.UuidGenerator;
 
 import com.cns.spring_house.model.audit.Auditable;
 import com.cns.spring_house.model.employee.Employee;
+import com.cns.spring_house.model.role.Role;
 
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;

@@ -1,4 +1,4 @@
-package com.cns.spring_house.model.useraccount;
+package com.cns.spring_house.model.role;
 
 import java.util.UUID;
 

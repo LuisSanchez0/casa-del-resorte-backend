@@ -1,30 +1,27 @@
-package com.cns.spring_house.service.redis;
+package com.cns.spring_house.repository.redis;
 
 import java.util.concurrent.TimeUnit;
 
 import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.stereotype.Service;
+import org.springframework.stereotype.Repository;
 
 import lombok.RequiredArgsConstructor;
 
-@Service
+@Repository
 @RequiredArgsConstructor
-public class RedisServiceImpl implements RedisService {
-
+public class RedisRepository {
+    
     private final RedisTemplate<String, Object> template;
 
-    @Override
-    public void store(String key, Object value, long timeToLive) {
+    public void save(String key, Object value, long timeToLive, TimeUnit unit) {
         template.opsForValue()
-                .set(key, value, timeToLive, TimeUnit.MILLISECONDS);
+                .set(key, value, timeToLive, unit);
     }
 
-    @Override
-    public Object getValueAndDelete(String key) {
+    public Object findValueAndDelete(String key) {
         return template.opsForValue().getAndDelete(key);
     }
 
-    @Override
     public void delete(String key) {
         template.delete(key);
     }
