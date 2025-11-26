@@ -76,7 +76,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     public ProblemDetail handleMethodArgumentTypeMismatchException(MethodArgumentTypeMismatchException e) {
-        final ProblemDetail problemDetail = ProblemDetail
+        ProblemDetail problemDetail = ProblemDetail
                 .forStatusAndDetail(HttpStatus.BAD_REQUEST, "Es necesario el parametro: " + e.getPropertyName());
         problemDetail.setTitle("Missing Required Propertie");
         problemDetail.setProperty("error_category", "Validation");
@@ -86,7 +86,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
     public ProblemDetail handleHttpRequestMethodNotSupportedException(HttpRequestMethodNotSupportedException e) {
-        final ProblemDetail problemDetail = ProblemDetail
+        ProblemDetail problemDetail = ProblemDetail
                 .forStatusAndDetail(HttpStatus.METHOD_NOT_ALLOWED, "El metodo de la solicitud no es valido");
         problemDetail.setTitle("Method Not Allowed");
         problemDetail.setProperty("error_category", "Generic");

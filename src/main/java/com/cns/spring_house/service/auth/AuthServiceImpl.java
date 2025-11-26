@@ -6,6 +6,7 @@ import java.util.concurrent.TimeUnit;
 
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.DisabledException;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
@@ -99,9 +100,12 @@ public class AuthServiceImpl implements AuthService {
 
 	@Override
 	public UserAccountResponseDTO getUserAccount() {
-		JwtAuthenticationToken authenticationToken = (JwtAuthenticationToken) SecurityContextHolder
+		Authentication authentication = SecurityContextHolder
 				.getContext()
 				.getAuthentication();
+		if (!(authentication instanceof JwtAuthenticationToken authenticationToken)) {
+			throw new BadCredentialsException("No autenticado");
+		}
 		UUID id = UUID.fromString(authenticationToken.getName());
 		UserAccount userAccount = userAccountRepository
 				.findById(id)
