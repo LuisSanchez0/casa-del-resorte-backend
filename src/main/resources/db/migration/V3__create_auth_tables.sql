@@ -16,6 +16,6 @@ CREATE TABLE user_account (
     is_active BOOLEAN NOT NULL,
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL,
-    CONSTRAINT fk_user_role FOREIGN KEY (role_id) REFERENCES role(id),
-    CONSTRAINT fk_user_employee FOREIGN KEY (employee_id) REFERENCES employee(id)
+    FOREIGN KEY (role_id) REFERENCES role(id),
+    FOREIGN KEY (employee_id) REFERENCES employee(id)
 );
