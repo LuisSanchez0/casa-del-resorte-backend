@@ -16,6 +16,8 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 
 import com.cns.spring_house.exception.EntityAlreadyExistsException;
 import com.cns.spring_house.exception.EntityNotFoundException;
+import com.cns.spring_house.exception.FileContentTypeException;
+import com.cns.spring_house.exception.FileProcessingException;
 import com.cns.spring_house.util.Exception;
 
 @RestControllerAdvice
@@ -89,6 +91,26 @@ public class GlobalExceptionHandler {
         ProblemDetail problemDetail = ProblemDetail
                 .forStatusAndDetail(HttpStatus.METHOD_NOT_ALLOWED, "El metodo de la solicitud no es valido");
         problemDetail.setTitle("Method Not Allowed");
+        problemDetail.setProperty("error_category", "Generic");
+        problemDetail.setProperty("timestamp", Instant.now());
+        return problemDetail;
+    }
+
+    @ExceptionHandler(FileContentTypeException.class)
+    public ProblemDetail handleFileContentTypeException(FileContentTypeException e) {
+        ProblemDetail problemDetail = ProblemDetail
+                .forStatusAndDetail(HttpStatus.BAD_REQUEST, e.getMessage());
+        problemDetail.setTitle("Validation Error");
+        problemDetail.setProperty("error_category", "Generic");
+        problemDetail.setProperty("timestamp", Instant.now());
+        return problemDetail;
+    }
+
+    @ExceptionHandler(FileProcessingException.class)
+    public ProblemDetail handleFileProcessingException(FileProcessingException e) {
+        ProblemDetail problemDetail = ProblemDetail
+                .forStatusAndDetail(HttpStatus.INTERNAL_SERVER_ERROR, e.getMessage());
+        problemDetail.setTitle("Failed Process");
         problemDetail.setProperty("error_category", "Generic");
         problemDetail.setProperty("timestamp", Instant.now());
         return problemDetail;

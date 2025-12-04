@@ -29,3 +29,11 @@ security:
     expiration-time: ${AT_ET}
   refresh-token:
     expiration-time: ${RT_ET}
+
+aws:
+  s3:
+    region: ${AWS_REGION:us-east-2}
+    access-key-id: ${AWS_ACCESS_KEY_ID}
+    secret-access-key: ${AWS_SECRET_ACCESS_KEY}
+    bucket:
+      name: ${AWS_BUCKET_NAME:spring-house}
