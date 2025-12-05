@@ -74,8 +74,8 @@ public class BrandServiceImpl implements BrandService {
                 throw new EntityAlreadyExistsException(
                     "Ya existe una marca con el mismo nombre");
             }
-            brand.setName(requestDTO.name());
         }
+        mapper.updateBrandFromDTO(requestDTO, brand);
         if (requestDTO.logo() != null) {
             String currentLogoKey = brand.getLogoKey();
             String newLogoKey = s3Service.uploadImage(requestDTO.logo());
