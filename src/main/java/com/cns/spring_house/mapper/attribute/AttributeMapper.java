@@ -16,15 +16,11 @@ public interface AttributeMapper {
     
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "family", ignore = true)
-    @Mapping(target = "createdAt", ignore = true)
-    @Mapping(target = "updatedAt", ignore = true)
     Attribute toAttribute(CreateAttributeRequestDTO requestDTO);
 
     @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "family", ignore = true)
-    @Mapping(target = "createdAt", ignore = true)
-    @Mapping(target = "updatedAt", ignore = true)
     void updateAttributeFromDTO(UpdateAttributeRequestDTO requestDTO, @MappingTarget Attribute attribute);
     
     AttributeResponseDTO toResponse(Attribute attribute);

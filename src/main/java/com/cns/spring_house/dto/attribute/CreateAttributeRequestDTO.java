@@ -2,8 +2,6 @@ package com.cns.spring_house.dto.attribute;
 
 import java.util.UUID;
 
-import com.cns.spring_house.model.attribute.AttributeDataType;
-
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
@@ -17,7 +15,7 @@ public record CreateAttributeRequestDTO(
         @NotNull(message = "El tipo de dato del atributo es obligatorio")
         @Pattern(regexp = "NUMBER|STRING|BOOLEAN",
                 message = "Solo se aceptan los siguientes tipos de datos: NUMBER, STRING y BOOLEAN")
-        AttributeDataType dataType,
+        String dataType,
         @NotNull(message = "Es necesario especificar si el atributo es obligatorio")
         Boolean required
 

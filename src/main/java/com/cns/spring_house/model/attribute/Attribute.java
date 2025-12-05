@@ -4,7 +4,6 @@ import java.util.UUID;
 
 import org.hibernate.annotations.UuidGenerator;
 
-import com.cns.spring_house.model.audit.Auditable;
 import com.cns.spring_house.model.family.Family;
 
 import jakarta.persistence.Entity;
@@ -19,9 +18,9 @@ import lombok.NoArgsConstructor;
 
 @Entity
 @Data
-@EqualsAndHashCode(of = "id", callSuper = false)
+@EqualsAndHashCode(of = "id")
 @NoArgsConstructor
-public class Attribute extends Auditable {
+public class Attribute {
     
     @Id
     @UuidGenerator

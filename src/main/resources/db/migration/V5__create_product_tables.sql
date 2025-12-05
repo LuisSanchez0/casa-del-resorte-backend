@@ -25,13 +25,11 @@ CREATE TABLE family (
     updated_at TIMESTAMP NOT NULL
 );
 
-CREATE TYPE attr_data_type AS ENUM ('NUMBER', 'STRING', 'BOOLEAN');
-
 CREATE TABLE attribute (
     id UUID PRIMARY KEY,
     family_id UUID NOT NULL,
     key VARCHAR(50) NOT NULL,
-    data_type attr_data_type NOT NULL,
+    data_type VARCHAR(10) NOT NULL CHECK (data_type IN ('NUMBER','STRING','BOOLEAN')),
     required boolean NOT NULL, 
     UNIQUE (family_id, key),
     FOREIGN KEY (family_id) REFERENCES family(id)
@@ -62,27 +60,23 @@ CREATE TABLE stock_item (
     FOREIGN KEY (workshop_id) REFERENCES workshop(id)
 );
 
-CREATE TYPE leaf_pack_status AS ENUM ('OPENED', 'SEALED', 'DEPLETED', 'SOLD');
-
 CREATE TABLE leaf_pack (
     id UUID PRIMARY KEY,
     product_id UUID NOT NULL,
     workshop_id UUID NOT NULL,
     original_leaf_count SMALLINT NOT NULL CHECK (original_leaf_count >= 2),
     available_leaf_count SMALLINT NOT NULL CHECK (available_leaf_count >= 0),
-    status leaf_pack_status NOT NULL,
+    status VARCHAR(15) NOT NULL CHECK (status in ('OPENED', 'SEALED', 'DEPLETED', 'SOLD')),
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL,
     FOREIGN KEY (product_id) REFERENCES product(id),
     FOREIGN KEY (workshop_id) REFERENCES workshop(id)
 );
 
-CREATE TYPE leaf_status AS ENUM ('AVAILABLE', 'SOLD', 'DISCARDED', 'IN_PACKAGE');
-
 CREATE TABLE leaf (
     id UUID PRIMARY KEY,
     leaf_pack_id UUID NOT NULL,
-    status leaf_status NOT NULL,
+    status VARCHAR(15) NOT NULL CHECK (status in ('AVAILABLE', 'SOLD', 'DISCARDED', 'IN_PACKAGE')),
     leaf_number VARCHAR(10) NOT NULL,
     width NUMERIC(10, 2) NOT NULL CHECK (width > 0),
     first_length NUMERIC(10, 2) NOT NULL CHECK (first_length > 0),
