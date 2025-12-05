@@ -45,8 +45,8 @@ public class ProductController {
     @GetMapping
     public ResponseEntity<List<ProductResponseDTO>> getAll(
             @RequestParam(required = false) Map<String, Object> filters) {
-        SearchProductRequestDTO requestDTO = SearchProductRequestDTO.from(filters);
-        List<ProductResponseDTO> products = service.getAll(requestDTO);
+        List<ProductResponseDTO> products = service.getAll(
+                SearchProductRequestDTO.from(filters));
         return ResponseEntity
                 .status(HttpStatus.OK)
                 .body(products);
