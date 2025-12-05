@@ -1,0 +1,77 @@
+package com.cns.spring_house.controller.product;
+
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.cns.spring_house.dto.product.CreateProductRequestDTO;
+import com.cns.spring_house.dto.product.ProductResponseDTO;
+import com.cns.spring_house.dto.product.SearchProductRequestDTO;
+import com.cns.spring_house.dto.product.UpdateProductRequestDTO;
+import com.cns.spring_house.service.product.ProductService;
+
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+
+@RequestMapping("/v1/products")
+@RestController
+@RequiredArgsConstructor
+public class ProductController {
+
+    private final ProductService service;
+
+    @GetMapping("/{id}")
+    public ResponseEntity<ProductResponseDTO> get(
+            @PathVariable UUID id) {
+        ProductResponseDTO product = service.get(id);
+        return ResponseEntity
+                .status(HttpStatus.OK)
+                .body(product);
+    }
+    
+
+    @GetMapping
+    public ResponseEntity<List<ProductResponseDTO>> getAll(
+            UUID family,
+            String q,
+            Map<String, Object> attributes) {
+        SearchProductRequestDTO requestDTO = new SearchProductRequestDTO(
+                q, family, attributes);
+        List<ProductResponseDTO> products = service.getAll(requestDTO);
+        return ResponseEntity
+                .status(HttpStatus.OK)
+                .body(products);
+    }
+    
+
+    @PostMapping
+    public ResponseEntity<ProductResponseDTO> create(
+            @RequestBody @Valid CreateProductRequestDTO requestDTO) {
+        ProductResponseDTO product = service.create(requestDTO);
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(product);
+    }
+    
+    @PatchMapping("/{id}")
+    public ResponseEntity<ProductResponseDTO> update(
+            @PathVariable UUID id,
+            @RequestBody UpdateProductRequestDTO requestDTO) {
+        ProductResponseDTO product = service.update(id, requestDTO);
+        return ResponseEntity
+                .status(HttpStatus.OK)
+                .body(product);
+    }
+    
+}

@@ -5,6 +5,7 @@ import java.util.UUID;
 
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.cns.spring_house.dto.family.CreateFamilyRequestDTO;
 import com.cns.spring_house.dto.family.FamilyResponseDTO;
@@ -20,6 +21,7 @@ import com.cns.spring_house.repository.family.FamilySpecs;
 import lombok.RequiredArgsConstructor;
 
 @Service
+@Transactional
 @RequiredArgsConstructor
 public class FamilyServiceImpl implements FamilyService {
     

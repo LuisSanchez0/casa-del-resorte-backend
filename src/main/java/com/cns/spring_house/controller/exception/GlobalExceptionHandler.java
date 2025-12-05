@@ -18,6 +18,7 @@ import com.cns.spring_house.exception.EntityAlreadyExistsException;
 import com.cns.spring_house.exception.EntityNotFoundException;
 import com.cns.spring_house.exception.FileContentTypeException;
 import com.cns.spring_house.exception.FileProcessingException;
+import com.cns.spring_house.exception.ValidationException;
 import com.cns.spring_house.util.Exception;
 
 @RestControllerAdvice
@@ -59,6 +60,19 @@ public class GlobalExceptionHandler {
         problemDetail.setProperty("error_category", "Validation");
         problemDetail.setProperty("timestamp", Instant.now());
         problemDetail.setProperty("errors", errors);
+        return problemDetail;
+    }
+
+    @ExceptionHandler(ValidationException.class)
+    public ProblemDetail handleValidationException(ValidationException e) {
+        ProblemDetail problemDetail = ProblemDetail
+                .forStatusAndDetail(HttpStatus.BAD_REQUEST, e.getMessage());
+        problemDetail.setTitle("Validation Error");
+        problemDetail.setProperty("error_category", "Validation");
+        problemDetail.setProperty("timestamp", Instant.now());
+        if (e.getErrors() != null) {
+            problemDetail.setProperty("errors", e.getErrors());
+        }
         return problemDetail;
     }
 

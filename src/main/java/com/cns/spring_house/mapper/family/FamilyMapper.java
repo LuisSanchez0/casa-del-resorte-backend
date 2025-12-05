@@ -15,12 +15,14 @@ import com.cns.spring_house.model.family.Family;
 public interface FamilyMapper {
     
     @Mapping(target = "id", ignore = true)
+    @Mapping(target = "attributes", ignore = true)
     @Mapping(target = "createdAt", ignore = true)
     @Mapping(target = "updatedAt", ignore = true)
     Family toFamily(CreateFamilyRequestDTO requestDTO);
 
     @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)
     @Mapping(target = "id", ignore = true)
+    @Mapping(target = "attributes", ignore = true)
     @Mapping(target = "createdAt", ignore = true)
     @Mapping(target = "updatedAt", ignore = true)
     void updateFamilyFromDTO(UpdateFamilyRequestDTO requestDTO, @MappingTarget Family family);
