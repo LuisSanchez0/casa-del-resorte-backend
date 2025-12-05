@@ -1,6 +1,7 @@
 package com.cns.spring_house.controller.product;
 
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.cns.spring_house.dto.product.CreateProductRequestDTO;
@@ -43,11 +44,8 @@ public class ProductController {
 
     @GetMapping
     public ResponseEntity<List<ProductResponseDTO>> getAll(
-            UUID family,
-            String q,
-            Map<String, Object> attributes) {
-        SearchProductRequestDTO requestDTO = new SearchProductRequestDTO(
-                q, family, attributes);
+            @RequestParam(required = false) Map<String, Object> filters) {
+        SearchProductRequestDTO requestDTO = SearchProductRequestDTO.from(filters);
         List<ProductResponseDTO> products = service.getAll(requestDTO);
         return ResponseEntity
                 .status(HttpStatus.OK)
