@@ -56,6 +56,7 @@ CREATE TABLE stock_item (
     min_threshold SMALLINT NOT NULL CHECK (min_threshold >= 0),
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL,
+    UNIQUE(product_id, workshop_id),
     FOREIGN KEY (product_id) REFERENCES product(id),
     FOREIGN KEY (workshop_id) REFERENCES workshop(id)
 );
