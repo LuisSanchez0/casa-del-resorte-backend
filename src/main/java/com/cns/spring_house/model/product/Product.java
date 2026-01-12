@@ -9,6 +9,7 @@ import org.hibernate.type.SqlTypes;
 
 import com.cns.spring_house.model.audit.Auditable;
 import com.cns.spring_house.model.family.Family;
+import com.cns.spring_house.model.model.Model;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -24,7 +25,7 @@ import lombok.NoArgsConstructor;
 @EqualsAndHashCode(of = "id", callSuper = false)
 @NoArgsConstructor
 public class Product extends Auditable {
-    
+
     @Id
     @UuidGenerator
     private UUID id;
@@ -33,6 +34,8 @@ public class Product extends Auditable {
     @JoinColumn(name = "family_id")
     private Family family;
     String name;
+    @JoinColumn(name = "model_id")
+    private Model model;
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")
     private Map<String, Object> attributes;

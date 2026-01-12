@@ -21,6 +21,7 @@ CREATE TABLE family (
     id UUID PRIMARY KEY,
     code VARCHAR(25) UNIQUE NOT NULL,
     name VARCHAR(50) NOT NULL,
+    requires_model BOOLEAN NOT NULL,
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL
 );
@@ -41,9 +42,11 @@ CREATE TABLE product (
     family_id UUID NOT NULL,
     name VARCHAR(100) NOT NULL,
     attributes jsonb NOT NULL,
+    model_id UUID,
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL,
-    FOREIGN KEY (family_id) REFERENCES family(id)
+    FOREIGN KEY (family_id) REFERENCES family(id),
+    FOREIGN KEY (model_id) REFERENCES model(id)
 );
 
 CREATE TABLE stock_item (
@@ -65,7 +68,7 @@ CREATE TABLE leaf_pack (
     id UUID PRIMARY KEY,
     product_id UUID NOT NULL,
     workshop_id UUID NOT NULL,
-    original_leaf_count SMALLINT NOT NULL CHECK (original_leaf_count >= 2),
+    original_leaf_count SMALLINT NOT NULL CHECK (original_leaf_count > 1),
     available_leaf_count SMALLINT NOT NULL CHECK (available_leaf_count >= 0),
     status VARCHAR(15) NOT NULL CHECK (status in ('OPENED', 'SEALED', 'DEPLETED', 'SOLD')),
     created_at TIMESTAMP NOT NULL,

@@ -8,6 +8,8 @@ public record UpdateProductRequestDTO(
         String sku,
         String name,
         UUID family,
+        UUID model,
         Map<String, Object> attributes
 
-) { }
+) {
+}

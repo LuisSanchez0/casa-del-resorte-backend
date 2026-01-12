@@ -21,12 +21,13 @@ import lombok.NoArgsConstructor;
 @EqualsAndHashCode(of = "id", callSuper = false)
 @NoArgsConstructor
 public class Family extends Auditable {
-    
+
     @Id
     @UuidGenerator
     private UUID id;
     private String code;
     private String name;
+    private Boolean requiresModel;
     @OneToMany(fetch = FetchType.LAZY, mappedBy = "family")
     List<Attribute> attributes;
 

@@ -6,6 +6,8 @@ public record FamilyResponseDTO(
 
         UUID id,
         String code,
-        String name
+        String name,
+        Boolean requiresModel
 
-) { }
+) {
+}

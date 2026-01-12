@@ -13,9 +13,10 @@ import com.cns.spring_house.model.product.Product;
 
 @Mapper(componentModel = "spring")
 public interface ProductMapper {
-    
+
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "family", ignore = true)
+    @Mapping(target = "model", ignore = true)
     @Mapping(target = "createdAt", ignore = true)
     @Mapping(target = "updatedAt", ignore = true)
     Product toProduct(CreateProductRequestDTO requestDTO);
@@ -23,6 +24,7 @@ public interface ProductMapper {
     @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "family", ignore = true)
+    @Mapping(target = "model", ignore = true)
     @Mapping(target = "createdAt", ignore = true)
     @Mapping(target = "updatedAt", ignore = true)
     void updateProductFromDTO(UpdateProductRequestDTO requestDTO, @MappingTarget Product product);

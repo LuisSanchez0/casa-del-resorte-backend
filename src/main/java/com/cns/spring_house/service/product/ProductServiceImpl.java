@@ -1,6 +1,7 @@
 package com.cns.spring_house.service.product;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -21,8 +22,10 @@ import com.cns.spring_house.exception.ValidationException;
 import com.cns.spring_house.mapper.product.ProductMapper;
 import com.cns.spring_house.model.attribute.Attribute;
 import com.cns.spring_house.model.family.Family;
+import com.cns.spring_house.model.model.Model;
 import com.cns.spring_house.model.product.Product;
 import com.cns.spring_house.repository.family.FamilyRepository;
+import com.cns.spring_house.repository.model.ModelRepository;
 import com.cns.spring_house.repository.product.ProductRepository;
 import com.cns.spring_house.repository.product.ProductSpecs;
 
@@ -36,6 +39,7 @@ public class ProductServiceImpl implements ProductService {
     private final ProductRepository repository;
     private final ProductMapper mapper;
     private final FamilyRepository familyRepository;
+    private final ModelRepository modelRepository;
 
     @Override
     public ProductResponseDTO get(UUID id) {
@@ -50,6 +54,7 @@ public class ProductServiceImpl implements ProductService {
     public List<ProductResponseDTO> getAll(SearchProductRequestDTO requestDTO) {
         List<Specification<Product>> specs = new ArrayList<>();
         specs.add(ProductSpecs.hasFamily(requestDTO.family()));
+        specs.add(ProductSpecs.hasModel(requestDTO.model()));
         specs.add(
                 Specification.anyOf(
                         ProductSpecs.skuContains(requestDTO.q()),
@@ -77,6 +82,13 @@ public class ProductServiceImpl implements ProductService {
         validateAttributes(family, requestDTO.attributes());
         Product product = mapper.toProduct(requestDTO);
         product.setFamily(family);
+        if (product.getFamily().getRequiresModel()) {
+            Model model = modelRepository
+                    .findById(requestDTO.model())
+                    .orElseThrow(() -> new EntityNotFoundException(
+                            "No existe el modelo especificado"));
+            product.setModel(model);
+        }
         product = repository.save(product);
         return mapper.toResponse(product);
     }
@@ -87,40 +99,71 @@ public class ProductServiceImpl implements ProductService {
                 .findById(id)
                 .orElseThrow(() -> new EntityNotFoundException(
                         "No existe el producto solicitado"));
-        String sku = requestDTO.sku();
-        if (sku != null && !sku.equals(product.getSku())) {
-            if (repository.existsBySkuAndIdNot(sku, id)) {
-                throw new EntityAlreadyExistsException(
-                        "Ya existe un producto con ese sku");
-            }
-        }
-        UUID familyId = requestDTO.family();
-        if (familyId != null && !familyId.equals(product.getFamily().getId())) {
-            Family family = familyRepository
-                    .findById(requestDTO.family())
-                    .orElseThrow(() -> new EntityNotFoundException(
-                            "No existe la familia solicitada"));
-            product.setFamily(family);
-        }
+        updateSkuIfNeeded(product, requestDTO.sku(), id);
+        updateFamilyIfNeeded(product, requestDTO.family());
+        updateModelIfNeeded(product, requestDTO.model());
         mapper.updateProductFromDTO(requestDTO, product);
         validateAttributes(product.getFamily(), product.getAttributes());
-        product = repository.save(product);
-        return mapper.toResponse(product);
+        Product saved = repository.save(product);
+        return mapper.toResponse(saved);
+    }
+
+    private void updateSkuIfNeeded(Product product, String sku, UUID productId) {
+        if (sku == null || sku.equals(product.getSku())) {
+            return;
+        }
+        if (repository.existsBySkuAndIdNot(sku, productId)) {
+            throw new EntityAlreadyExistsException(
+                    "Ya existe un producto con ese sku");
+        }
+        product.setSku(sku);
+    }
+
+    private void updateFamilyIfNeeded(Product product, UUID familyId) {
+        if (familyId == null || familyId.equals(product.getFamily().getId())) {
+            return;
+        }
+        Family family = familyRepository.findById(familyId)
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "No existe la familia solicitada"));
+        product.setFamily(family);
+    }
+
+    private void updateModelIfNeeded(Product product, UUID modelId) {
+        Model currentModel = product.getModel();
+        if (!product.getFamily().getRequiresModel()) {
+            product.setModel(null);
+            return;
+        }
+        if (modelId == null) {
+            return;
+        }
+        if (currentModel != null && modelId.equals(currentModel.getId())) {
+            return;
+        }
+        Model model = modelRepository.findById(modelId)
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "No existe el modelo especificado"));
+        product.setModel(model);
     }
 
     private void validateAttributes(Family family, Map<String, Object> attributes) {
-        Map<String, Attribute> allowedMap = family.getAttributes()
+        Map<String, Attribute> allowed = family.getAttributes()
                 .stream()
                 .collect(Collectors.toMap(Attribute::getKey, Function.identity()));
-        Map<String, String> errors = attributes.keySet()
-                .stream()
-                .filter(key -> !allowedMap.containsKey(key))
-                .collect(Collectors.toMap(key -> key, key -> "Atributo no permitido"));
-        allowedMap.forEach((key, attr) -> {
-            Object val = attributes.get(key);
-            if (val == null && attr.getRequired()) {
-                errors.put(key, "Es obligatorio");
-            } else if (!attr.getDataType().isValid(val)) {
+        Map<String, String> errors = new HashMap<>();
+        attributes.forEach((key, value) -> {
+            if (!allowed.containsKey(key)) {
+                errors.put(key, "Atributo no permitido");
+            }
+        });
+        allowed.forEach((key, attr) -> {
+            Object value = attributes.get(key);
+            if (value == null) {
+                if (attr.getRequired()) {
+                    errors.put(key, "Es obligatorio");
+                }
+            } else if (!attr.getDataType().isValid(value)) {
                 errors.put(key, "Tipo inválido, se espera un " + attr.getDataType());
             }
         });

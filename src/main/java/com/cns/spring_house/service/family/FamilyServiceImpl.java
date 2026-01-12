@@ -24,7 +24,7 @@ import lombok.RequiredArgsConstructor;
 @Transactional
 @RequiredArgsConstructor
 public class FamilyServiceImpl implements FamilyService {
-    
+
     private final FamilyRepository repository;
     private final FamilyMapper mapper;
 
@@ -40,6 +40,7 @@ public class FamilyServiceImpl implements FamilyService {
     @Override
     public List<FamilyResponseDTO> getAll(SearchFamilyRequestDTO requestDTO) {
         Specification<Family> specs = Specification.allOf(
+                FamilySpecs.hasRequiresModel(requestDTO.requiresModel()),
                 Specification.anyOf(
                         FamilySpecs.codeContains(requestDTO.q()),
                         FamilySpecs.nameContains(requestDTO.q())));
