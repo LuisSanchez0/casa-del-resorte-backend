@@ -84,7 +84,8 @@ CREATE TABLE leaf (
     leaf_number VARCHAR(10) NOT NULL,
     width NUMERIC(10, 2) NOT NULL CHECK (width > 0),
     first_length NUMERIC(10, 2) NOT NULL CHECK (first_length > 0),
-    second_length NUMERIC(10, 2) NOT NULL CHECK (second_length > 0),
+    second_length NUMERIC(10, 2) CHECK (second_length > 0),
+    has_hole BOOLEAN NOT NULL,
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL,
     FOREIGN KEY (leaf_pack_id) REFERENCES leaf_pack(id)
