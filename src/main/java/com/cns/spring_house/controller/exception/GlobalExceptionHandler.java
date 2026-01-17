@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
+import com.cns.spring_house.exception.BusinessException;
 import com.cns.spring_house.exception.EntityAlreadyExistsException;
 import com.cns.spring_house.exception.EntityNotFoundException;
 import com.cns.spring_house.exception.FileContentTypeException;
@@ -73,6 +74,16 @@ public class GlobalExceptionHandler {
         if (e.getErrors() != null) {
             problemDetail.setProperty("errors", e.getErrors());
         }
+        return problemDetail;
+    }
+
+    @ExceptionHandler(BusinessException.class)
+    public ProblemDetail handleBusinessException(BusinessException e) {
+        ProblemDetail problemDetail = ProblemDetail
+                .forStatusAndDetail(HttpStatus.BAD_REQUEST, e.getMessage());
+        problemDetail.setTitle("Business Error");
+        problemDetail.setProperty("error_category", "Business");
+        problemDetail.setProperty("timestamp", Instant.now());
         return problemDetail;
     }
 
