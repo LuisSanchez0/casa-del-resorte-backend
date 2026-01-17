@@ -35,5 +35,5 @@ public class Leaf extends Auditable{
     BigDecimal width;
     BigDecimal firstLength;
     BigDecimal secondLength;
-    boolean hasHole;
+    Boolean hasHole;
 }
