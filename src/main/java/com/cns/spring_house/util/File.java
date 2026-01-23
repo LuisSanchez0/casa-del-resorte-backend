@@ -4,8 +4,8 @@ import java.util.Set;
 
 import org.springframework.web.multipart.MultipartFile;
 
-import com.cns.spring_house.exception.FileContentTypeException;
-import com.cns.spring_house.exception.FileProcessingException;
+import com.cns.spring_house.shared.exception.FileContentTypeException;
+import com.cns.spring_house.shared.exception.FileProcessingException;
 
 public class File {
 
