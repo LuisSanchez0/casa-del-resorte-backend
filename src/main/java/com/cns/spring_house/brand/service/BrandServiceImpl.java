@@ -17,7 +17,7 @@ import com.cns.spring_house.brand.mapper.BrandMapper;
 import com.cns.spring_house.brand.entity.Brand;
 import com.cns.spring_house.brand.repository.BrandRepository;
 import com.cns.spring_house.brand.repository.BrandSpecs;
-import com.cns.spring_house.config.s3.S3Service;
+import com.cns.spring_house.s3.service.S3Service;
 
 import lombok.RequiredArgsConstructor;
 
@@ -53,7 +53,7 @@ public class BrandServiceImpl implements BrandService {
     public BrandResponseDTO create(CreateBrandRequestDTO requestDTO) {
         if (repository.existsByName(requestDTO.name())) {
             throw new EntityAlreadyExistsException(
-                "Ya existe una marca con el mismo nombre");
+                    "Ya existe una marca con el mismo nombre");
         }
         Brand brand = mapper.toBrand(requestDTO);
         String logoKey = s3Service.uploadImage(requestDTO.logo());
@@ -72,7 +72,7 @@ public class BrandServiceImpl implements BrandService {
         if (newName != null && !newName.equals(brand.getName())) {
             if (repository.existsByNameAndIdNot(newName, id)) {
                 throw new EntityAlreadyExistsException(
-                    "Ya existe una marca con el mismo nombre");
+                        "Ya existe una marca con el mismo nombre");
             }
         }
         mapper.updateBrandFromDTO(requestDTO, brand);
@@ -85,5 +85,5 @@ public class BrandServiceImpl implements BrandService {
         brand = repository.save(brand);
         return mapper.toResponse(brand);
     }
-    
+
 }

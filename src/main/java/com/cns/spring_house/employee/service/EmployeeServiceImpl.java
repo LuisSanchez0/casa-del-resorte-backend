@@ -18,7 +18,7 @@ import com.cns.spring_house.employee.entity.Employee;
 import com.cns.spring_house.workshop.entity.Workshop;
 import com.cns.spring_house.employee.repository.EmployeeRepository;
 import com.cns.spring_house.employee.repository.EmployeeSpecs;
-import com.cns.spring_house.workshop.repository.WorkshopRespository;
+import com.cns.spring_house.workshop.repository.WorkshopRepository;
 
 import lombok.RequiredArgsConstructor;
 
@@ -28,7 +28,7 @@ import lombok.RequiredArgsConstructor;
 public class EmployeeServiceImpl implements EmployeeService {
 
     private final EmployeeRepository employeeRepository;
-    private final WorkshopRespository workshopRespository;
+    private final WorkshopRepository workshopRespository;
     private final EmployeeMapper mapper;
 
     @Override

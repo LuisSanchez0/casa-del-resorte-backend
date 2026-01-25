@@ -2,7 +2,7 @@ package com.cns.spring_house.model.dto;
 
 import java.util.UUID;
 
-import com.cns.spring_house.validators.pastornextyear.PastOrNextYear;
+import com.cns.spring_house.shared.validator.pastornextyear.PastOrNextYear;
 
 import jakarta.validation.constraints.Min;
 
@@ -10,8 +10,7 @@ public record UpdateModelRequestDTO(
 
         UUID brand,
         String name,
-        @Min(value = 1900, message = "El año no debe ser mayor a 1900")
-        @PastOrNextYear(message = "El año debe ser menor o igual al siguiente año")
-        Integer year
+        @Min(value = 1900, message = "El año no debe ser mayor a 1900") @PastOrNextYear(message = "El año debe ser menor o igual al siguiente año") Integer year
 
-) { }
+) {
+}

@@ -13,7 +13,7 @@ import com.cns.spring_house.workshop.dto.UpdateWorkshopRequestDTO;
 import com.cns.spring_house.workshop.dto.WorkshopResponseDTO;
 import com.cns.spring_house.workshop.mapper.WorkshopMapper;
 import com.cns.spring_house.workshop.entity.Workshop;
-import com.cns.spring_house.workshop.repository.WorkshopRespository;
+import com.cns.spring_house.workshop.repository.WorkshopRepository;
 import com.cns.spring_house.workshop.repository.WorkshopSpecs;
 
 import jakarta.persistence.EntityNotFoundException;
@@ -24,7 +24,7 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class WorkshopServiceImpl implements WorkshopService {
 
-    private final WorkshopRespository repository;
+    private final WorkshopRepository repository;
     private final WorkshopMapper mapper;
 
     @Override

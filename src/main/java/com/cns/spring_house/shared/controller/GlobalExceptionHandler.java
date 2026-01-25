@@ -16,10 +16,10 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 
 import com.cns.spring_house.shared.exception.EntityAlreadyExistsException;
 import com.cns.spring_house.shared.exception.EntityNotFoundException;
+import com.cns.spring_house.shared.exception.ExceptionUtils;
 import com.cns.spring_house.shared.exception.FileContentTypeException;
 import com.cns.spring_house.shared.exception.FileProcessingException;
 import com.cns.spring_house.shared.exception.ValidationException;
-import com.cns.spring_house.util.Exception;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -53,7 +53,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ProblemDetail handleMethodArgumentNotValidException(MethodArgumentNotValidException e) {
-        Map<String, String> errors = Exception.extractFieldErrors(e.getFieldErrors());
+        Map<String, String> errors = ExceptionUtils.extractFieldErrors(e.getFieldErrors());
         ProblemDetail problemDetail = ProblemDetail
                 .forStatusAndDetail(HttpStatus.BAD_REQUEST, "Se ha producido uno o mas errores de validacion");
         problemDetail.setTitle("Validation Error");
@@ -79,7 +79,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ProblemDetail handleHttpMessageNotReadableException(HttpMessageNotReadableException e) {
         String message = "El cuerpo de la solicitud es requerido";
-        if (Exception.isCausedBy(e, DateTimeParseException.class)) {
+        if (ExceptionUtils.isCausedBy(e, DateTimeParseException.class)) {
             message = "Error al parsear debito a un formato de fecha invalido";
         }
         ProblemDetail problemDetail = ProblemDetail

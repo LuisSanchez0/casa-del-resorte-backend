@@ -15,12 +15,12 @@ spring:
     redis:
       host: ${CACHE_HOST:localhost}
       port: ${CACHE_PORT:6379}
-      
+
 server:
   port: ${PORT:8080}
 
 app:
-  client:
+  cors:
     origin: ${CLIENT_ORIGIN}
 
 security:

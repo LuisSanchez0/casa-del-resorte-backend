@@ -6,7 +6,7 @@ import com.cns.spring_house.auth.dto.AuthResponseDTO;
 import com.cns.spring_house.auth.dto.LoginRequestDTO;
 import com.cns.spring_house.useraccount.dto.UserAccountResponseDTO;
 import com.cns.spring_house.auth.service.AuthService;
-import com.cns.spring_house.util.Cookie;
+import com.cns.spring_house.shared.security.CookieUtils;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -56,7 +56,7 @@ public class AuthController {
     public ResponseEntity<Void> logout(
             @CookieValue String refreshToken) {
         authService.logout(refreshToken);
-        String refreshTokenCookie = Cookie
+        String refreshTokenCookie = CookieUtils
                 .deleteCookie("refreshToken")
                 .toString();
         return ResponseEntity
@@ -68,7 +68,7 @@ public class AuthController {
     private ResponseEntity<AuthResponseDTO> buildAuthResponse(Map<String, String> tokens) {
         String accessToken = tokens.get("accessToken");
         String refreshToken = tokens.get("refreshToken");
-        String refreshTokenCookie = Cookie
+        String refreshTokenCookie = CookieUtils
                 .createCookie("refreshToken", refreshToken, Duration.ofDays(7))
                 .toString();
         return ResponseEntity
