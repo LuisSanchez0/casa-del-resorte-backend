@@ -1,4 +1,4 @@
-package com.cns.spring_house.openapi.config;
+package com.cns.spring_house.shared.config.openapi;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
