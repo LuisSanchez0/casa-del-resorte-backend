@@ -12,12 +12,24 @@ public class ExceptionUtils {
 
     }
 
-    public static boolean isCausedBy(Throwable cause, Class<? extends Throwable> exceptionType) {
-        while (cause != null) {
-            if (exceptionType.isInstance(cause)) {
+    public static Throwable getRootCause(Throwable throwable) {
+        Throwable cause = throwable;
+        while (cause.getCause() != null && cause.getCause() != cause) {
+            cause = cause.getCause();
+        }
+        return cause;
+    }
+
+    public static boolean isCausedBy(Throwable throwable, Class<? extends Throwable> exceptionType) {
+        if (throwable == null || exceptionType == null) {
+            return false;
+        }
+        Throwable current = throwable;
+        while (current != null) {
+            if (exceptionType.isInstance(current)) {
                 return true;
             }
-            cause = cause.getCause();
+            current = current.getCause();
         }
         return false;
     }

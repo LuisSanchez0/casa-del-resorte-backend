@@ -12,6 +12,8 @@ import org.springframework.security.oauth2.jwt.JwtValidationException;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.stereotype.Component;
 
+import com.cns.spring_house.shared.exception.ExceptionUtils;
+
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -32,7 +34,7 @@ public class CustomAuthEntryPoint implements AuthenticationEntryPoint {
             throws IOException, ServletException {
         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
         response.setContentType(MediaType.APPLICATION_JSON.toString());
-        String message = resolveMessage(authException.getCause());
+        String message = resolveMessage(ExceptionUtils.getRootCause(authException));
         response.getWriter().write(
                 buildResponse(message, request.getRequestURI()));
     }
