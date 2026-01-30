@@ -11,12 +11,12 @@ public record CreateAttributeRequestDTO(
         @NotNull(message = "La familia es obligatoria")
         UUID family,
         @NotBlank(message = "La nombre del atributo es obligatoria")
-        String key,
+        String name,
         @NotNull(message = "El tipo de dato del atributo es obligatorio")
         @Pattern(regexp = "NUMBER|STRING|BOOLEAN",
                 message = "Solo se aceptan los siguientes tipos de datos: NUMBER, STRING y BOOLEAN")
         String dataType,
         @NotNull(message = "Es necesario especificar si el atributo es obligatorio")
-        Boolean required
+        Boolean isRequired
 
 ) { }

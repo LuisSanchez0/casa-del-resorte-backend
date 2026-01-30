@@ -9,8 +9,8 @@ import com.cns.spring_house.attribute.entity.Attribute;
 
 public interface AttributeRepository extends JpaRepository<Attribute, UUID>, JpaSpecificationExecutor<Attribute> {
     
-    boolean existsByKeyAndFamilyId(String key, UUID family);
+    boolean existsByNameAndFamilyId(String name, UUID family);
 
-    boolean existsByKeyAndFamilyIdAndIdNot(String key, UUID family, UUID id);
+    boolean existsByNameAndFamilyIdAndIdNot(String name, UUID family, UUID id);
 
 }

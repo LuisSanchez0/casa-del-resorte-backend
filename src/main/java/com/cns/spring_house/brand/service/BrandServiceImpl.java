@@ -69,11 +69,9 @@ public class BrandServiceImpl implements BrandService {
                 .orElseThrow(() -> new EntityNotFoundException(
                         "No existe la marca solicitada"));
         String newName = requestDTO.name();
-        if (newName != null && !newName.equals(brand.getName())) {
-            if (repository.existsByNameAndIdNot(newName, id)) {
-                throw new EntityAlreadyExistsException(
+        if (newName != null && !newName.equals(brand.getName()) && repository.existsByNameAndIdNot(newName, id)) {
+            throw new EntityAlreadyExistsException(
                         "Ya existe una marca con el mismo nombre");
-            }
         }
         mapper.updateBrandFromDTO(requestDTO, brand);
         if (requestDTO.logo() != null) {

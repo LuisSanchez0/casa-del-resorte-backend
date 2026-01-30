@@ -7,7 +7,7 @@ import com.cns.spring_house.attribute.entity.AttributeDataType;
 public record SearchAttributeRequestDTO(
 
         UUID family,
-        String key,
+        String name,
         AttributeDataType type,
         Boolean required
 

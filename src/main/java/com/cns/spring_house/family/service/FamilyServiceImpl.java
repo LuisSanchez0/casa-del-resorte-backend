@@ -40,7 +40,8 @@ public class FamilyServiceImpl implements FamilyService {
     @Override
     public List<FamilyResponseDTO> getAll(SearchFamilyRequestDTO requestDTO) {
         Specification<Family> specs = Specification.allOf(
-                FamilySpecs.hasRequiresModel(requestDTO.requiresModel()),
+                FamilySpecs.requiresModel(requestDTO.requiresModel()),
+                FamilySpecs.hasCategory(requestDTO.category()),
                 Specification.anyOf(
                         FamilySpecs.codeContains(requestDTO.q()),
                         FamilySpecs.nameContains(requestDTO.q())));

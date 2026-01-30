@@ -9,6 +9,9 @@ import com.cns.spring_house.attribute.entity.Attribute;
 import com.cns.spring_house.shared.audit.Auditable;
 
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
 import jakarta.persistence.OneToMany;
 import lombok.Data;
@@ -27,7 +30,9 @@ public class Family extends Auditable {
     private String code;
     private String name;
     private Boolean requiresModel;
-    @OneToMany(mappedBy = "family")
+    @Enumerated(EnumType.STRING)
+    private FamilyCategory category;
+    @OneToMany(mappedBy = "family", fetch = FetchType.EAGER)
     List<Attribute> attributes;
 
 }

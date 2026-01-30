@@ -9,7 +9,6 @@ public record CreateBrandRequestDTO(
 
         @NotBlank(message = "El nombre es obligatorio")
         String name,
-
         @NotNull(message = "El logo es obligatorio")
         MultipartFile logo
 

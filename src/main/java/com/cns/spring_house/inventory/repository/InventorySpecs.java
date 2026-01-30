@@ -1,25 +1,25 @@
-package com.cns.spring_house.stockitem.repository;
+package com.cns.spring_house.inventory.repository;
 
 import java.util.UUID;
 
 import org.springframework.data.jpa.domain.Specification;
 
-import com.cns.spring_house.stockitem.entity.StockItem;
+import com.cns.spring_house.inventory.entity.Inventory;
 
-public class StockItemSpecs {
+public class InventorySpecs {
     
-    private StockItemSpecs() {
+    private InventorySpecs() {
 
     }
 
-    public static Specification<StockItem> hasWorkshop(UUID workshop) {
+    public static Specification<Inventory> hasWorkshop(UUID workshop) {
         return (root, query, criteriaBuilder) -> workshop == null ? null
                 : criteriaBuilder.equal(
                         root.get("workshop").get("id"),
                         workshop);
     }
 
-    public static Specification<StockItem> hasProduct(UUID product) {
+    public static Specification<Inventory> hasProduct(UUID product) {
         return (root, query, criteriaBuilder) -> product == null ? null
                 : criteriaBuilder.equal(
                         root.get("product").get("id"),

@@ -7,10 +7,10 @@ import jakarta.validation.constraints.Pattern;
 public record UpdateAttributeRequestDTO(
 
         UUID family,
-        String key,
+        String name,
         @Pattern(regexp = "NUMBER|STRING|BOOLEAN",
                 message = "Solo se aceptan los siguientes tipos de datos: NUMBER, STRING y BOOLEAN")
         String dataType,
-        Boolean required
+        Boolean isRequired
 
 ) { }

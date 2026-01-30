@@ -1,4 +1,4 @@
-package com.cns.spring_house.stockitem.mapper;
+package com.cns.spring_house.inventory.mapper;
 
 import org.mapstruct.BeanMapping;
 import org.mapstruct.Mapper;
@@ -6,20 +6,20 @@ import org.mapstruct.Mapping;
 import org.mapstruct.MappingTarget;
 import org.mapstruct.NullValuePropertyMappingStrategy;
 
-import com.cns.spring_house.stockitem.dto.CreateStockItemRequestDTO;
-import com.cns.spring_house.stockitem.dto.StockItemResponseDTO;
-import com.cns.spring_house.stockitem.dto.UpdateStockItemRequestDTO;
-import com.cns.spring_house.stockitem.entity.StockItem;
+import com.cns.spring_house.inventory.dto.CreateInventoryRequestDTO;
+import com.cns.spring_house.inventory.dto.InventoryResponseDTO;
+import com.cns.spring_house.inventory.dto.UpdateInventoryRequestDTO;
+import com.cns.spring_house.inventory.entity.Inventory;
 
 @Mapper(componentModel = "spring")
-public interface StockItemMapper {
+public interface InventoryMapper {
     
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "workshop", ignore =  true)
     @Mapping(target = "product", ignore =  true)
     @Mapping(target = "createdAt", ignore = true)
     @Mapping(target = "updatedAt", ignore = true)
-    StockItem toStockItem(CreateStockItemRequestDTO requestDTO);
+    Inventory toInventory(CreateInventoryRequestDTO requestDTO);
 
     @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)
     @Mapping(target = "id", ignore = true)
@@ -27,8 +27,8 @@ public interface StockItemMapper {
     @Mapping(target = "product", ignore =  true)
     @Mapping(target = "createdAt", ignore = true)
     @Mapping(target = "updatedAt", ignore = true)
-    void updateStockItemFromDTO(UpdateStockItemRequestDTO requestDTO, @MappingTarget StockItem stockItem);
+    void updateInventoryFromDTO(UpdateInventoryRequestDTO requestDTO, @MappingTarget Inventory inventory);
 
-    StockItemResponseDTO toResponse(StockItem stockItem);
+    InventoryResponseDTO toResponse(Inventory inventory);
 
 }

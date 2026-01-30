@@ -7,8 +7,8 @@ import com.cns.spring_house.attribute.entity.AttributeDataType;
 public record AttributeResponseDTO(
 
         UUID id,
-        String key,
+        String name,
         AttributeDataType dataType,
-        Boolean required
+        Boolean isRequired
 
 ) { }

@@ -45,8 +45,8 @@ public class AttributeServiceImpl implements AttributeService {
         Specification<Attribute> specs = Specification.allOf(
                 AttributeSpecs.hasDataType(requestDTO.type()),
                 AttributeSpecs.hasFamily(requestDTO.family()),
-                AttributeSpecs.hasRequired(requestDTO.required()),
-                AttributeSpecs.keyContains(requestDTO.key()));
+                AttributeSpecs.isRequired(requestDTO.required()),
+                AttributeSpecs.nameContains(requestDTO.name()));
         return repository.findAll(specs)
                 .stream()
                 .map(mapper::toResponse)
@@ -55,16 +55,16 @@ public class AttributeServiceImpl implements AttributeService {
 
     @Override
     public AttributeResponseDTO create(CreateAttributeRequestDTO requestDTO) {
-        boolean alreadyExists = repository
-                .existsByKeyAndFamilyId(requestDTO.key(), requestDTO.family()); 
-        if (alreadyExists) {
-            throw new EntityAlreadyExistsException(
-                    "Ya existe el atributo para esa familia");
-        }
         Family family = familyRepository
                 .findById(requestDTO.family())
                 .orElseThrow(() -> new EntityNotFoundException(
                         "No existe la familia solicitada"));
+        boolean alreadyExists = repository
+                .existsByNameAndFamilyId(requestDTO.name(), requestDTO.family());
+        if (alreadyExists) {
+            throw new EntityAlreadyExistsException(
+                    "Ya existe el atributo para esa familia");
+        }
         Attribute attribute = mapper.toAttribute(requestDTO);
         attribute.setFamily(family);
         attribute = repository.save(attribute);
@@ -87,8 +87,8 @@ public class AttributeServiceImpl implements AttributeService {
         }
         mapper.updateAttributeFromDTO(requestDTO, attribute);
         boolean alreadyExists = repository
-                .existsByKeyAndFamilyIdAndIdNot(
-                        attribute.getKey(),
+                .existsByNameAndFamilyIdAndIdNot(
+                        attribute.getName(),
                         attribute.getFamily().getId(),
                         id);
         if (alreadyExists) {

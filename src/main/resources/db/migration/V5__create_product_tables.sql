@@ -18,10 +18,11 @@ CREATE TABLE model (
 );
 
 CREATE TABLE family (
-    id UUID PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     code VARCHAR(25) UNIQUE NOT NULL,
-    name VARCHAR(50) NOT NULL,
+    name VARCHAR(50) UNIQUE NOT NULL,
     requires_model BOOLEAN NOT NULL,
+    category VARCHAR(20) NOT NULL CHECK (category in ('SPECIAL', 'NORMAL', 'SERVICE')),
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL
 );
@@ -29,10 +30,10 @@ CREATE TABLE family (
 CREATE TABLE attribute (
     id UUID PRIMARY KEY,
     family_id UUID NOT NULL,
-    key VARCHAR(50) NOT NULL,
+    name VARCHAR(50) NOT NULL,
     data_type VARCHAR(10) NOT NULL CHECK (data_type IN ('NUMBER','STRING','BOOLEAN')),
-    required boolean NOT NULL, 
-    UNIQUE (family_id, key),
+    is_required boolean NOT NULL, 
+    UNIQUE (family_id, name),
     FOREIGN KEY (family_id) REFERENCES family(id)
 );
 
@@ -49,13 +50,12 @@ CREATE TABLE product (
     FOREIGN KEY (model_id) REFERENCES model(id)
 );
 
-CREATE TABLE stock_item (
+CREATE TABLE inventory (
     id UUID PRIMARY KEY,
     product_id UUID NOT NULL,
     workshop_id UUID NOT NULL,
     price NUMERIC(10, 2) NOT NULL CHECK (price >= 0),
-    last_cost NUMERIC(10, 2) NOT NULL CHECK (last_cost >= 0),
-    quantity SMALLINT NOT NULL CHECK (quantity >= 0),
+    cost NUMERIC(10, 2) NOT NULL CHECK (cost >= 0),
     min_threshold SMALLINT NOT NULL CHECK (min_threshold >= 0),
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL,
@@ -64,29 +64,22 @@ CREATE TABLE stock_item (
     FOREIGN KEY (workshop_id) REFERENCES workshop(id)
 );
 
--- CREATE TABLE leaf_pack (
---     id UUID PRIMARY KEY,
---     product_id UUID NOT NULL,
---     workshop_id UUID NOT NULL,
---     original_leaf_count SMALLINT NOT NULL CHECK (original_leaf_count > 1),
---     available_leaf_count SMALLINT NOT NULL CHECK (available_leaf_count >= 0),
---     status VARCHAR(15) NOT NULL CHECK (status in ('OPENED', 'SEALED', 'DEPLETED', 'SOLD')),
---     created_at TIMESTAMP NOT NULL,
---     updated_at TIMESTAMP NOT NULL,
---     FOREIGN KEY (product_id) REFERENCES product(id),
---     FOREIGN KEY (workshop_id) REFERENCES workshop(id)
--- );
+CREATE TABLE inventory_bulk (
+    id UUID PRIMARY KEY,
+    inventory_id UUID UNIQUE NOT NULL,
+    quantity SMALLINT NOT NULL CHECK (quantity >= 0),
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
+    FOREIGN KEY (inventory_id) REFERENCES inventory(id)
+);
 
--- CREATE TABLE leaf (
---     id UUID PRIMARY KEY,
---     leaf_pack_id UUID NOT NULL,
---     status VARCHAR(15) NOT NULL CHECK (status in ('AVAILABLE', 'SOLD', 'DISCARDED', 'IN_PACKAGE')),
---     leaf_number VARCHAR(10) NOT NULL,
---     width NUMERIC(10, 2) NOT NULL CHECK (width > 0),
---     first_length NUMERIC(10, 2) NOT NULL CHECK (first_length > 0),
---     second_length NUMERIC(10, 2) CHECK (second_length > 0),
---     has_hole BOOLEAN NOT NULL,
---     created_at TIMESTAMP NOT NULL,
---     updated_at TIMESTAMP NOT NULL,
---     FOREIGN KEY (leaf_pack_id) REFERENCES leaf_pack(id)
--- );
+CREATE TABLE inventory_unit (
+    id UUID PRIMARY KEY,
+    inventory_id UUID NOT NULL,
+    status VARCHAR(20) NOT NULL CHECK (status IN ('AVAILABLE', 'CONSUMED', 'SOLD', 'UNAVAILABLE')),
+    parent_id UUID,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
+    FOREIGN KEY (inventory_id) REFERENCES inventory(id),
+    FOREIGN KEY (parent_id) REFERENCES inventory_unit(id)
+);

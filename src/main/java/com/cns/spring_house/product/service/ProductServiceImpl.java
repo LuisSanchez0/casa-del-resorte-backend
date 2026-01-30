@@ -99,7 +99,7 @@ public class ProductServiceImpl implements ProductService {
                 .findById(id)
                 .orElseThrow(() -> new EntityNotFoundException(
                         "No existe el producto solicitado"));
-        updateSkuIfNeeded(product, requestDTO.sku(), id);
+        updateSkuIfNeeded(product, requestDTO.sku());
         updateFamilyIfNeeded(product, requestDTO.family());
         updateModelIfNeeded(product, requestDTO.model());
         mapper.updateProductFromDTO(requestDTO, product);
@@ -108,11 +108,11 @@ public class ProductServiceImpl implements ProductService {
         return mapper.toResponse(saved);
     }
 
-    private void updateSkuIfNeeded(Product product, String sku, UUID productId) {
+    private void updateSkuIfNeeded(Product product, String sku) {
         if (sku == null || sku.equals(product.getSku())) {
             return;
         }
-        if (repository.existsBySkuAndIdNot(sku, productId)) {
+        if (repository.existsBySkuAndIdNot(sku, product.getId())) {
             throw new EntityAlreadyExistsException(
                     "Ya existe un producto con ese sku");
         }
@@ -150,7 +150,7 @@ public class ProductServiceImpl implements ProductService {
     private void validateAttributes(Family family, Map<String, Object> attributes) {
         Map<String, Attribute> allowed = family.getAttributes()
                 .stream()
-                .collect(Collectors.toMap(Attribute::getKey, Function.identity()));
+                .collect(Collectors.toMap(Attribute::getName, Function.identity()));
         Map<String, String> errors = new HashMap<>();
         attributes.forEach((key, value) -> {
             if (!allowed.containsKey(key)) {
@@ -160,7 +160,7 @@ public class ProductServiceImpl implements ProductService {
         allowed.forEach((key, attr) -> {
             Object value = attributes.get(key);
             if (value == null) {
-                if (attr.getRequired()) {
+                if (attr.getIsRequired()) {
                     errors.put(key, "Es obligatorio");
                 }
             } else if (!attr.getDataType().isValid(value)) {

@@ -6,10 +6,7 @@ import java.util.concurrent.TimeUnit;
 
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.DisabledException;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,6 +15,7 @@ import com.cns.spring_house.useraccount.dto.UserAccountResponseDTO;
 import com.cns.spring_house.shared.config.security.SecurityProperties;
 import com.cns.spring_house.shared.constants.RedisKeys;
 import com.cns.spring_house.shared.exception.EntityNotFoundException;
+import com.cns.spring_house.shared.security.SecurityUtils;
 import com.cns.spring_house.shared.security.TokenUtils;
 import com.cns.spring_house.useraccount.mapper.UserAccountMapper;
 import com.cns.spring_house.useraccount.entity.UserAccount;
@@ -98,13 +96,7 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     public UserAccountResponseDTO getUserAccount() {
-        Authentication authentication = SecurityContextHolder
-                .getContext()
-                .getAuthentication();
-        if (!(authentication instanceof JwtAuthenticationToken authenticationToken)) {
-            throw new BadCredentialsException("No autenticado");
-        }
-        UUID id = UUID.fromString(authenticationToken.getName());
+        UUID id = SecurityUtils.getId();
         UserAccount userAccount = userAccountRepository
                 .findById(id)
                 .orElseThrow(() -> new EntityNotFoundException(

@@ -3,6 +3,7 @@ package com.cns.spring_house.family.repository;
 import org.springframework.data.jpa.domain.Specification;
 
 import com.cns.spring_house.family.entity.Family;
+import com.cns.spring_house.family.entity.FamilyCategory;
 
 public class FamilySpecs {
 
@@ -24,11 +25,18 @@ public class FamilySpecs {
                         "%" + name + "%");
     }
 
-    public static Specification<Family> hasRequiresModel(Boolean requiresModel) {
+    public static Specification<Family> requiresModel(Boolean requiresModel) {
         return (root, query, criteriaBuilder) -> requiresModel == null ? null
                 : criteriaBuilder.equal(
                         root.get("requiresModel"),
                         requiresModel);
+    }
+
+    public static Specification<Family> hasCategory(FamilyCategory category) {
+        return (root, query, criteriaBuilder) -> category == null ? null
+                : criteriaBuilder.equal(
+                        root.get("category"),
+                        category);
     }
 
 }

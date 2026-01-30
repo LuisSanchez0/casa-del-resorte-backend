@@ -20,11 +20,11 @@ public class AttributeSpecs {
                         family);
     }
 
-    public static Specification<Attribute> keyContains(String key) {
-        return (root, query, criteriaBuilder) -> key == null ? null
+    public static Specification<Attribute> nameContains(String name) {
+        return (root, query, criteriaBuilder) -> name == null ? null
                 : criteriaBuilder.like(
-                        criteriaBuilder.lower(root.get("key")), 
-                        "%" + key + "%");
+                        criteriaBuilder.lower(root.get("name")), 
+                        "%" + name + "%");
     }
 
     public static Specification<Attribute> hasDataType(AttributeDataType dataType) {
@@ -34,11 +34,11 @@ public class AttributeSpecs {
                         dataType);
     }
 
-    public static Specification<Attribute> hasRequired(Boolean required) {
-        return (root, query, criteriaBuilder) -> required == null ? null
+    public static Specification<Attribute> isRequired(Boolean isRequired) {
+        return (root, query, criteriaBuilder) -> isRequired == null ? null
                 : criteriaBuilder.equal(
-                        root.get("required"),
-                        required);
+                        root.get("isRequired"),
+                        isRequired);
     }
 
 }

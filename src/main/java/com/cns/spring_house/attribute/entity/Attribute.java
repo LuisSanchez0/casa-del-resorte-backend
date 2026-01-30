@@ -9,6 +9,7 @@ import com.cns.spring_house.family.entity.Family;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
@@ -25,12 +26,12 @@ public class Attribute {
     @Id
     @UuidGenerator
     private UUID id;
-    @ManyToOne
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "family_id")
     private Family family;
-    private String key;
+    private String name;
     @Enumerated(EnumType.STRING)
     private AttributeDataType dataType;
-    private Boolean required;
+    private Boolean isRequired;
 
 }
