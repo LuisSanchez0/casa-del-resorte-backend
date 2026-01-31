@@ -85,30 +85,6 @@ public class InventoryServiceImpl implements InventoryService {
                 .findById(id)
                 .orElseThrow(() -> new EntityNotFoundException(
                         "No existe el registro especificado"));
-        UUID workshopId = SecurityUtils.getWorkshopId();
-        if (workshopId != null && !workshopId.equals(inventory.getWorkshop().getId())) {
-            Workshop workshop = workshopRespository
-                    .findById(workshopId)
-                    .orElseThrow(() -> new EntityNotFoundException(
-                            "No existe el taller especificado"));
-            inventory.setWorkshop(workshop);
-        }
-        UUID productId = requestDTO.product();
-        if (productId != null && !productId.equals(inventory.getProduct().getId())) {
-            Product product = productRepository
-                    .findById(requestDTO.product())
-                    .orElseThrow(() -> new EntityNotFoundException(
-                            "No existe el producto especificado"));
-            inventory.setProduct(product);
-        }
-        boolean alreadyExists = repository.existsByProductIdAndWorkshopIdAndIdNot(
-                inventory.getProduct().getId(),
-                inventory.getWorkshop().getId(),
-                id);
-        if (alreadyExists) {
-            throw new EntityAlreadyExistsException(
-                    "Ya existe un registro para ese producto en ese taller");
-        }
         mapper.updateInventoryFromDTO(requestDTO, inventory);
         inventory = repository.save(inventory);
         return mapper.toResponse(inventory);

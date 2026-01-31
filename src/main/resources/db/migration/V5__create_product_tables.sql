@@ -64,7 +64,7 @@ CREATE TABLE inventory (
     FOREIGN KEY (workshop_id) REFERENCES workshop(id)
 );
 
-CREATE TABLE inventory_bulk (
+CREATE TABLE quantity_inventory (
     id UUID PRIMARY KEY,
     inventory_id UUID UNIQUE NOT NULL,
     quantity SMALLINT NOT NULL CHECK (quantity >= 0),
@@ -73,7 +73,7 @@ CREATE TABLE inventory_bulk (
     FOREIGN KEY (inventory_id) REFERENCES inventory(id)
 );
 
-CREATE TABLE inventory_unit (
+CREATE TABLE unit_inventory (
     id UUID PRIMARY KEY,
     inventory_id UUID NOT NULL,
     status VARCHAR(20) NOT NULL CHECK (status IN ('AVAILABLE', 'CONSUMED', 'SOLD', 'UNAVAILABLE')),
