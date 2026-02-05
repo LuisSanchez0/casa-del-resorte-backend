@@ -17,6 +17,8 @@ public interface InventoryMapper {
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "workshop", ignore =  true)
     @Mapping(target = "product", ignore =  true)
+    @Mapping(target = "quantity", ignore = true)
+    @Mapping(target = "units", ignore = true)
     @Mapping(target = "createdAt", ignore = true)
     @Mapping(target = "updatedAt", ignore = true)
     Inventory toInventory(CreateInventoryRequestDTO requestDTO);
@@ -25,6 +27,8 @@ public interface InventoryMapper {
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "workshop", ignore =  true)
     @Mapping(target = "product", ignore =  true)
+    @Mapping(target = "quantity", ignore = true)
+    @Mapping(target = "units", ignore = true)
     @Mapping(target = "createdAt", ignore = true)
     @Mapping(target = "updatedAt", ignore = true)
     void updateInventoryFromDTO(UpdateInventoryRequestDTO requestDTO, @MappingTarget Inventory inventory);

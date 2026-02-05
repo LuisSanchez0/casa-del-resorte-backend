@@ -3,6 +3,7 @@ package com.cns.spring_house.inventory.controller;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.cns.spring_house.inventory.dto.AddStockRequestDTO;
 import com.cns.spring_house.inventory.dto.CreateInventoryRequestDTO;
 import com.cns.spring_house.inventory.dto.SearchInventoryRequestDTO;
 import com.cns.spring_house.inventory.dto.InventoryResponseDTO;
@@ -57,6 +58,17 @@ public class InventoryController {
                 .status(HttpStatus.CREATED)
                 .body(inventory);
     }
+
+    @PostMapping("/{id}/add-stock")
+    public ResponseEntity<InventoryResponseDTO> postMethodName(
+            @PathVariable UUID id,
+            @RequestBody @Valid AddStockRequestDTO requestDTO) {
+        InventoryResponseDTO inventory = service.addStock(id, requestDTO);
+        return ResponseEntity
+                .status(HttpStatus.OK)
+                .body(inventory);
+    }
+    
 
     @PatchMapping("/{id}")
     public ResponseEntity<InventoryResponseDTO> update(

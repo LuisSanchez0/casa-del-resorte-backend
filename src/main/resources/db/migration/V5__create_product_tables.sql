@@ -57,6 +57,7 @@ CREATE TABLE inventory (
     price NUMERIC(10, 2) NOT NULL CHECK (price >= 0),
     cost NUMERIC(10, 2) NOT NULL CHECK (cost >= 0),
     min_threshold SMALLINT NOT NULL CHECK (min_threshold >= 0),
+    is_bundle BOOLEAN,
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL,
     UNIQUE(product_id, workshop_id),
@@ -67,7 +68,7 @@ CREATE TABLE inventory (
 CREATE TABLE quantity_inventory (
     id UUID PRIMARY KEY,
     inventory_id UUID UNIQUE NOT NULL,
-    quantity SMALLINT NOT NULL CHECK (quantity >= 0),
+    units SMALLINT NOT NULL CHECK (units >= 0),
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL,
     FOREIGN KEY (inventory_id) REFERENCES inventory(id)
@@ -81,5 +82,5 @@ CREATE TABLE unit_inventory (
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL,
     FOREIGN KEY (inventory_id) REFERENCES inventory(id),
-    FOREIGN KEY (parent_id) REFERENCES inventory_unit(id)
+    FOREIGN KEY (parent_id) REFERENCES unit_inventory(id)
 );
