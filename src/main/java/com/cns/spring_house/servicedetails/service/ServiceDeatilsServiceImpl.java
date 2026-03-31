@@ -3,6 +3,7 @@ package com.cns.spring_house.servicedetails.service;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.cns.spring_house.family.entity.FamilyCategory;
@@ -25,6 +26,7 @@ import lombok.RequiredArgsConstructor;
 
 @RequiredArgsConstructor
 @Transactional
+@Service
 public class ServiceDeatilsServiceImpl implements ServiceDetailsService {
     
     private final ServiceDetailsRepository repository;

@@ -44,7 +44,7 @@ public class ContainerInventoryHandler implements InventoryHandler {
     private void addContainedItems(InventoryItem container, List<UUID> containedItems) {
         UUID workshopId = SecurityUtils.getWorkshopId();
         List<Inventory> inventories = repository
-                .findAllByProductIdAndWorkshopId(containedItems, workshopId);
+                .findAllByProductIdInAndWorkshopId(containedItems, workshopId);
         inventories.forEach(inventory -> {
             FamilyCategory childCategory = inventory
                     .getProduct()
