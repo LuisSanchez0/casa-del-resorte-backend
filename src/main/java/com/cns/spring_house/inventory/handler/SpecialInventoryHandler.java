@@ -7,15 +7,19 @@ import org.springframework.transaction.annotation.Transactional;
 import com.cns.spring_house.family.entity.FamilyCategory;
 import com.cns.spring_house.inventory.dto.AddStockRequestDTO;
 import com.cns.spring_house.inventory.entity.Inventory;
-import com.cns.spring_house.inventory.entity.QuantityInventory;
+import com.cns.spring_house.inventory.entity.InventoryItem;
+import com.cns.spring_house.inventory.entity.InventoryItemStatus;
 import com.cns.spring_house.shared.exception.ValidationException;
 
+import lombok.RequiredArgsConstructor;
+
 @Component
-public class QuantityInventoryHandler implements InventoryHandler {
+@RequiredArgsConstructor
+public class SpecialInventoryHandler implements InventoryHandler {
 
     @Override
     public FamilyCategory getType() {
-        return FamilyCategory.NORMAL;
+        return FamilyCategory.SPECIAL;
     }
 
     @Transactional(propagation = Propagation.MANDATORY)
@@ -25,20 +29,13 @@ public class QuantityInventoryHandler implements InventoryHandler {
             throw new ValidationException(
                     "Las unidades a agregar son necesarias");
         }
-        if (inventory.getQuantity() == null) {
-            QuantityInventory quantity = QuantityInventory.builder()
-                    .units(requestDTO.units())
+        for (int i = 0; i < requestDTO.units(); i++) {
+            InventoryItem item = InventoryItem.builder()
+                    .status(InventoryItemStatus.AVAILABLE)
                     .build();
-            inventory.setQuantity(quantity);
-            return;
+            inventory.addItem(item);
         }
-        inventory.getQuantity().addUnits(requestDTO.units());            
-    }
-
-    @Transactional(propagation = Propagation.MANDATORY)
-    @Override
-    public int getAvailableStock(Inventory inventory) {
-        return inventory.getQuantity().getUnits();
+        inventory.addStock(requestDTO.units());
     }
 
 }

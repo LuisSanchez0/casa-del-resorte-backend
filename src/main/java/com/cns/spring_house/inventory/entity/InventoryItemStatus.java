@@ -1,6 +1,6 @@
 package com.cns.spring_house.inventory.entity;
 
-public enum UnitInventoryStatus {
+public enum InventoryItemStatus {
 
     AVAILABLE,
     SOLD,

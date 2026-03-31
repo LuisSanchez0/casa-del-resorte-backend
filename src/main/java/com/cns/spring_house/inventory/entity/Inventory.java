@@ -13,12 +13,10 @@ import com.cns.spring_house.workshop.entity.Workshop;
 
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Entity;
-import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
-import jakarta.persistence.OneToOne;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -48,29 +46,26 @@ public class Inventory extends Auditable {
     private Product product;
     private BigDecimal price;
     private BigDecimal cost;
-    private Integer minThreshold;
-    private Boolean isBundle;
-    @OneToOne(
-            mappedBy = "inventory",
-            cascade = CascadeType.ALL,
-            orphanRemoval = true,
-            fetch = FetchType.LAZY)
-    private QuantityInventory quantity;
+    private Integer stock;
+    private Integer minStock;
     @Builder.Default
     @OneToMany(
             mappedBy = "inventory",
             cascade = CascadeType.ALL,
             orphanRemoval = true)
-    private List<UnitInventory> units = new ArrayList<>();
+    private List<InventoryItem> items = new ArrayList<>();
 
-    public void setQuantity(QuantityInventory quantity) {
-        this.quantity = quantity;
-        quantity.setInventory(this);
+    public void addStock(int units) {
+        this.stock += units;
     }
 
-    public void addUnit(UnitInventory unit) {
-        this.units.add(unit);
-        unit.setInventory(this);
+    public void removeStock(int units) {
+        this.stock -= units;
+    }
+
+    public void addItem(InventoryItem item) {
+        this.items.add(item);
+        item.setInventory(this);
     }
 
 }

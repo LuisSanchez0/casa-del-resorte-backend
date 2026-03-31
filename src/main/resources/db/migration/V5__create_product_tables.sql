@@ -22,7 +22,7 @@ CREATE TABLE family (
     code VARCHAR(25) UNIQUE NOT NULL,
     name VARCHAR(50) UNIQUE NOT NULL,
     requires_model BOOLEAN NOT NULL,
-    category VARCHAR(20) NOT NULL CHECK (category in ('SPECIAL', 'NORMAL', 'SERVICE')),
+    category VARCHAR(20) NOT NULL CHECK (category in ('SPECIAL', 'NORMAL', 'CONTAINER')),
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL
 );
@@ -32,17 +32,17 @@ CREATE TABLE attribute (
     family_id UUID NOT NULL,
     name VARCHAR(50) NOT NULL,
     data_type VARCHAR(10) NOT NULL CHECK (data_type IN ('NUMBER','STRING','BOOLEAN')),
-    is_required boolean NOT NULL, 
+    is_required BOOLEAN NOT NULL, 
     UNIQUE (family_id, name),
     FOREIGN KEY (family_id) REFERENCES family(id)
 );
 
 CREATE TABLE product (
     id UUID PRIMARY KEY,
-    sku VARCHAR(25) UNIQUE NOT NULL,
+    sku VARCHAR(25) UNIQUE,
     family_id UUID NOT NULL,
     name VARCHAR(100) NOT NULL,
-    attributes jsonb NOT NULL,
+    attributes JSONB NOT NULL,
     model_id UUID,
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL,
@@ -56,8 +56,8 @@ CREATE TABLE inventory (
     workshop_id UUID NOT NULL,
     price NUMERIC(10, 2) NOT NULL CHECK (price >= 0),
     cost NUMERIC(10, 2) NOT NULL CHECK (cost >= 0),
-    min_threshold SMALLINT NOT NULL CHECK (min_threshold >= 0),
-    is_bundle BOOLEAN,
+    stock SMALLINT NOT NULL CHECK (stock >= 0),
+    min_stock SMALLINT NOT NULL CHECK (min_stock >= 0),
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL,
     UNIQUE(product_id, workshop_id),
@@ -65,22 +65,13 @@ CREATE TABLE inventory (
     FOREIGN KEY (workshop_id) REFERENCES workshop(id)
 );
 
-CREATE TABLE quantity_inventory (
-    id UUID PRIMARY KEY,
-    inventory_id UUID UNIQUE NOT NULL,
-    units SMALLINT NOT NULL CHECK (units >= 0),
-    created_at TIMESTAMP NOT NULL,
-    updated_at TIMESTAMP NOT NULL,
-    FOREIGN KEY (inventory_id) REFERENCES inventory(id)
-);
-
-CREATE TABLE unit_inventory (
+CREATE TABLE inventory_item (
     id UUID PRIMARY KEY,
     inventory_id UUID NOT NULL,
     status VARCHAR(20) NOT NULL CHECK (status IN ('AVAILABLE', 'CONSUMED', 'SOLD', 'UNAVAILABLE')),
-    parent_id UUID,
+    package_id UUID,
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL,
     FOREIGN KEY (inventory_id) REFERENCES inventory(id),
-    FOREIGN KEY (parent_id) REFERENCES unit_inventory(id)
+    FOREIGN KEY (package_id) REFERENCES inventory_item(id)
 );

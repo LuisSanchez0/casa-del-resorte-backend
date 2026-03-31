@@ -27,7 +27,7 @@ public class InventoryHandlerRegistry {
     public InventoryHandler get(FamilyCategory category) {
         return Optional.ofNullable(handlers.get(category))
                 .orElseThrow(() -> new ValidationException(
-                        "No existe un handler para la categoria: "
+                        "No existe un manejador para la categoria: "
                         + category));
     }
 

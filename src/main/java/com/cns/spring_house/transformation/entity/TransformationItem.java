@@ -1,10 +1,10 @@
-package com.cns.spring_house.attribute.entity;
+package com.cns.spring_house.transformation.entity;
 
 import java.util.UUID;
 
 import org.hibernate.annotations.UuidGenerator;
 
-import com.cns.spring_house.family.entity.Family;
+import com.cns.spring_house.inventory.entity.InventoryItem;
 
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -13,6 +13,7 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.OneToOne;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.EqualsAndHashCode;
@@ -25,20 +26,21 @@ import lombok.experimental.SuperBuilder;
 @Getter
 @Setter
 @SuperBuilder
-@EqualsAndHashCode(of = "id")
+@EqualsAndHashCode(of = "id", callSuper = false)
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
-public class Attribute {
-
+public class TransformationItem {
+    
     @Id
     @UuidGenerator
     private UUID id;
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "family_id")
-    private Family family;
-    private String name;
+    @JoinColumn(name = "transformation_id")
+    private Transformation transformation;
+    @OneToOne
+    @JoinColumn(name = "item_id")
+    private InventoryItem item;
     @Enumerated(EnumType.STRING)
-    private AttributeDataType dataType;
-    private Boolean isRequired;
+    private TransformationItemRole role;
 
 }

@@ -7,7 +7,6 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.cns.spring_house.family.entity.FamilyCategory;
 import com.cns.spring_house.inventory.dto.AddStockRequestDTO;
 import com.cns.spring_house.inventory.dto.CreateInventoryRequestDTO;
 import com.cns.spring_house.inventory.dto.SearchInventoryRequestDTO;
@@ -79,9 +78,6 @@ public class InventoryServiceImpl implements InventoryService {
                         "No existe el producto especificado"));
         Inventory inventory = mapper.toInventory(requestDTO);
         inventory.setWorkshop(workshop);
-        if (product.getFamily().getCategory() == FamilyCategory.NORMAL) {
-            inventory.setIsBundle(null);
-        }
         inventory.setProduct(product);
         inventory = repository.save(inventory);
         return mapper.toResponse(inventory);

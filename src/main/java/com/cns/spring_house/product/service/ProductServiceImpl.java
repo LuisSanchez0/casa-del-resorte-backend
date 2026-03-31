@@ -20,7 +20,7 @@ import com.cns.spring_house.shared.exception.EntityAlreadyExistsException;
 import com.cns.spring_house.shared.exception.EntityNotFoundException;
 import com.cns.spring_house.shared.exception.ValidationException;
 import com.cns.spring_house.product.mapper.ProductMapper;
-import com.cns.spring_house.attribute.entity.Attribute;
+import com.cns.spring_house.family.entity.Attribute;
 import com.cns.spring_house.family.entity.Family;
 import com.cns.spring_house.model.entity.Model;
 import com.cns.spring_house.product.entity.Product;

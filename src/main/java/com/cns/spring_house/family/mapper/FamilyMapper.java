@@ -11,7 +11,7 @@ import com.cns.spring_house.family.dto.FamilyResponseDTO;
 import com.cns.spring_house.family.dto.UpdateFamilyRequestDTO;
 import com.cns.spring_house.family.entity.Family;
 
-@Mapper(componentModel = "spring")
+@Mapper(componentModel = "spring", uses = AttributeMapper.class)
 public interface FamilyMapper {
     
     @Mapping(target = "id", ignore = true)

@@ -1,4 +1,4 @@
-package com.cns.spring_house.attribute.entity;
+package com.cns.spring_house.family.entity;
 
 public enum AttributeDataType {
     
@@ -10,7 +10,7 @@ public enum AttributeDataType {
         if (value == null) return false;   
         return switch (this) {
             case STRING -> value instanceof String;
-            case NUMBER -> value instanceof Number;
+            case NUMBER -> value instanceof Double;
             case BOOLEAN -> value instanceof Boolean;
         };
     }

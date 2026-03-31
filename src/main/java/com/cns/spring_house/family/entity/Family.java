@@ -5,9 +5,9 @@ import java.util.UUID;
 
 import org.hibernate.annotations.UuidGenerator;
 
-import com.cns.spring_house.attribute.entity.Attribute;
 import com.cns.spring_house.shared.audit.Auditable;
 
+import jakarta.persistence.CascadeType;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -39,7 +39,16 @@ public class Family extends Auditable {
     private Boolean requiresModel;
     @Enumerated(EnumType.STRING)
     private FamilyCategory category;
-    @OneToMany(mappedBy = "family", fetch = FetchType.EAGER)
+    @OneToMany(
+            mappedBy = "family",
+            fetch = FetchType.EAGER,
+            orphanRemoval = true,
+            cascade = CascadeType.ALL)
     List<Attribute> attributes;
+
+    public void addAttribute(Attribute attribute) {
+        this.attributes.add(attribute);
+        attribute.setFamily(this);
+    }
 
 }

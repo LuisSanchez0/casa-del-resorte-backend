@@ -7,13 +7,17 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.cns.spring_house.family.dto.CreateAttributeRequestDTO;
 import com.cns.spring_house.family.dto.CreateFamilyRequestDTO;
 import com.cns.spring_house.family.dto.FamilyResponseDTO;
 import com.cns.spring_house.family.dto.SearchFamilyRequestDTO;
+import com.cns.spring_house.family.dto.UpdateAttributeRequestDTO;
 import com.cns.spring_house.family.dto.UpdateFamilyRequestDTO;
 import com.cns.spring_house.shared.exception.EntityAlreadyExistsException;
 import com.cns.spring_house.shared.exception.EntityNotFoundException;
+import com.cns.spring_house.family.mapper.AttributeMapper;
 import com.cns.spring_house.family.mapper.FamilyMapper;
+import com.cns.spring_house.family.entity.Attribute;
 import com.cns.spring_house.family.entity.Family;
 import com.cns.spring_house.family.repository.FamilyRepository;
 import com.cns.spring_house.family.repository.FamilySpecs;
@@ -27,6 +31,7 @@ public class FamilyServiceImpl implements FamilyService {
 
     private final FamilyRepository repository;
     private final FamilyMapper mapper;
+    private final AttributeMapper attributeMapper;
 
     @Override
     public FamilyResponseDTO get(UUID id) {
@@ -78,6 +83,49 @@ public class FamilyServiceImpl implements FamilyService {
         mapper.updateFamilyFromDTO(requestDTO, family);
         family = repository.save(family);
         return mapper.toResponse(family);
+    }
+
+    @Override
+    public FamilyResponseDTO createAttribute(
+            UUID id, CreateAttributeRequestDTO requestDTO) {
+        Family family = repository
+                .findById(id)
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "No existe la familia solicitada"));
+        validateDuplicateName(family, requestDTO.name(), null);
+        Attribute attribute = attributeMapper.toAttribute(requestDTO);
+        family.addAttribute(attribute);
+        family = repository.save(family);
+        return mapper.toResponse(family);
+    }
+
+    @Override
+    public FamilyResponseDTO updateAttribute(
+            UUID id, UUID attrId, UpdateAttributeRequestDTO requestDTO) {
+        Family family = repository
+                .findById(id)
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "No existe la familia solicitada"));
+        validateDuplicateName(family, requestDTO.name(), attrId);
+        Attribute attribute = family.getAttributes().stream()
+                .filter(attr -> attr.getId().equals(attrId))
+                .findFirst()
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "No existe el atributo especificado"));
+        attributeMapper.updateAttributeFromDTO(requestDTO, attribute);
+        family = repository.save(family);
+        return mapper.toResponse(family);
+    }
+
+    private void validateDuplicateName(Family family, String name, UUID excludeId) {
+        family.getAttributes().forEach(attr -> {
+            boolean exists = attr.getName().equals(name)
+                    && (excludeId == null || !attr.getId().equals(excludeId));
+            if (exists) {
+                throw new EntityAlreadyExistsException(
+                        "Ya existe un atributo con ese nombre");
+            }
+        });
     }
 
 }

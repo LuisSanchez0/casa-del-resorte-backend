@@ -9,7 +9,5 @@ public interface InventoryHandler {
     FamilyCategory getType();
     
     void addStock(Inventory inventory, AddStockRequestDTO requestDTO);
-
-    int getAvailableStock(Inventory inventory);
-
+    
 }

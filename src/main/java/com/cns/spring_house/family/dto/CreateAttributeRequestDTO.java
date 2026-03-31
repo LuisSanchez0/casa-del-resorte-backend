@@ -1,6 +1,4 @@
-package com.cns.spring_house.attribute.dto;
-
-import java.util.UUID;
+package com.cns.spring_house.family.dto;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -8,8 +6,6 @@ import jakarta.validation.constraints.Pattern;
 
 public record CreateAttributeRequestDTO(
 
-        @NotNull(message = "La familia es obligatoria")
-        UUID family,
         @NotBlank(message = "La nombre del atributo es obligatoria")
         String name,
         @NotNull(message = "El tipo de dato del atributo es obligatorio")

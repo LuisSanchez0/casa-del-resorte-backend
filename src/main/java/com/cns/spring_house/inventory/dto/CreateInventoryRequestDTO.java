@@ -18,8 +18,7 @@ public record CreateInventoryRequestDTO(
         BigDecimal cost,
         @NotNull(message = "El umbral minimo es obligatorio")
         @Min(value = 0, message = "El umbral minimo debe ser mayor o igual a {value}")
-        Integer minThreshold,
-        Boolean isBundle
+        Integer minStock
 
 ) {
 }

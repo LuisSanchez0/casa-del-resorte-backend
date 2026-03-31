@@ -1,4 +1,4 @@
-package com.cns.spring_house.attribute.dto;
+package com.cns.spring_house.family.dto;
 
 import java.util.UUID;
 

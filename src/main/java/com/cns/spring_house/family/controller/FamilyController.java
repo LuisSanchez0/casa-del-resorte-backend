@@ -3,9 +3,11 @@ package com.cns.spring_house.family.controller;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.cns.spring_house.family.dto.CreateAttributeRequestDTO;
 import com.cns.spring_house.family.dto.CreateFamilyRequestDTO;
 import com.cns.spring_house.family.dto.FamilyResponseDTO;
 import com.cns.spring_house.family.dto.SearchFamilyRequestDTO;
+import com.cns.spring_house.family.dto.UpdateAttributeRequestDTO;
 import com.cns.spring_house.family.dto.UpdateFamilyRequestDTO;
 import com.cns.spring_house.family.service.FamilyService;
 
@@ -65,7 +67,28 @@ public class FamilyController {
             @RequestBody @Valid UpdateFamilyRequestDTO requestDTO) {
         FamilyResponseDTO family = service.update(id, requestDTO);
         return ResponseEntity
+                .status(HttpStatus.OK)
+                .body(family);
+    }
+
+    @PostMapping("/{id}/attributes")
+    public ResponseEntity<FamilyResponseDTO> create(
+            @PathVariable UUID id,
+            @RequestBody @Valid CreateAttributeRequestDTO requestDTO) {
+        FamilyResponseDTO family = service.createAttribute(id, requestDTO);
+        return ResponseEntity
                 .status(HttpStatus.CREATED)
+                .body(family);
+    }
+
+    @PatchMapping("/{id}/attributes/{attrId}")
+    public ResponseEntity<FamilyResponseDTO> update(
+            @PathVariable UUID id,
+            @PathVariable UUID attrId,
+            @RequestBody @Valid UpdateAttributeRequestDTO requestDTO) {
+        FamilyResponseDTO family = service.updateAttribute(id, attrId, requestDTO);
+        return ResponseEntity
+                .status(HttpStatus.OK)
                 .body(family);
     }
     

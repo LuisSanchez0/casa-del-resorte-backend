@@ -1,4 +1,4 @@
-package com.cns.spring_house.attribute.mapper;
+package com.cns.spring_house.family.mapper;
 
 import org.mapstruct.BeanMapping;
 import org.mapstruct.Mapper;
@@ -6,10 +6,10 @@ import org.mapstruct.Mapping;
 import org.mapstruct.MappingTarget;
 import org.mapstruct.NullValuePropertyMappingStrategy;
 
-import com.cns.spring_house.attribute.dto.AttributeResponseDTO;
-import com.cns.spring_house.attribute.dto.CreateAttributeRequestDTO;
-import com.cns.spring_house.attribute.dto.UpdateAttributeRequestDTO;
-import com.cns.spring_house.attribute.entity.Attribute;
+import com.cns.spring_house.family.dto.AttributeResponseDTO;
+import com.cns.spring_house.family.dto.CreateAttributeRequestDTO;
+import com.cns.spring_house.family.dto.UpdateAttributeRequestDTO;
+import com.cns.spring_house.family.entity.Attribute;
 
 @Mapper(componentModel = "spring")
 public interface AttributeMapper {

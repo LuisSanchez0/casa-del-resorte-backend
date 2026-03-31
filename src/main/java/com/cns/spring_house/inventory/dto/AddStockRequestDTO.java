@@ -9,7 +9,7 @@ public record AddStockRequestDTO(
 
         @Min(value = 0, message = "Las unidades a agregar deben ser mayor o igual a {value}")
         Integer units,
-        List<UUID> children
+        List<UUID> containedItems
 
 ) {
     

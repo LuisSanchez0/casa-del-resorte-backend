@@ -11,7 +11,7 @@ public record UpdateInventoryRequestDTO(
         @Min(value = 0, message = "El ultimo costo de compra debe ser mayor o igual a {value}")
         BigDecimal cost,
         @Min(value = 0, message = "El umbral minimo debe ser mayor o igual a {value}")
-        Integer minThreshold
+        Integer minStock
 
 ) {
 }

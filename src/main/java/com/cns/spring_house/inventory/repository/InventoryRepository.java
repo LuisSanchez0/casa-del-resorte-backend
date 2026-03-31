@@ -1,5 +1,6 @@
 package com.cns.spring_house.inventory.repository;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -11,6 +12,8 @@ import com.cns.spring_house.inventory.entity.Inventory;
 public interface InventoryRepository extends JpaRepository<Inventory, UUID>, JpaSpecificationExecutor<Inventory> {
     
     Optional<Inventory> findByProductIdAndWorkshopId(UUID product, UUID workshop);
+
+    List<Inventory> findAllByProductIdAndWorkshopId(Iterable<UUID> productIds, UUID workshop);
 
     boolean existsByProductIdAndWorkshopId(UUID product, UUID workshop);
 

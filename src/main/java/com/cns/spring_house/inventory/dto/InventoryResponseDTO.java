@@ -13,6 +13,7 @@ public record InventoryResponseDTO(
         ProductResponseDTO product,
         BigDecimal price,
         BigDecimal cost,
-        Integer minThreshold
+        Integer stock,
+        Integer minStock
 
 ) { }
