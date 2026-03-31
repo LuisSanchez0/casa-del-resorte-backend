@@ -4,6 +4,7 @@ public enum FamilyCategory {
 
     NORMAL,
     SPECIAL,
+    SERVICE,
     CONTAINER;
 
 }

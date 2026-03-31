@@ -7,6 +7,7 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.cns.spring_house.family.entity.FamilyCategory;
 import com.cns.spring_house.inventory.dto.AddStockRequestDTO;
 import com.cns.spring_house.inventory.dto.CreateInventoryRequestDTO;
 import com.cns.spring_house.inventory.dto.SearchInventoryRequestDTO;
@@ -14,6 +15,7 @@ import com.cns.spring_house.inventory.dto.InventoryResponseDTO;
 import com.cns.spring_house.inventory.dto.UpdateInventoryRequestDTO;
 import com.cns.spring_house.shared.exception.EntityAlreadyExistsException;
 import com.cns.spring_house.shared.exception.EntityNotFoundException;
+import com.cns.spring_house.shared.exception.ValidationException;
 import com.cns.spring_house.shared.security.SecurityUtils;
 import com.cns.spring_house.inventory.mapper.InventoryMapper;
 import com.cns.spring_house.product.entity.Product;
@@ -76,6 +78,10 @@ public class InventoryServiceImpl implements InventoryService {
                 .findById(requestDTO.product())
                 .orElseThrow(() -> new EntityNotFoundException(
                         "No existe el producto especificado"));
+        if (product.getFamily().getCategory() == FamilyCategory.SERVICE) {
+            throw new ValidationException(
+                    "No se puede crear un inventario de un servicio");
+        }
         Inventory inventory = mapper.toInventory(requestDTO);
         inventory.setWorkshop(workshop);
         inventory.setProduct(product);
