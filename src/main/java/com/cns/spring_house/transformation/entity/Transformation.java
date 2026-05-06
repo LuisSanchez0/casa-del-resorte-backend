@@ -1,5 +1,6 @@
 package com.cns.spring_house.transformation.entity;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -38,6 +39,7 @@ public class Transformation extends Auditable {
     @Id
     @UuidGenerator
     private UUID id;
+    private LocalDateTime performedDate;
     @ManyToOne
     @JoinColumn(name = "workshop_id")
     private Workshop workshop;

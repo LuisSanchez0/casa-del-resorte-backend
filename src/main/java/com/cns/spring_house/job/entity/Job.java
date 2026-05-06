@@ -1,4 +1,4 @@
-package com.cns.spring_house.servicedetails.entity;
+package com.cns.spring_house.job.entity;
 
 import java.math.BigDecimal;
 import java.util.UUID;
@@ -28,12 +28,13 @@ import lombok.experimental.SuperBuilder;
 @EqualsAndHashCode(of = "id", callSuper = false)
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
-public class ServiceDetails extends Auditable {
+public class Job extends Auditable {
     
     @UuidGenerator
     @Id
     private UUID id;
     @ManyToOne
+    @JoinColumn(name = "product_id")
     private Product product;
     @ManyToOne
     @JoinColumn(name = "workshop_id")

@@ -1,4 +1,4 @@
-package com.cns.spring_house.servicedetails.dto;
+package com.cns.spring_house.job.dto;
 
 import java.math.BigDecimal;
 import java.util.UUID;
@@ -6,7 +6,7 @@ import java.util.UUID;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 
-public record CreateServiceDetailsRequestDTO(
+public record CreateJobRequestDTO(
 
         @NotNull(message = "El producto es obligatorio")
         UUID product,

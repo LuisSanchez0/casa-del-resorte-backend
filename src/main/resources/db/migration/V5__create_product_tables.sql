@@ -22,7 +22,7 @@ CREATE TABLE family (
     code VARCHAR(25) UNIQUE NOT NULL,
     name VARCHAR(50) UNIQUE NOT NULL,
     requires_model BOOLEAN NOT NULL,
-    category VARCHAR(20) NOT NULL CHECK (category in ('SPECIAL', 'NORMAL', 'CONTAINER', 'SERVICE')),
+    category VARCHAR(20) NOT NULL CHECK (category in ('SPECIAL', 'NORMAL', 'CONTAINER', 'JOB')),
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL
 );

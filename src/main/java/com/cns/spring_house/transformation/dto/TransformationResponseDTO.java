@@ -1,5 +1,6 @@
 package com.cns.spring_house.transformation.dto;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -11,6 +12,7 @@ public record TransformationResponseDTO(
         UUID id,
         WorkshopResponseDTO workshop,
         EmployeeResponseDTO employee,
+        LocalDateTime performedDate,
         List<TransformationItemResponseDTO> items
 
 ) {

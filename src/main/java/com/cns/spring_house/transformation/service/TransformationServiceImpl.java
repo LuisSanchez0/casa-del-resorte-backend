@@ -1,5 +1,7 @@
 package com.cns.spring_house.transformation.service;
 
+import java.time.LocalDateTime;
+
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -76,6 +78,7 @@ public class TransformationServiceImpl implements TransformationService {
         Transformation transformation = Transformation.builder()
                 .employee(employee)
                 .workshop(workshop)
+                .performedDate(LocalDateTime.now())
                 .build();
         return transformation;
     }
