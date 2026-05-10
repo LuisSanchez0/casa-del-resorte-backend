@@ -1,7 +1,10 @@
 package com.cns.spring_house.transformation.service;
 
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.UUID;
 
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -15,12 +18,14 @@ import com.cns.spring_house.shared.exception.EntityNotFoundException;
 import com.cns.spring_house.shared.exception.ValidationException;
 import com.cns.spring_house.shared.security.SecurityUtils;
 import com.cns.spring_house.transformation.dto.CreateTransformationRequestDTO;
+import com.cns.spring_house.transformation.dto.SearchTransformationRequestDTO;
 import com.cns.spring_house.transformation.dto.TransformationResponseDTO;
 import com.cns.spring_house.transformation.entity.Transformation;
 import com.cns.spring_house.transformation.handler.TransformationHandlerRegistry;
 import com.cns.spring_house.transformation.handler.TransformationHandler;
 import com.cns.spring_house.transformation.mapper.TransformationMapper;
 import com.cns.spring_house.transformation.repository.TransformationRepository;
+import com.cns.spring_house.transformation.repository.TransformationSpecs;
 import com.cns.spring_house.workshop.entity.Workshop;
 import com.cns.spring_house.workshop.repository.WorkshopRepository;
 
@@ -37,6 +42,27 @@ public class TransformationServiceImpl implements TransformationService {
     private final WorkshopRepository workshopRepository;
     private final EmployeeRepository employeeRepository;
     private final TransformationHandlerRegistry registry;
+
+    @Override
+    public List<TransformationResponseDTO> getAll(SearchTransformationRequestDTO requestDTO) {
+        Specification<Transformation> specs = Specification.allOf(
+                TransformationSpecs.hasEmployee(requestDTO.employee()),
+                TransformationSpecs.hasWorkshop(requestDTO.workshop()),
+                TransformationSpecs.performedDateBetween(requestDTO.minDate(), requestDTO.maxDate()));
+        List<TransformationResponseDTO> transformations = repository.findAll(specs)
+                .stream()
+                .map(mapper::toResponse)
+                .toList();
+        return transformations;
+    }
+
+    @Override
+    public TransformationResponseDTO get(UUID id) {
+        Transformation transformation = repository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "No existe la transformacion solicitada"));
+        return mapper.toResponse(transformation);
+    }
 
     @Override
     public TransformationResponseDTO create(
