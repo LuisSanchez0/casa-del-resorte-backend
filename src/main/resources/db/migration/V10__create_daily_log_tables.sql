@@ -3,7 +3,7 @@ CREATE TABLE daily_log (
     workshop_id UUID NOT NULL,
     employee_id UUID NOT NULL,
     description TEXT NOT NULL,
-    log_date DATE UNIQUE NOT NULL,
+    performed_date DATE UNIQUE NOT NULL,
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL,
     FOREIGN KEY (workshop_id) REFERENCES workshop(id),
