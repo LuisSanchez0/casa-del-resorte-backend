@@ -8,5 +8,6 @@ import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import com.cns.spring_house.job.entity.JobLog;
 
 public interface JobLogRepository extends JpaRepository<JobLog, UUID>, JpaSpecificationExecutor<JobLog> {
+
     
 }
