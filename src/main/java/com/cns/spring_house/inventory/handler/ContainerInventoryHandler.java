@@ -1,7 +1,10 @@
 package com.cns.spring_house.inventory.handler;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Component;
 
@@ -19,7 +22,7 @@ import lombok.RequiredArgsConstructor;
 @Component
 @RequiredArgsConstructor
 public class ContainerInventoryHandler implements InventoryHandler {
-    
+
     private final InventoryRepository repository;
 
     @Override
@@ -30,8 +33,8 @@ public class ContainerInventoryHandler implements InventoryHandler {
     @Override
     public void addStock(Inventory inventory, AddStockRequestDTO requestDTO) {
         if (requestDTO.containedItems() == null || requestDTO.containedItems().isEmpty()) {
-                throw new ValidationException(
-                        "Es necesaria una lista de subproductos");
+            throw new ValidationException(
+                    "Es necesaria una lista de subproductos");
         }
         InventoryItem item = InventoryItem.builder()
                 .status(InventoryItemStatus.AVAILABLE)
@@ -43,21 +46,27 @@ public class ContainerInventoryHandler implements InventoryHandler {
 
     private void addContainedItems(InventoryItem container, List<UUID> containedItems) {
         UUID workshopId = SecurityUtils.getWorkshopId();
-        List<Inventory> inventories = repository
-                .findAllByProductIdInAndWorkshopId(containedItems, workshopId);
-        inventories.forEach(inventory -> {
-            FamilyCategory childCategory = inventory
-                    .getProduct()
-                    .getFamily()
-                    .getCategory();
-            if (childCategory == FamilyCategory.SPECIAL) {
-                InventoryItem item = InventoryItem.builder()
-                        .status(InventoryItemStatus.UNAVAILABLE)
-                        .build();
-                container.addItem(item);
-                inventory.addItem(item);
+        Map<UUID, Inventory> inventories = repository
+                .findAllByProductIdInAndWorkshopId(containedItems, workshopId)
+                .stream()
+                .collect(Collectors.toMap(
+                        inventory -> inventory.getProduct().getId(),
+                        Function.identity()));
+        containedItems.forEach(item -> {
+            Inventory inventory = inventories.get(item);
+            if (inventory != null && isSpecialCategory(inventory)) {
+                InventoryItem inventoryItem = InventoryItem.builder()
+                            .status(InventoryItemStatus.UNAVAILABLE)
+                            .build();
+                container.addItem(inventoryItem);
+                inventory.addItem(inventoryItem);
             }
         });
+    }
+
+    private boolean isSpecialCategory(Inventory inventory) {
+        FamilyCategory category = inventory.getProduct().getFamily().getCategory();
+        return category == FamilyCategory.SPECIAL;
     }
 
 }

@@ -1,6 +1,5 @@
 package com.cns.spring_house.dailylog.service;
 
-import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
@@ -62,7 +61,6 @@ public class DailyLogServiceImpl implements DailyLogService {
                 .employee(employee)
                 .workshop(employee.getWorkshop())
                 .description(requestDTO.description())
-                .performedDate(LocalDate.now())
                 .build();
         dailyLog = repository.save(dailyLog);
         return mapper.toResponse(dailyLog);

@@ -82,7 +82,7 @@ public class JobServiceImpl implements JobService {
                 .findById(requestDTO.product())
                 .orElseThrow(() -> new EntityNotFoundException(
                         "No existe el servicio especificado"));
-        if (product.getFamily().getCategory() != FamilyCategory.SERVICE) {
+        if (product.getFamily().getCategory() != FamilyCategory.JOB) {
             throw new ValidationException("El producto no es un servicio");
         }
         boolean exists = repository.existsByWorkshopIdAndProductId(

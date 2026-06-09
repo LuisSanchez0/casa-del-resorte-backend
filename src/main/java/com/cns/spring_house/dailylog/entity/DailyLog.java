@@ -15,6 +15,7 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -33,7 +34,8 @@ public class DailyLog extends Auditable {
     @UuidGenerator
     @Id
     private UUID id;
-    private LocalDate performedDate;
+    @Builder.Default
+    private LocalDate performedDate = LocalDate.now();
     @ManyToOne
     @JoinColumn(name = "workshop_id")
     private Workshop workshop;

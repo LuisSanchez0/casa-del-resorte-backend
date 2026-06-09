@@ -78,7 +78,7 @@ public class InventoryServiceImpl implements InventoryService {
                 .findById(requestDTO.product())
                 .orElseThrow(() -> new EntityNotFoundException(
                         "No existe el producto especificado"));
-        if (product.getFamily().getCategory() == FamilyCategory.SERVICE) {
+        if (product.getFamily().getCategory() == FamilyCategory.JOB) {
             throw new ValidationException(
                     "No se puede crear un inventario de un servicio");
         }

@@ -14,12 +14,12 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
-import lombok.Builder.Default;
 import lombok.experimental.SuperBuilder;
 
 @Entity
@@ -39,7 +39,7 @@ public class VehicleMovement extends Auditable {
     @JoinColumn(name = "workshop_id")
     private Workshop workshop;
     private String plate;
-    @Default
+    @Builder.Default
     private LocalDateTime entry = LocalDateTime.now();
     private LocalDateTime exit;
     private String notes;

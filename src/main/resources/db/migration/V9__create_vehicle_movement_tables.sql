@@ -3,7 +3,7 @@ CREATE TABLE vehicle_movement (
     workshop_id UUID NOT NULL,
     plate VARCHAR(10) NOT NULL,
     entry TIMESTAMP NOT NULL,
-    exit TIMESTAMP NULL,
+    exit TIMESTAMP,
     notes TEXT,
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL,

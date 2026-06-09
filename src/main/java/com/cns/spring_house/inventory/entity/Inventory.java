@@ -8,6 +8,7 @@ import java.util.UUID;
 import org.hibernate.annotations.UuidGenerator;
 
 import com.cns.spring_house.shared.audit.Auditable;
+import com.cns.spring_house.shared.exception.ValidationException;
 import com.cns.spring_house.product.entity.Product;
 import com.cns.spring_house.workshop.entity.Workshop;
 
@@ -60,6 +61,10 @@ public class Inventory extends Auditable {
     }
 
     public void removeStock(int units) {
+        if (stock == 0 || units > stock) {
+            throw new ValidationException(
+                    "No es posible remover el stock");
+        }
         this.stock -= units;
     }
 

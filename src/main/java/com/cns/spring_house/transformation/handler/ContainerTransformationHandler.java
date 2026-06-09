@@ -37,6 +37,7 @@ public class ContainerTransformationHandler implements TransformationHandler {
     private TransformationItem processInputItem(InventoryItem inputItem) {
         inputItem.getContainedItems().forEach(item -> {
             item.setStatus(InventoryItemStatus.AVAILABLE);
+            item.getInventory().addStock(1);
         });
         inputItem.setStatus(InventoryItemStatus.CONSUMED);
         inputItem.getInventory().removeStock(1);
