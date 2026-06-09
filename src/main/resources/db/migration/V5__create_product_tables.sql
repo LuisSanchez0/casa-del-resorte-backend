@@ -68,7 +68,7 @@ CREATE TABLE inventory (
 CREATE TABLE inventory_item (
     id UUID PRIMARY KEY,
     inventory_id UUID NOT NULL,
-    status VARCHAR(20) NOT NULL CHECK (status IN ('AVAILABLE', 'CONSUMED', 'SOLD', 'UNAVAILABLE', 'RESERVED')),
+    status VARCHAR(20) NOT NULL CHECK (status IN ('AVAILABLE', 'CONSUMED', 'SOLD', 'UNAVAILABLE')),
     package_id UUID,
     created_at TIMESTAMP NOT NULL,
     updated_at TIMESTAMP NOT NULL,
