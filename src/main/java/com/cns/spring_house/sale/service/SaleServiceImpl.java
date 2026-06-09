@@ -56,6 +56,7 @@ public class SaleServiceImpl implements SaleService {
                 Specification.anyOf(
                         SaleSpecs.nameContains(requestDTO.customer()),
                         SaleSpecs.nitContains(requestDTO.customer())),
+                SaleSpecs.hasStatus(requestDTO.status()),
                 SaleSpecs.hasWorkshop(requestDTO.workshop()),
                 SaleSpecs.hasEmployee(requestDTO.employee()),
                 SaleSpecs.totalBetween(requestDTO.minTotal(), requestDTO.maxTotal()),

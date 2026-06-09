@@ -1,5 +1,6 @@
 package com.cns.spring_house.inventory.repository;
 
+import java.math.BigDecimal;
 import java.util.UUID;
 
 import org.springframework.data.jpa.domain.Specification;
@@ -24,6 +25,42 @@ public class InventorySpecs {
                 : criteriaBuilder.equal(
                         root.get("product").get("id"),
                         product);
+    }
+
+    public static Specification<Inventory> isLowStock(Boolean isLowStock) {
+        return (root, query, criteriaBuilder) -> {
+            if (isLowStock == null) {
+                return null;
+            }
+            if (isLowStock) {
+                return criteriaBuilder.lessThanOrEqualTo(root.get("stock"), root.get("minStock"));
+            }
+            return criteriaBuilder.greaterThanOrEqualTo(root.get("stock"), root.get("minStock"));
+        };
+    }
+
+    public static Specification<Inventory> priceBetween(BigDecimal minPrice, BigDecimal maxPrice) {
+        return (root, query, criteriaBuilder) -> {
+            if (minPrice != null && maxPrice != null) 
+                    return criteriaBuilder.between(root.get("price"), minPrice, maxPrice);
+            if (maxPrice != null)
+                    return criteriaBuilder.lessThanOrEqualTo(root.get("price"), maxPrice);
+            if (minPrice != null)
+                    return criteriaBuilder.greaterThan(root.get("price"), maxPrice);
+            return null;
+        };
+    }
+
+    public static Specification<Inventory> costBetween(BigDecimal minCost, BigDecimal maxCost) {
+        return (root, query, criteriaBuilder) -> {
+            if (minCost != null && maxCost != null) 
+                    return criteriaBuilder.between(root.get("cost"), minCost, maxCost);
+            if (maxCost != null)
+                    return criteriaBuilder.lessThanOrEqualTo(root.get("cost"), maxCost);
+            if (minCost != null)
+                    return criteriaBuilder.greaterThanOrEqualTo(root.get("cost"), maxCost);
+            return null;
+        };
     }
 
 }

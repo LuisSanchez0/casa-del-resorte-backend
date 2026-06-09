@@ -54,7 +54,10 @@ public class InventoryServiceImpl implements InventoryService {
     public List<InventoryResponseDTO> getAll(SearchInventoryRequestDTO requestDTO) {
         Specification<Inventory> specs = Specification.allOf(
                 InventorySpecs.hasProduct(requestDTO.product()),
-                InventorySpecs.hasWorkshop(requestDTO.workshop()));
+                InventorySpecs.hasWorkshop(requestDTO.workshop()),
+                InventorySpecs.costBetween(requestDTO.minCost(), requestDTO.maxCost()),
+                InventorySpecs.priceBetween(requestDTO.minPrice(), requestDTO.maxPrice()),
+                InventorySpecs.isLowStock(requestDTO.isLowStock()));
         return repository.findAll(specs)
                 .stream()
                 .map(mapper::toResponse)

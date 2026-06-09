@@ -7,6 +7,7 @@ import java.util.UUID;
 import org.springframework.data.jpa.domain.Specification;
 
 import com.cns.spring_house.sale.entity.Sale;
+import com.cns.spring_house.sale.entity.SaleStatus;
 
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
@@ -64,6 +65,13 @@ public class SaleSpecs {
                 : criteriaBuilder.equal(
                         root.get("workshop").get("id"),
                         workshop);
+    }
+
+    public static Specification<Sale> hasStatus(SaleStatus status) {
+        return (root, query, criteriaBuilder) -> status == null ? null
+                : criteriaBuilder.equal(
+                        root.get("status"),
+                        status);
     }
 
 }

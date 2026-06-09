@@ -4,6 +4,8 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
+import com.cns.spring_house.sale.entity.SaleStatus;
+
 public record SearchSaleRequestDTO(
 
     String customer,
@@ -12,7 +14,8 @@ public record SearchSaleRequestDTO(
     LocalDateTime minDate,
     LocalDateTime maxDate,
     UUID workshop,
-    UUID employee
+    UUID employee,
+    SaleStatus status
 
 ) {
     
