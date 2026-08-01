@@ -13,8 +13,8 @@ public record CreateFamilyRequestDTO(
         @NotNull(message = "Es obligatorio especificar si necesita un modelo")
         Boolean requiresModel,
         @NotBlank(message = "La categoria es obligatoria")
-        @Pattern(regexp = "SERVICE|SPECIAL|NORMAL",
-                message = "La categoria puede ser solamente SERVICE, SPECIAL o NORMAL")
+        @Pattern(regexp = "JOB|SPECIAL|NORMAL|CONTAINER",
+                message = "La categoria puede ser solamente JOB, SPECIAL, CONTAINER o NORMAL")
         String category
 
 ) {
