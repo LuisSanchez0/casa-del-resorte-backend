@@ -22,7 +22,7 @@ public class DailyLogSpecs {
 
     public static Specification<DailyLog> performedDateBetween(LocalDate min, LocalDate max) {
         return (root, query, criteriaBuilder) -> {
-            if (min != null && max != null) 
+            if (min != null && max != null)
                     return criteriaBuilder.between(root.get("performedDate"), min, max);
             if (max != null)
                     return criteriaBuilder.lessThanOrEqualTo(root.get("performedDate"), max);
@@ -38,5 +38,13 @@ public class DailyLogSpecs {
                         root.get("employee").get("id"),
                         employee);
     }
-    
+
+    /** Busca el registro levantado a partir de una factura concreta. */
+    public static Specification<DailyLog> hasSale(UUID sale) {
+        return (root, query, criteriaBuilder) -> sale == null ? null
+                : criteriaBuilder.equal(
+                        root.get("sale").get("id"),
+                        sale);
+    }
+
 }

@@ -1,7 +1,6 @@
 package com.cns.spring_house.sale.handler;
 
 import java.math.BigDecimal;
-import java.util.Optional;
 
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
@@ -16,6 +15,7 @@ import com.cns.spring_house.sale.entity.Sale;
 import com.cns.spring_house.sale.entity.SaleDetail;
 import com.cns.spring_house.shared.exception.EntityNotFoundException;
 import com.cns.spring_house.shared.exception.ValidationException;
+import com.cns.spring_house.shared.security.SecurityUtils;
 
 import lombok.RequiredArgsConstructor;
 
@@ -32,12 +32,16 @@ public class SpecialSaleDetailHandler implements SaleDetailHandler {
 
     @Override
     @Transactional(propagation = Propagation.MANDATORY)
-    public void addDetail(Sale sale, AddSaleDetailRequestDTO requestDTO) {
+    public SaleDetail addDetail(Sale sale, AddSaleDetailRequestDTO requestDTO) {
         if (requestDTO.item() == null) {
             throw new ValidationException(
                     "El item es obligatorio");
         }
-        InventoryItem item = repository.findById(requestDTO.item())
+        // Acotado al taller del token: un item de otro taller no debe ser vendible
+        // ni siquiera conociendo su UUID.
+        InventoryItem item = repository
+                .findByIdAndInventoryWorkshopId(
+                        requestDTO.item(), SecurityUtils.getWorkshopId())
                 .orElseThrow(() -> new EntityNotFoundException(
                         "No existe el item especificado"));
         if (item.getStatus() != InventoryItemStatus.AVAILABLE) {
@@ -46,14 +50,14 @@ public class SpecialSaleDetailHandler implements SaleDetailHandler {
         }
         item.setStatus(InventoryItemStatus.SOLD);
         item.getInventory().removeStock(1);
-        SaleDetail detail = createDetail(item, requestDTO.price());
+        SaleDetail detail = createDetail(item, requestDTO);
         sale.addDetail(detail);
-        
+        return detail;
     }
 
     @Override
     @Transactional(propagation = Propagation.MANDATORY)
-    public void removeDetail(Sale sale, SaleDetail saleDetail) {
+    public void restore(SaleDetail saleDetail) {
         InventoryItem item = saleDetail.getItem();
         if (item == null) {
             throw new ValidationException(
@@ -65,19 +69,20 @@ public class SpecialSaleDetailHandler implements SaleDetailHandler {
         }
         item.setStatus(InventoryItemStatus.AVAILABLE);
         item.getInventory().addStock(1);
-        sale.removeDetail(saleDetail);
     }
 
-    private SaleDetail createDetail(InventoryItem item, BigDecimal newPrice) {
-        BigDecimal price = Optional
-                .ofNullable(newPrice)
-                .orElse(item.getInventory().getPrice());
+    private SaleDetail createDetail(InventoryItem item, AddSaleDetailRequestDTO requestDTO) {
+        BigDecimal price = resolvePrice(
+                requestDTO.price(),
+                item.getInventory().getPrice(),
+                item.getInventory().getCost());
         return SaleDetail.builder()
                 .item(item)
                 .quantity(1)
                 .price(price)
                 .product(item.getInventory().getProduct())
                 .subTotal(price)
+                .invoiceDescription(requestDTO.invoiceDescription())
                 .build();
     }
 

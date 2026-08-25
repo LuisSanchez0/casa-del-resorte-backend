@@ -1,7 +1,6 @@
 package com.cns.spring_house.sale.handler;
 
 import java.math.BigDecimal;
-import java.util.Optional;
 
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
@@ -30,11 +29,16 @@ public class JobSaleDetailHandler implements SaleDetailHandler {
         return FamilyCategory.JOB;
     }
 
+    /**
+     * `requestDTO.product()` es Product.id, no Job.id. Antes se buscaba el Job por
+     * ese UUID mientras el servicio lo resolvia como producto, de modo que ningun
+     * valor podia satisfacer a los dos y la venta de servicios nunca completaba.
+     */
     @Override
     @Transactional(propagation = Propagation.MANDATORY)
-    public void addDetail(Sale sale, AddSaleDetailRequestDTO requestDTO) {
+    public SaleDetail addDetail(Sale sale, AddSaleDetailRequestDTO requestDTO) {
         Job job = repository
-                .findByIdAndWorkshopId(
+                .findByProductIdAndWorkshopId(
                         requestDTO.product(), SecurityUtils.getWorkshopId())
                 .orElseThrow(() -> new EntityNotFoundException(
                         "No existe el servicio especificado"));
@@ -43,18 +47,25 @@ public class JobSaleDetailHandler implements SaleDetailHandler {
         }
         SaleDetail detail = createDetail(job, requestDTO);
         sale.addDetail(detail);
+        return detail;
     }
 
+    /** Un servicio no reserva inventario: no hay nada que devolver. */
     @Override
     @Transactional(propagation = Propagation.MANDATORY)
-    public void removeDetail(Sale sale, SaleDetail saleDetail) {
-        sale.removeDetail(saleDetail);
+    public void restore(SaleDetail saleDetail) {
+        // Intencionadamente vacio.
     }
 
+    /**
+     * Un servicio no tiene costo de adquisicion en el modelo: `Job.price` es
+     * precio de catalogo, no costo, y no existe ninguna entidad que registre el
+     * costo real de ejecutarlo. Por eso se pasa null como costo y solo se impide
+     * el precio negativo; confundir catalogo con costo bloquearia descuentos
+     * comerciales legitimos sobre mano de obra.
+     */
     private SaleDetail createDetail(Job job, AddSaleDetailRequestDTO requestDTO) {
-        BigDecimal price = Optional
-                .ofNullable(requestDTO.price())
-                .orElse(job.getPrice());
+        BigDecimal price = resolvePrice(requestDTO.price(), job.getPrice(), null);
         BigDecimal subTotal = price.multiply(
                 BigDecimal.valueOf(requestDTO.quantity()));
         return SaleDetail.builder()
@@ -62,6 +73,7 @@ public class JobSaleDetailHandler implements SaleDetailHandler {
                 .price(price)
                 .product(job.getProduct())
                 .subTotal(subTotal)
+                .invoiceDescription(requestDTO.invoiceDescription())
                 .build();
     }
 

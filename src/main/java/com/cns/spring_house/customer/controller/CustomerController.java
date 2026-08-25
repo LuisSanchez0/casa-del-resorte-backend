@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 
 
 @RestController
@@ -48,19 +49,32 @@ public class CustomerController {
                 .body(customer);
     }
 
-    @PostMapping("/{id}")
-    public ResponseEntity<CustomerResponseDTO> get(
-            @Valid CreateCustomerRequestDTO requestDTO) {
+    /**
+     * Alta de cliente en la raiz de la coleccion: un cliente que todavia no
+     * existe no tiene identificador, asi que no puede colgar de `/{id}`.
+     *
+     * Antes se mapeaba en `/{id}` y sin `@RequestBody`, de modo que Spring
+     * enlazaba el DTO desde parametros de consulta y descartaba el JSON: la ruta
+     * canonica respondia 405 y la mapeada rechazaba todo cuerpo por vacio.
+     */
+    @PostMapping
+    public ResponseEntity<CustomerResponseDTO> create(
+            @RequestBody @Valid CreateCustomerRequestDTO requestDTO) {
         CustomerResponseDTO customer = service.create(requestDTO);
         return ResponseEntity
                 .status(HttpStatus.CREATED)
                 .body(customer);
     }
 
+    /**
+     * `@RequestBody` no es decorativo: sin el, los campos llegaban nulos y el
+     * mapeo parcial los ignoraba, asi que la peticion respondia 200 sin haber
+     * cambiado nada. Una actualizacion silenciosamente vacia es peor que un error.
+     */
     @PatchMapping("/{id}")
-    public ResponseEntity<CustomerResponseDTO> get(
+    public ResponseEntity<CustomerResponseDTO> update(
             @PathVariable UUID id,
-            @Valid UpdateCustomerRequestDTO requestDTO) {
+            @RequestBody @Valid UpdateCustomerRequestDTO requestDTO) {
         CustomerResponseDTO customer = service.update(id, requestDTO);
         return ResponseEntity
                 .status(HttpStatus.OK)

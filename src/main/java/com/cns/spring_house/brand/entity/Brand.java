@@ -6,6 +6,9 @@ import org.hibernate.annotations.UuidGenerator;
 
 import com.cns.spring_house.shared.audit.Auditable;
 
+import com.cns.spring_house.shared.constants.ColumnLimits;
+
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import lombok.AccessLevel;
@@ -28,6 +31,7 @@ public class Brand extends Auditable {
     @Id
     @UuidGenerator
     private UUID id;
+    @Column(length = ColumnLimits.BRAND_NAME)
     private String name;
     private String logoKey;
 

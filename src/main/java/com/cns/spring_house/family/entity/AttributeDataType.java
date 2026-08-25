@@ -10,7 +10,7 @@ public enum AttributeDataType {
         if (value == null) return false;   
         return switch (this) {
             case STRING -> value instanceof String;
-            case NUMBER -> value instanceof Double;
+            case NUMBER -> value instanceof Number;
             case BOOLEAN -> value instanceof Boolean;
         };
     }

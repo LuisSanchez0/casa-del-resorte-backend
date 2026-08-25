@@ -23,7 +23,7 @@ public class JobLogSpecs {
     public static Specification<JobLog> hasWorkshop(UUID workshop) {
         return (root, query, criteriaBuilder) -> workshop == null ? null
                 : criteriaBuilder.equal(
-                        root.get("service").get("workshop").get("id"),
+                        root.get("job").get("workshop").get("id"),
                         workshop);
     }
 

@@ -7,6 +7,9 @@ import org.hibernate.annotations.UuidGenerator;
 import com.cns.spring_house.shared.audit.Auditable;
 import com.cns.spring_house.brand.entity.Brand;
 
+import com.cns.spring_house.shared.constants.ColumnLimits;
+
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
@@ -34,6 +37,7 @@ public class Model extends Auditable {
     @ManyToOne
     @JoinColumn(name = "brand_id")
     private Brand brand;
+    @Column(length = ColumnLimits.MODEL_NAME)
     private String name;
     private Integer year;
 

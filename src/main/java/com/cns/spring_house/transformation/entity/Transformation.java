@@ -1,6 +1,7 @@
 package com.cns.spring_house.transformation.entity;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -19,6 +20,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
@@ -46,12 +48,13 @@ public class Transformation extends Auditable {
     @ManyToOne
     @JoinColumn(name = "employee_id")
     private Employee employee;
+    @Builder.Default
     @OneToMany(
             mappedBy = "transformation",
             fetch = FetchType.EAGER,
             cascade = CascadeType.ALL,
             orphanRemoval = true)
-    private List<TransformationItem> items;
+    private List<TransformationItem> items = new ArrayList<>();
 
     public void addItem(TransformationItem item) {
         this.items.add(item);

@@ -10,6 +10,7 @@ public record ProductResponseDTO(
         UUID id,
         String sku,
         String name,
+        ProductFamilyResponseDTO family,
         ModelResponseDTO model,
         Map<String, Object> attributes
 

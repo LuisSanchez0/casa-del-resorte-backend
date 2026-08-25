@@ -4,19 +4,35 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
+import com.cns.spring_house.sale.entity.InvoiceType;
+import com.cns.spring_house.sale.entity.PaymentStatus;
 import com.cns.spring_house.sale.entity.SaleStatus;
 
+/**
+ * `workshop` se conserva por compatibilidad con los clientes que ya lo envian,
+ * pero el servicio lo IGNORA: el alcance sale del token, nunca de la peticion.
+ */
 public record SearchSaleRequestDTO(
 
+    /** Texto libre: coincide contra el nombre O el nit del cliente. */
     String customer,
+    /**
+     * Cliente exacto, por identificador. Es lo que usa la caja cuando ya
+     * resolvio el Customer y necesita saber si tiene ventas abiertas: comparar
+     * el nit como texto relacionaria ventas de clientes distintos.
+     */
+    UUID customerId,
+    String plate,
     BigDecimal minTotal,
     BigDecimal maxTotal,
     LocalDateTime minDate,
     LocalDateTime maxDate,
     UUID workshop,
     UUID employee,
-    SaleStatus status
+    SaleStatus status,
+    InvoiceType invoiceType,
+    PaymentStatus paymentStatus
 
 ) {
-    
+
 }

@@ -1,13 +1,9 @@
 package com.cns.spring_house.inventory.controller;
 
+import com.cns.spring_house.inventory.dto.*;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.cns.spring_house.inventory.dto.AddStockRequestDTO;
-import com.cns.spring_house.inventory.dto.CreateInventoryRequestDTO;
-import com.cns.spring_house.inventory.dto.SearchInventoryRequestDTO;
-import com.cns.spring_house.inventory.dto.InventoryResponseDTO;
-import com.cns.spring_house.inventory.dto.UpdateInventoryRequestDTO;
 import com.cns.spring_house.inventory.service.InventoryService;
 
 import jakarta.validation.Valid;
@@ -78,6 +74,18 @@ public class InventoryController {
         return ResponseEntity
                 .status(HttpStatus.OK)
                 .body(inventory);
+    }
+
+    @GetMapping("/{id}/items")
+    public ResponseEntity<List<InventoryItemResponseDTO>> getItems(
+            @PathVariable UUID id) {
+
+        List<InventoryItemResponseDTO> items =
+                service.getItems(id);
+
+        return ResponseEntity
+                .status(HttpStatus.OK)
+                .body(items);
     }
     
 }

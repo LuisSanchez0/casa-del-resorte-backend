@@ -8,6 +8,9 @@ import com.cns.spring_house.shared.audit.Auditable;
 import com.cns.spring_house.employee.entity.Employee;
 import com.cns.spring_house.role.entity.Role;
 
+import com.cns.spring_house.shared.constants.ColumnLimits;
+
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
@@ -40,6 +43,7 @@ public class UserAccount extends Auditable {
     @OneToOne
     @JoinColumn(name = "employee_id")
     private Employee employee;
+    @Column(length = ColumnLimits.USERNAME)
     private String username;
     private String password;
     @Builder.Default

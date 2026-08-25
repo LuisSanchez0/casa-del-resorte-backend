@@ -20,6 +20,7 @@
 	<properties>
 		<java.version>21</java.version>
 		<mapstruct.version>1.6.3</mapstruct.version>
+		<pdfbox.version>3.0.8</pdfbox.version>
 	</properties>
 
 	<dependencies>
@@ -60,6 +61,21 @@
 		<dependency>
 			<groupId>org.flywaydb</groupId>
 			<artifactId>flyway-database-postgresql</artifactId>
+		</dependency>
+		<!--
+			Generacion del PDF de cierre de caja, en el servidor y sin navegador.
+
+			Se eligio PDFBox y no una cadena HTML/CSS (OpenHTMLtoPDF, Flying
+			Saucer) por dos motivos: la licencia —Apache-2.0 frente a LGPL— y
+			porque el reporte es una composicion fija de filas etiqueta/importe
+			mas una tabla, donde hace falta alinear cantidades a la derecha y
+			decidir los saltos de pagina de forma exacta. Spring Boot no
+			gestiona esta dependencia, asi que la version se declara aqui.
+		-->
+		<dependency>
+			<groupId>org.apache.pdfbox</groupId>
+			<artifactId>pdfbox</artifactId>
+			<version>${pdfbox.version}</version>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>

@@ -4,6 +4,9 @@ import java.util.UUID;
 
 import org.hibernate.annotations.UuidGenerator;
 
+import com.cns.spring_house.shared.constants.ColumnLimits;
+
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -34,6 +37,7 @@ public class Attribute {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "family_id")
     private Family family;
+    @Column(length = ColumnLimits.ATTRIBUTE_NAME)
     private String name;
     @Enumerated(EnumType.STRING)
     private AttributeDataType dataType;

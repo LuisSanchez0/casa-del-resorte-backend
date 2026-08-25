@@ -3,16 +3,13 @@ package com.cns.spring_house.inventory.service;
 import java.util.List;
 import java.util.UUID;
 
+import com.cns.spring_house.inventory.dto.*;
+import com.cns.spring_house.inventory.mapper.InventoryItemMapper;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.cns.spring_house.family.entity.FamilyCategory;
-import com.cns.spring_house.inventory.dto.AddStockRequestDTO;
-import com.cns.spring_house.inventory.dto.CreateInventoryRequestDTO;
-import com.cns.spring_house.inventory.dto.SearchInventoryRequestDTO;
-import com.cns.spring_house.inventory.dto.InventoryResponseDTO;
-import com.cns.spring_house.inventory.dto.UpdateInventoryRequestDTO;
 import com.cns.spring_house.shared.exception.EntityAlreadyExistsException;
 import com.cns.spring_house.shared.exception.EntityNotFoundException;
 import com.cns.spring_house.shared.exception.ValidationException;
@@ -40,13 +37,19 @@ public class InventoryServiceImpl implements InventoryService {
     private final ProductRepository productRepository;
     private final InventoryMapper mapper;
     private final InventoryHandlerRegistry registry;
+    private final InventoryItemMapper itemMapper;
 
     @Override
+    @Transactional(readOnly = true)
     public InventoryResponseDTO get(UUID id) {
+        UUID workshopId = SecurityUtils.getWorkshopId();
+
         Inventory inventory = repository
-                .findById(id)
-                .orElseThrow(() -> new EntityNotFoundException(
-                        "No existe el registro solicitado"));
+                .findByIdAndWorkshopId(id, workshopId)
+                .orElseThrow(() ->
+                        new EntityNotFoundException(
+                                "No existe el registro solicitado"));
+
         return mapper.toResponse(inventory);
     }
 
@@ -93,26 +96,73 @@ public class InventoryServiceImpl implements InventoryService {
     }
 
     @Override
-    public InventoryResponseDTO update(UUID id, UpdateInventoryRequestDTO requestDTO) {
+    public InventoryResponseDTO update(
+            UUID id,
+            UpdateInventoryRequestDTO requestDTO) {
+
+        UUID workshopId = SecurityUtils.getWorkshopId();
+
         Inventory inventory = repository
-                .findById(id)
-                .orElseThrow(() -> new EntityNotFoundException(
-                        "No existe el registro especificado"));
-        mapper.updateInventoryFromDTO(requestDTO, inventory);
+                .findByIdAndWorkshopId(id, workshopId)
+                .orElseThrow(() ->
+                        new EntityNotFoundException(
+                                "No existe el registro especificado"));
+
+        mapper.updateInventoryFromDTO(
+                requestDTO,
+                inventory);
+
         inventory = repository.save(inventory);
+
         return mapper.toResponse(inventory);
     }
 
     @Override
-    public InventoryResponseDTO addStock(UUID id, AddStockRequestDTO requestDTO) {
-        Inventory inventory = repository.findById(id)
-                .orElseThrow(() -> new EntityNotFoundException(
-                        "No existe el inventario especificado"));
+    public InventoryResponseDTO addStock(
+            UUID id,
+            AddStockRequestDTO requestDTO) {
+
+        UUID workshopId = SecurityUtils.getWorkshopId();
+
+        Inventory inventory = repository
+                .findByIdAndWorkshopIdForUpdate(
+                        id,
+                        workshopId)
+                .orElseThrow(() ->
+                        new EntityNotFoundException(
+                                "No existe el inventario especificado"));
+
         InventoryHandler handler = registry.get(
-                inventory.getProduct().getFamily().getCategory());
-        handler.addStock(inventory, requestDTO);
+                inventory.getProduct()
+                        .getFamily()
+                        .getCategory());
+
+        handler.addStock(
+                inventory,
+                requestDTO);
+
         inventory = repository.save(inventory);
+
         return mapper.toResponse(inventory);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<InventoryItemResponseDTO> getItems(
+            UUID inventoryId) {
+
+        UUID workshopId = SecurityUtils.getWorkshopId();
+
+        Inventory inventory = repository
+                .findByIdAndWorkshopId(
+                        inventoryId,
+                        workshopId)
+                .orElseThrow(() ->
+                        new EntityNotFoundException(
+                                "No existe el inventario especificado"));
+
+        return itemMapper.toResponseList(
+                inventory.getItems());
     }
 
 }

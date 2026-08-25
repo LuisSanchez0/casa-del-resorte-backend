@@ -33,9 +33,13 @@ public class InventorySpecs {
                 return null;
             }
             if (isLowStock) {
-                return criteriaBuilder.lessThanOrEqualTo(root.get("stock"), root.get("minStock"));
+                return criteriaBuilder.lessThanOrEqualTo(
+                        root.get("stock"),
+                        root.get("minStock"));
             }
-            return criteriaBuilder.greaterThanOrEqualTo(root.get("stock"), root.get("minStock"));
+            return criteriaBuilder.greaterThan(
+                    root.get("stock"),
+                    root.get("minStock"));
         };
     }
 
@@ -46,7 +50,8 @@ public class InventorySpecs {
             if (maxPrice != null)
                     return criteriaBuilder.lessThanOrEqualTo(root.get("price"), maxPrice);
             if (minPrice != null)
-                    return criteriaBuilder.greaterThan(root.get("price"), maxPrice);
+                return criteriaBuilder.greaterThanOrEqualTo(
+                        root.get("price"), minPrice);
             return null;
         };
     }
@@ -58,7 +63,8 @@ public class InventorySpecs {
             if (maxCost != null)
                     return criteriaBuilder.lessThanOrEqualTo(root.get("cost"), maxCost);
             if (minCost != null)
-                    return criteriaBuilder.greaterThanOrEqualTo(root.get("cost"), maxCost);
+                return criteriaBuilder.greaterThanOrEqualTo(
+                        root.get("cost"), minCost);
             return null;
         };
     }

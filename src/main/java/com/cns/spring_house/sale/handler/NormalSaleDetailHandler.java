@@ -1,7 +1,6 @@
 package com.cns.spring_house.sale.handler;
 
 import java.math.BigDecimal;
-import java.util.Optional;
 
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
@@ -32,7 +31,7 @@ public class NormalSaleDetailHandler implements SaleDetailHandler {
 
     @Override
     @Transactional(propagation = Propagation.MANDATORY)
-    public void addDetail(Sale sale, AddSaleDetailRequestDTO requestDTO) {
+    public SaleDetail addDetail(Sale sale, AddSaleDetailRequestDTO requestDTO) {
         Inventory inventory = inventoryRepository
                 .findByProductIdAndWorkshopId(
                         requestDTO.product(),
@@ -45,11 +44,12 @@ public class NormalSaleDetailHandler implements SaleDetailHandler {
         inventory.removeStock(requestDTO.quantity());
         SaleDetail detail = createDetail(inventory, requestDTO);
         sale.addDetail(detail);
+        return detail;
     }
 
     @Override
     @Transactional(propagation = Propagation.MANDATORY)
-    public void removeDetail(Sale sale, SaleDetail saleDetail) {
+    public void restore(SaleDetail saleDetail) {
         Inventory inventory = inventoryRepository
                 .findByProductIdAndWorkshopId(
                         saleDetail.getProduct().getId(),
@@ -57,13 +57,11 @@ public class NormalSaleDetailHandler implements SaleDetailHandler {
                 .orElseThrow(() -> new EntityNotFoundException(
                         "No existe un inventario para el producto seleccionado"));
         inventory.addStock(saleDetail.getQuantity());
-        sale.removeDetail(saleDetail);
     }
 
     private SaleDetail createDetail(Inventory inventory, AddSaleDetailRequestDTO requestDTO) {
-        BigDecimal price = Optional
-                .ofNullable(requestDTO.price())
-                .orElse(inventory.getPrice());
+        BigDecimal price = resolvePrice(
+                requestDTO.price(), inventory.getPrice(), inventory.getCost());
         BigDecimal subTotal = price.multiply(
                 BigDecimal.valueOf(requestDTO.quantity()));
         return SaleDetail.builder()
@@ -71,6 +69,7 @@ public class NormalSaleDetailHandler implements SaleDetailHandler {
                 .price(price)
                 .product(inventory.getProduct())
                 .subTotal(subTotal)
+                .invoiceDescription(requestDTO.invoiceDescription())
                 .build();
     }
 

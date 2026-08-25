@@ -9,7 +9,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.cns.spring_house.employee.entity.Employee;
-import com.cns.spring_house.employee.repository.EmployeeRepository;
 import com.cns.spring_house.family.entity.FamilyCategory;
 import com.cns.spring_house.job.dto.CreateJobLogRequestDTO;
 import com.cns.spring_house.job.dto.CreateJobRequestDTO;
@@ -31,7 +30,9 @@ import com.cns.spring_house.product.repository.ProductRepository;
 import com.cns.spring_house.shared.exception.EntityAlreadyExistsException;
 import com.cns.spring_house.shared.exception.EntityNotFoundException;
 import com.cns.spring_house.shared.exception.ValidationException;
+import com.cns.spring_house.shared.security.CurrentUserService;
 import com.cns.spring_house.shared.security.SecurityUtils;
+import com.cns.spring_house.workresult.service.WorkResultService;
 import com.cns.spring_house.workshop.entity.Workshop;
 import com.cns.spring_house.workshop.repository.WorkshopRepository;
 
@@ -48,14 +49,15 @@ public class JobServiceImpl implements JobService {
     private final JobLogMapper logMapper;
     private final WorkshopRepository workshopRepository;
     private final ProductRepository productRepository;
-    private final EmployeeRepository employeeRepository;
+    private final CurrentUserService currentUserService;
+    private final WorkResultService workResultService;
 
     @Override
     public List<JobResponseDTO> getAll(SearchJobRequestDTO requestDTO) {
         Specification<Job> specs = Specification.allOf(
                 JobSpecs.nameContains(requestDTO.name()),
                 JobSpecs.priceBetween(requestDTO.minPrice(), requestDTO.maxPrice()),
-                JobSpecs.hasWorkshop(requestDTO.workshop()));
+                JobSpecs.hasWorkshop(SecurityUtils.getWorkshopId()));
         List<JobResponseDTO> services = repository.findAll(specs)
                 .stream()
                 .map(mapper::toResponse)
@@ -66,7 +68,7 @@ public class JobServiceImpl implements JobService {
     @Override
     public JobResponseDTO get(UUID id) {
         Job service = repository
-                .findById(id)
+                .findByIdAndWorkshopId(id, SecurityUtils.getWorkshopId())
                 .orElseThrow(() -> new EntityNotFoundException(
                         "No existe el servicio especificado"));
         return mapper.toResponse(service);
@@ -101,7 +103,7 @@ public class JobServiceImpl implements JobService {
     @Override
     public JobResponseDTO update(UUID id, UpdateJobRequestDTO requestDTO) {
         Job service = repository
-                .findById(id)
+                .findByIdAndWorkshopId(id, SecurityUtils.getWorkshopId())
                 .orElseThrow(() -> new EntityNotFoundException(
                         "No existe el servicio especificado"));
         mapper.updateServiceFromDTO(requestDTO, service);
@@ -113,7 +115,7 @@ public class JobServiceImpl implements JobService {
     public List<JobLogResponseDTO> getAllLogs(SearchJobLogRequestDTO requestDTO) {
         Specification<JobLog> specs = Specification.allOf(
                 JobLogSpecs.hasEmployee(requestDTO.employee()),
-                JobLogSpecs.hasWorkshop(requestDTO.workshop()),
+                JobLogSpecs.hasWorkshop(SecurityUtils.getWorkshopId()),
                 JobLogSpecs.hasJob(requestDTO.job()),
                 JobLogSpecs.performedDateBetween(requestDTO.minDate(), requestDTO.maxDate()));
         List<JobLogResponseDTO> logs = logRepository.findAll(specs)
@@ -125,7 +127,8 @@ public class JobServiceImpl implements JobService {
 
     @Override
     public JobLogResponseDTO getLog(UUID id) {
-        JobLog log = logRepository.findById(id)
+        JobLog log = logRepository
+                .findByIdAndWorkshopId(id, SecurityUtils.getWorkshopId())
                 .orElseThrow(() -> new EntityNotFoundException(
                         "No existe el log solicitado"));
         return logMapper.toResponse(log);
@@ -133,12 +136,13 @@ public class JobServiceImpl implements JobService {
 
     @Override
     public JobLogResponseDTO createLog(CreateJobLogRequestDTO requestDTO) {
-        Job job = repository.findById(requestDTO.job())
+        Job job = repository
+                .findByIdAndWorkshopId(
+                        requestDTO.job(), SecurityUtils.getWorkshopId())
                 .orElseThrow(() -> new EntityNotFoundException(
                         "No existe el servicio especificado"));
-        Employee employee = employeeRepository.findById(SecurityUtils.getId())
-                .orElseThrow(() -> new EntityNotFoundException(
-                        "No existe el empleado especificado"));
+        // SecurityUtils.getId() es UserAccount.id, no Employee.id.
+        Employee employee = currentUserService.getCurrentEmployee();
         if (!employee.getWorkshop().getId().equals(job.getWorkshop().getId())) {
             throw new ValidationException(
                     "El taller no corresponde al del servicio");
@@ -149,6 +153,7 @@ public class JobServiceImpl implements JobService {
                 .employee(employee)
                 .build();
         log = logRepository.save(log);
+        workResultService.createPendingFromJobLog(log);
         return logMapper.toResponse(log);
     }
 

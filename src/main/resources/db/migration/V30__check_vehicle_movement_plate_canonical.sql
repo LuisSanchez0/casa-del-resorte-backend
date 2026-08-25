@@ -1,0 +1,70 @@
+-- La base garantizaba que dos movimientos ABIERTOS no compartieran placa
+-- canonica (indice parcial de V19/V28/V29), pero no que el valor GUARDADO fuera
+-- ya canonico. Una escritura que no pasara por el servicio —SQL manual, una
+-- carga de datos, un endpoint futuro— podia dejar ' P123ABC ' o 'p123abc' como
+-- la UNICA fila de esa placa: no violaba ninguna unicidad porque no habia con
+-- quien colisionar.
+--
+-- Esta restriccion cierra ese hueco por el otro lado: no se trata de que dos
+-- valores no coexistan, sino de que un valor no canonico no pueda existir.
+--
+-- ES UN CHECK Y NO MAS BTRIM. El camino anterior era ir ampliando la clase de
+-- caracteres del indice para imitar a `String.trim()` de Java, que recorta todo
+-- lo que este por debajo de U+0020. Esa carrera no termina nunca. El patron
+-- final de la placa la hace innecesaria: al exigir la FORMA definitiva, y estar
+-- anclado, ya implica todo lo demas.
+--
+--   ^[A-Z]{1,2}[0-9]{3}[A-Z]{3}$
+--     mayusculas          -> la clase solo admite A-Z
+--     sin espacios        -> ningun blanco cabe en la clase, y esta anclado
+--     sin tabuladores     -> idem, cualquier control queda fuera
+--     forma valida        -> una o dos letras, tres digitos, tres letras
+--     no vacio            -> exige siete caracteres como minimo
+--
+-- Es EXACTAMENTE el mismo patron que ya valida `CreateVehicleMovementRequestDTO`
+-- (P123ABC, C123ABC, M123ABC, TC123ABC). Se copia el contrato de la aplicacion,
+-- no se inventa uno nuevo: la base no puede rechazar formatos que el backend
+-- acepta a proposito.
+--
+-- Comprobado en PostgreSQL antes de escribir esto: `$` NO admite un salto de
+-- linea final con la configuracion por defecto, asi que E'P123ABC\n' tambien
+-- queda rechazado sin necesidad de ninguna bandera.
+--
+-- ── NOT VALID, y por que ────────────────────────────────────────
+--
+-- La auditoria previa encontro UNA fila anterior al patron de la aplicacion:
+--
+--   id     f0d8921f-9d51-443e-8c3a-589de53f8419
+--   placa  'P'
+--   estado cerrada (entry 2026-08-10, exit 2026-08-11)
+--
+-- Es justo el caso que documenta el DTO ("sin este patron una placa incompleta
+-- como 'P' quedaba registrada"). No se puede corregir automaticamente: 'P' no
+-- determina cual era la placa real, asi que cualquier valor que se le pusiera
+-- seria inventado. Reescribir historial queda descartado.
+--
+-- `NOT VALID` es exactamente la herramienta para esto: PostgreSQL NO revisa las
+-- filas existentes, pero SI aplica la restriccion a toda insercion y a toda
+-- actualizacion posterior. El invariante queda garantizado de aqui en adelante
+-- sin tocar una sola fila del historico.
+--
+-- Consecuencia que conviene conocer: actualizar esa fila concreta (editar sus
+-- notas o sus fotografias) fallaria ahora, porque la actualizacion si se revisa.
+-- Esta cerrada, asi que el alta y el registro de salida no la alcanzan.
+--
+-- Cuando el negocio decida que hacer con ella —corregir la placa o descartar el
+-- registro—, basta con:
+--
+--   ALTER TABLE vehicle_movement
+--       VALIDATE CONSTRAINT ck_vehicle_movement_plate_canonical;
+--
+-- y la garantia pasa a cubrir tambien el pasado. No hace falta otra migracion.
+--
+-- El indice parcial unico se conserva intacto: resuelve un problema DISTINTO
+-- —cuantos movimientos abiertos puede tener una misma placa canonica en un
+-- taller— y ninguno de los dos sustituye al otro.
+
+ALTER TABLE vehicle_movement
+    ADD CONSTRAINT ck_vehicle_movement_plate_canonical
+        CHECK (plate ~ '^[A-Z]{1,2}[0-9]{3}[A-Z]{3}$')
+        NOT VALID;

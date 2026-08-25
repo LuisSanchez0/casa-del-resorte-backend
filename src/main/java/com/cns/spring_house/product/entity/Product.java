@@ -8,6 +8,7 @@ import org.hibernate.annotations.UuidGenerator;
 import org.hibernate.type.SqlTypes;
 
 import com.cns.spring_house.shared.audit.Auditable;
+import com.cns.spring_house.shared.constants.ColumnLimits;
 import com.cns.spring_house.family.entity.Family;
 import com.cns.spring_house.model.entity.Model;
 
@@ -36,10 +37,12 @@ public class Product extends Auditable {
     @Id
     @UuidGenerator
     private UUID id;
+    @Column(length = ColumnLimits.PRODUCT_SKU)
     private String sku;
     @ManyToOne
     @JoinColumn(name = "family_id")
     private Family family;
+    @Column(length = ColumnLimits.PRODUCT_NAME)
     String name;
     @ManyToOne
     @JoinColumn(name = "model_id")

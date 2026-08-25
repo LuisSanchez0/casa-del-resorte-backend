@@ -2,10 +2,13 @@ package com.cns.spring_house.sale.repository;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.Locale;
 import java.util.UUID;
 
 import org.springframework.data.jpa.domain.Specification;
 
+import com.cns.spring_house.sale.entity.InvoiceType;
+import com.cns.spring_house.sale.entity.PaymentStatus;
 import com.cns.spring_house.sale.entity.Sale;
 import com.cns.spring_house.sale.entity.SaleStatus;
 
@@ -27,6 +30,21 @@ public class SaleSpecs {
                 : criteriaBuilder.like(
                         criteriaBuilder.upper(root.get("customer").get("nit")),
                         "%" + customer + "%");
+    }
+
+    /**
+     * Ventas de un cliente concreto, por identificador.
+     *
+     * `nameContains`/`nitContains` son una busqueda de texto para la pantalla de
+     * historial; no sirven para relacionar: dos clientes pueden compartir un
+     * fragmento de nombre, y un nit es un texto que puede estar contenido en
+     * otro. Cuando ya se resolvio el Customer, la relacion es por su id.
+     */
+    public static Specification<Sale> hasCustomer(UUID customer) {
+        return (root, query, criteriaBuilder) -> customer == null ? null
+                : criteriaBuilder.equal(
+                        root.get("customer").get("id"),
+                        customer);
     }
 
     public static Specification<Sale> totalBetween(BigDecimal minTotal, BigDecimal maxTotal) {
@@ -72,6 +90,34 @@ public class SaleSpecs {
                 : criteriaBuilder.equal(
                         root.get("status"),
                         status);
+    }
+
+    /** Las placas se guardan normalizadas; la busqueda tolera cualquier grafia. */
+    public static Specification<Sale> plateContains(String plate) {
+        return (root, query, criteriaBuilder) -> {
+            if (plate == null || plate.isBlank()) {
+                return null;
+            }
+            String normalized = plate.trim().toLowerCase(Locale.ROOT);
+            return criteriaBuilder.like(
+                    criteriaBuilder.lower(root.get("plate")),
+                    "%" + normalized + "%");
+        };
+    }
+
+    public static Specification<Sale> hasInvoiceType(InvoiceType invoiceType) {
+        return (root, query, criteriaBuilder) -> invoiceType == null ? null
+                : criteriaBuilder.equal(
+                        root.get("invoiceType"),
+                        invoiceType);
+    }
+
+    /** Permite listar la cartera pendiente de cobro. */
+    public static Specification<Sale> hasPaymentStatus(PaymentStatus paymentStatus) {
+        return (root, query, criteriaBuilder) -> paymentStatus == null ? null
+                : criteriaBuilder.equal(
+                        root.get("paymentStatus"),
+                        paymentStatus);
     }
 
 }

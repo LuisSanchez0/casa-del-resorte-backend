@@ -22,6 +22,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
+import jakarta.persistence.OneToOne;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -52,15 +53,42 @@ public class Sale extends Auditable {
     @ManyToOne
     @JoinColumn(name = "customer_id")
     private Customer customer;
+    /**
+     * Placa del vehiculo como snapshot opcional. No es una FK a VehicleMovement a
+     * proposito: la referencia es informativa y no toda venta nace de un ingreso
+     * de vehiculo, asi que exigir un movimiento existente bloquearia ventas de
+     * mostrador legitimas.
+     */
+    private String plate;
     private LocalDateTime completedAt;
     @Builder.Default
     @Enumerated(EnumType.STRING)
     private SaleStatus status = SaleStatus.PENDING;
+    /** Documento emitido; se conoce solo al finalizar la venta. */
+    @Enumerated(EnumType.STRING)
+    private InvoiceType invoiceType;
+    /** Dimension de cobro, independiente de {@link #status}. */
+    @Builder.Default
+    @Enumerated(EnumType.STRING)
+    private PaymentStatus paymentStatus = PaymentStatus.PENDING;
+    /** Null mientras el cobro siga pendiente. */
+    @Enumerated(EnumType.STRING)
+    private PaymentMethod paymentMethod;
+    private LocalDateTime paidAt;
     @Builder.Default
     @OneToMany(mappedBy = "sale", fetch = FetchType.EAGER, orphanRemoval = true, cascade = CascadeType.ALL)
     List<SaleDetail> details = new ArrayList<>();
     @Builder.Default
     private BigDecimal total = BigDecimal.ZERO;
+    /**
+     * Motivo, autor y fecha de por que esta venta terminó cancelada o
+     * revertida. Null mientras la venta siga PENDING o COMPLETED sin
+     * incidentes; el historial de una y otra vive en {@link SaleAction}, no
+     * sobrescribiendo esta fila.
+     */
+    @OneToOne(mappedBy = "sale", fetch = FetchType.LAZY,
+            cascade = CascadeType.ALL, orphanRemoval = true)
+    private SaleAction action;
 
     public void addDetail(SaleDetail detail) {
         detail.setSale(this);
