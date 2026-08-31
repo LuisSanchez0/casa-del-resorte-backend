@@ -29,6 +29,7 @@ import com.cns.spring_house.sale.service.SaleService;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -185,6 +186,25 @@ public class SaleController {
      * se emitio y hay que deshacerla, no una que nunca llego a completarse. El
      * motivo es obligatorio.
      */
+    /*
+     * SOLO EL VENDEDOR.
+     *
+     * Revertir dejo de ser una correccion de inventario en el momento en que
+     * puede llevar una devolucion de dinero: quien revierte puede sacar
+     * efectivo del cajon. Por eso este metodo —y solo este de todo el
+     * controlador— esta restringido por rol.
+     *
+     * SELLER es quien atiende la caja: su modulo tiene la pantalla `Caja`, es
+     * quien completa las ventas, quien cobra las cambiarias y quien, por tanto,
+     * devuelve el dinero cuando hay que devolverlo. La Secretaria CIERRA la
+     * caja —cuadra y firma el dia— pero no la opera.
+     *
+     * NO se admite ADMIN ni ningun otro rol como alternativa: un permiso de
+     * administracion no es la responsabilidad sobre el dinero del dia, y
+     * anadirlo dejaria a dos personas capaces de mover la caja sin que ninguna
+     * responda por ella.
+     */
+    @PreAuthorize("hasRole('SELLER')")
     @PostMapping("/{id}/reverse")
     public ResponseEntity<SaleResponseDTO> reverse(
             @PathVariable UUID id,

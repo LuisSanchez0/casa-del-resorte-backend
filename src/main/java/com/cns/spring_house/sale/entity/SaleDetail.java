@@ -51,6 +51,38 @@ public class SaleDetail {
     private BigDecimal price;
     private BigDecimal subTotal;
     /**
+     * Lo que COSTO la mercaderia de esta linea, capturado con la politica FIFO
+     * en el mismo instante en que el stock salio del inventario (al agregar la
+     * linea, no al emitir el documento).
+     *
+     * Es historia contable inmutable: no se recalcula nunca contra
+     * {@code Inventory.cost} —que es el costo de referencia ACTUAL y cada compra
+     * lo pisa— ni contra el precio de catalogo de hoy. Una compra posterior mas
+     * cara no reescribe lo que esta venta costo.
+     *
+     * NULL NO ES CERO, y la diferencia es el motivo de que la columna sea
+     * nullable:
+     *
+     * <ul>
+     * <li>Un importe significa que las unidades salieron de lotes comprados y su
+     * costo se conoce con exactitud.</li>
+     * <li>NULL significa que esta linea no tiene costo de adquisicion: un
+     * servicio, o mercaderia que entro por produccion (salida de una
+     * transformacion, maleta armada con componentes propios).</li>
+     * </ul>
+     *
+     * Rellenar el segundo caso con 0 convertiria el precio entero en ganancia,
+     * que es exactamente la cifra inventada que este modelo existe para evitar.
+     * El panel distingue los dos casos en lugar de sumarlos.
+     *
+     * Lo escribe SIEMPRE el servidor. El cliente no lo envia ni puede enviarlo:
+     * no aparece en ningun DTO de peticion.
+     *
+     * Que lotes lo compusieron vive en {@code SaleDetailCostAllocation}, que es
+     * lo que permite devolver el stock al lote exacto al deshacer la venta.
+     */
+    private BigDecimal costTotal;
+    /**
      * Descripcion alterna SOLO para el documento fiscal. El catalogo, el
      * inventario y el historial tecnico siguen viendo {@code product.name}: aqui
      * se guarda un snapshot de lo que debe imprimirse en la factura, que suele ser

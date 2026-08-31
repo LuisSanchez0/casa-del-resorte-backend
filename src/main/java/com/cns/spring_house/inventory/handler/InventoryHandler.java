@@ -7,7 +7,22 @@ import com.cns.spring_house.inventory.entity.Inventory;
 public interface InventoryHandler {
 
     FamilyCategory getType();
-    
-    void addStock(Inventory inventory, AddStockRequestDTO requestDTO);
-    
+
+    /**
+     * Registra una entrada de stock de esta categoria.
+     *
+     * Todo handler que INCREMENTE existencias tiene ademas que dejar el lote que
+     * las respalda, a traves de {@code InventoryLotService}. No es opcional: el
+     * modelo se sostiene sobre que
+     * {@code inventory.stock = SUM(quantity_remaining)}, y una entrada sin lote
+     * deja existencias que el FIFO no podra costear despues.
+     *
+     * {@code context} trae lo que decide el servidor —proveedor y empleado— ya
+     * resuelto contra el taller del token.
+     */
+    void addStock(
+            Inventory inventory,
+            AddStockRequestDTO requestDTO,
+            StockEntryContext context);
+
 }

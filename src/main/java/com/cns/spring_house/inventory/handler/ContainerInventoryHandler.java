@@ -13,6 +13,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.cns.spring_house.acquisition.service.InventoryLotService;
 import com.cns.spring_house.family.entity.FamilyCategory;
 import com.cns.spring_house.inventory.dto.AddStockRequestDTO;
 import com.cns.spring_house.inventory.entity.Inventory;
@@ -33,17 +34,31 @@ public class ContainerInventoryHandler
 
     private final InventoryRepository inventoryRepository;
     private final InventoryItemRepository itemRepository;
+    private final InventoryLotService lotService;
 
     @Override
     public FamilyCategory getType() {
         return FamilyCategory.CONTAINER;
     }
 
+    /**
+     * Armar una maleta NO es una compra: sus componentes ya eran del taller y no
+     * entra mercaderia nueva. Por eso `context` no se usa aqui —no hay proveedor
+     * que anotar— y el lote que se crea es de origen PRODUCTION, sin costo.
+     *
+     * El costo de esos componentes no se traslada al contenedor. Hacerlo
+     * exigiria un modelo de costeo de manufactura que este sistema no tiene, y
+     * repartirlo a ojo produciria una cifra que nadie podria defender. La
+     * consecuencia se declara con honestidad: una maleta vendida no aporta costo
+     * historico, y el panel la cuenta como linea sin cobertura en vez de
+     * inventarle uno.
+     */
     @Override
     @Transactional(propagation = Propagation.MANDATORY)
     public void addStock(
             Inventory containerInventory,
-            AddStockRequestDTO requestDTO) {
+            AddStockRequestDTO requestDTO,
+            StockEntryContext context) {
 
         List<UUID> containedProductIds =
                 requestDTO.containedItems();
@@ -233,6 +248,19 @@ public class ContainerInventoryHandler
              */
             componentInventory.removeStock(
                     items.size());
+
+            /*
+             * Y consume sus lotes en el mismo orden FIFO que una venta.
+             *
+             * Sin esto, el componente saldria de las existencias pero su lote
+             * seguiria contando remanente, y el inventario acabaria con menos
+             * stock que respaldo: la siguiente venta de ese producto costearia
+             * contra unidades que ya no existen. No lleva traza de asignacion
+             * porque no hay linea de venta a la que atribuir el costo.
+             */
+            lotService.consumeWithoutTrace(
+                    componentInventory,
+                    items.size());
         }
 
         /*
@@ -240,6 +268,13 @@ public class ContainerInventoryHandler
          * nueva del contenedor.
          */
         containerInventory.addStock(1);
+
+        /*
+         * La unidad nueva necesita su lote para que el contenedor cumpla el
+         * mismo invariante que el resto del inventario. Es PRODUCTION: nació de
+         * un armado, no de una compra.
+         */
+        lotService.registerProduction(containerInventory, 1);
     }
 
     private void validateSpecialCategory(

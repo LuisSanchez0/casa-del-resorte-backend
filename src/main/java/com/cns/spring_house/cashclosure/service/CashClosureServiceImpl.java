@@ -3,31 +3,44 @@ package com.cns.spring_house.cashclosure.service;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.LocalDate;
+import java.time.YearMonth;
+import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.cns.spring_house.cashclosure.dto.CashClosureBalanceSummaryDTO;
-import com.cns.spring_house.cashclosure.dto.CashClosureBasePreviewResponseDTO;
 import com.cns.spring_house.cashclosure.dto.CashClosureCollectionsDTO;
-import com.cns.spring_house.cashclosure.dto.CashClosureDaySummaryDTO;
 import com.cns.spring_house.cashclosure.dto.CashClosureDocumentDTO;
+import com.cns.spring_house.cashclosure.dto.CashClosureExchangeDTO;
 import com.cns.spring_house.cashclosure.dto.CashClosureInvoicingDTO;
-import com.cns.spring_house.cashclosure.dto.CashClosureRangeReceivablesDTO;
+import com.cns.spring_house.cashclosure.dto.CashClosureMonthStatus;
+import com.cns.spring_house.cashclosure.dto.CashClosureMonthlyResponseDTO;
+import com.cns.spring_house.cashclosure.dto.CashClosureRefundsDTO;
+import com.cns.spring_house.cashclosure.dto.ClosureRefundDTO;
+import com.cns.spring_house.cashclosure.dto.ClosureRefundMethodDTO;
+import com.cns.spring_house.cashclosure.entity.CashClosureRefund;
 import com.cns.spring_house.cashclosure.dto.CashClosureResponseDTO;
-import com.cns.spring_house.cashclosure.dto.CashClosureSummaryResponseDTO;
-import com.cns.spring_house.cashclosure.dto.CreateCashClosureRequestDTO;
+import com.cns.spring_house.cashclosure.dto.ClosureExchangeInvoiceDTO;
+import com.cns.spring_house.cashclosure.dto.ClosurePaymentMethodDTO;
+import com.cns.spring_house.cashclosure.dto.ClosureSoldItemDTO;
 import com.cns.spring_house.cashclosure.entity.CashClosure;
+import com.cns.spring_house.cashclosure.entity.CashClosureExchangeInvoice;
+import com.cns.spring_house.cashclosure.entity.ExchangeInvoiceScope;
 import com.cns.spring_house.cashclosure.mapper.CashClosureMapper;
 import com.cns.spring_house.cashclosure.report.CashClosureReportService;
 import com.cns.spring_house.cashclosure.report.ReportHeaderDTO;
 import com.cns.spring_house.cashclosure.repository.CashClosureRepository;
+import com.cns.spring_house.cashclosure.repository.projection.CashClosureItemProjection;
+import com.cns.spring_house.cashclosure.repository.projection.CashClosurePaymentMethodProjection;
 import com.cns.spring_house.cashclosure.repository.projection.CashClosureSummaryProjection;
 import com.cns.spring_house.employee.entity.Employee;
+import com.cns.spring_house.family.entity.FamilyCategory;
+import com.cns.spring_house.sale.entity.PaymentMethod;
 import com.cns.spring_house.shared.exception.EntityNotFoundException;
 import com.cns.spring_house.shared.exception.ValidationException;
 import com.cns.spring_house.shared.security.CurrentUserService;
@@ -38,36 +51,29 @@ import com.cns.spring_house.workshop.repository.WorkshopRepository;
 import lombok.RequiredArgsConstructor;
 
 /**
- * Cierre de caja: previsualizacion dinamica, confirmacion del snapshot y
- * lecturas historicas.
+ * Cierre de caja: previsualizacion en vivo, confirmacion del snapshot, lectura
+ * historica y agregacion mensual.
  *
  * Dos invariantes gobiernan la clase entera:
  *
  * 1. El taller SIEMPRE sale de {@code SecurityUtils.getWorkshopId()}. Ningun
- *    metodo lo acepta como parametro, ni siquiera los de exportacion, y ninguna
- *    lectura historica usa {@code findById} a secas.
+ *    metodo lo acepta como parametro y ninguna lectura historica usa
+ *    {@code findById} a secas.
  *
  * 2. Mientras no existe cierre, `sale` es la fuente de verdad y todo se calcula
  *    al vuelo; en cuanto existe, el snapshot lo es y NADA vuelve a recalcularse.
- *    Por eso {@link #get}, {@link #getByDate}, {@link #getRange},
- *    {@link #getSummary} y los PDF historicos no tienen acceso al calculador.
+ *    Por eso {@link #get}, {@link #getByDate}, {@link #getMonthly} y el PDF
+ *    historico no tienen acceso al calculador.
  *
  * Implementa tambien {@link CashClosureGuard} porque el bloqueo de ventas
  * necesita exactamente la misma comprobacion —cerrojo mas existencia del
- * cierre— que hace {@link #close}: separarla en otra clase habria significado
- * escribirla dos veces.
+ * cierre— que hace {@link #close}: separarla habria significado escribirla dos
+ * veces.
  */
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class CashClosureServiceImpl implements CashClosureService, CashClosureGuard {
-
-    /**
-     * Un rango mas largo que un ano deja de ser un reporte y se vuelve una
-     * descarga del historico completo. El limite es del reporte, no del modelo:
-     * los cierres siguen ahi y se consultan por tramos.
-     */
-    static final int MAX_RANGE_DAYS = 366;
 
     private final CashClosureRepository repository;
     private final CashClosureCalculator calculator;
@@ -80,58 +86,16 @@ public class CashClosureServiceImpl implements CashClosureService, CashClosureGu
     // ── Previsualizacion: calcula, no persiste ───────────────────
 
     @Override
-    public CashClosureBasePreviewResponseDTO getPreview() {
+    public CashClosureResponseDTO getPreview() {
         UUID workshopId = SecurityUtils.getWorkshopId();
         LocalDate businessDate = businessDate();
 
-        DailyCashFigures figures = calculator.calculate(workshopId, businessDate);
+        PeriodCashFigures figures = calculator.calculate(workshopId, businessDate);
         CashClosure existing = repository
                 .findByWorkshopIdAndBusinessDate(workshopId, businessDate)
                 .orElse(null);
 
-        return mapper.toBasePreview(figures, existing);
-    }
-
-    /**
-     * Previsualizacion final. Vuelve a calcular las cifras del dia y les aplica
-     * el arqueo declarado, pero no escribe una sola fila: consultar la
-     * previsualizacion nunca cierra la caja ni bloquea ventas nuevas.
-     *
-     * Si el dia YA estaba cerrado responde igual, con {@code alreadyClosed} en
-     * true: sigue siendo informacion util —"asi se ve el dia ahora mismo"— y el
-     * documento oficial es el snapshot, que se pide por su propia ruta.
-     */
-    @Override
-    public CashClosureResponseDTO preview(CreateCashClosureRequestDTO requestDTO) {
-        UUID workshopId = SecurityUtils.getWorkshopId();
-        LocalDate businessDate = businessDate();
-
-        DailyCashFigures figures = calculator.calculate(workshopId, businessDate);
-        boolean alreadyClosed = repository
-                .existsByWorkshopIdAndBusinessDate(workshopId, businessDate);
-
-        return mapper.toPreview(
-                figures,
-                requestDTO.openingCash(),
-                requestDTO.countedCash(),
-                requestDTO.notes(),
-                alreadyClosed);
-    }
-
-    @Override
-    public CashClosureDocumentDTO previewDocument(CreateCashClosureRequestDTO requestDTO) {
-        CashClosureResponseDTO preview = preview(requestDTO);
-        Employee employee = currentUserService.getCurrentEmployee();
-
-        byte[] content = reportService.renderDaily(
-                preview,
-                headerOf(employee.getWorkshop()),
-                true,
-                fullNameOf(employee));
-
-        return new CashClosureDocumentDTO(
-                "previsualizacion-cierre-caja-" + preview.businessDate() + ".pdf",
-                content);
+        return mapper.toPreview(figures, existing);
     }
 
     // ── Cierre definitivo ────────────────────────────────────────
@@ -139,11 +103,10 @@ public class CashClosureServiceImpl implements CashClosureService, CashClosureGu
     /**
      * Confirma el cierre del dia.
      *
-     * Recalcula TODO en vez de confiar en lo que se previsualizo: entre ver la
+     * Recalcula TODO contra la base en el momento de confirmar: entre ver la
      * pantalla y pulsar el boton pueden haberse emitido facturas o cobrado
-     * cartera, y cerrar con cifras viejas dejaria un snapshot que no describe el
-     * dia. Del cliente solo se aceptan el fondo inicial, el efectivo contado y
-     * la nota.
+     * cartera, y cerrar con las cifras que el navegador tenia a la vista dejaria
+     * un snapshot que no describe el dia.
      *
      * El cerrojo del taller se toma ANTES de comprobar la existencia del cierre
      * y no se suelta hasta el commit: es lo que impide que una venta se cuele
@@ -151,7 +114,7 @@ public class CashClosureServiceImpl implements CashClosureService, CashClosureGu
      */
     @Override
     @Transactional
-    public CashClosureResponseDTO close(CreateCashClosureRequestDTO requestDTO) {
+    public CashClosureResponseDTO close() {
         Employee employee = currentUserService.getCurrentEmployee();
         Workshop workshop = currentUserService.getCurrentWorkshop();
         UUID workshopId = SecurityUtils.getWorkshopId();
@@ -163,39 +126,14 @@ public class CashClosureServiceImpl implements CashClosureService, CashClosureGu
                             + businessDate);
         }
 
-        DailyCashFigures figures = calculator.calculate(workshopId, businessDate);
-        BigDecimal openingCash = requestDTO.openingCash();
-        BigDecimal countedCash = requestDTO.countedCash();
-        BigDecimal expectedCash = figures.expectedCash(openingCash);
-        BigDecimal difference = countedCash.subtract(expectedCash);
+        PeriodCashFigures figures = calculator.calculate(workshopId, businessDate);
 
         CashClosure closure = CashClosure.builder()
                 .workshop(workshop)
                 .closedBy(employee)
                 .businessDate(businessDate)
-                .openingCash(openingCash)
-                .invoiceCount(figures.invoicing().invoiceCount())
-                .invoiceTotal(figures.invoicing().invoiceTotal())
-                .exchangeInvoiceCount(figures.invoicing().exchangeInvoiceCount())
-                .exchangeInvoiceTotal(figures.invoicing().exchangeInvoiceTotal())
-                .totalInvoiced(figures.invoicing().totalInvoiced())
-                .cashPaymentCount(figures.collections().cashCount())
-                .cashPayments(figures.collections().cashAmount())
-                .cardPaymentCount(figures.collections().cardCount())
-                .cardPayments(figures.collections().cardAmount())
-                .transferPaymentCount(figures.collections().transferCount())
-                .transferPayments(figures.collections().transferAmount())
-                .totalCollected(figures.collections().totalCollected())
-                .exchangeCollectedCount(figures.receivables().collectedCount())
-                .exchangeCollectedAmount(figures.receivables().collectedAmount())
-                .previousExchangeCollectedAmount(
-                        figures.receivables().previousCollectedAmount())
-                .pendingExchangeAmount(figures.receivables().pendingAmount())
-                .expectedCash(expectedCash)
-                .countedCash(countedCash)
-                .difference(difference)
-                .notes(requestDTO.notes())
                 .build();
+        mapper.applyFigures(closure, figures);
 
         try {
             return mapper.toResponse(repository.saveAndFlush(closure));
@@ -210,7 +148,7 @@ public class CashClosureServiceImpl implements CashClosureService, CashClosureGu
         }
     }
 
-    // ── Bloqueo de ventas ────────────────────────────────────────
+    // ── Bloqueo de ventas y cobros ───────────────────────────────
 
     /**
      * Lo que consultan {@code SaleServiceImpl.create}, {@code completeSale} y
@@ -222,10 +160,11 @@ public class CashClosureServiceImpl implements CashClosureService, CashClosureGu
      * que llamo: sin el, una venta que consulto "caja abierta" podria emitirse o
      * cobrarse despues de que otro hilo confirmara el cierre.
      *
-     * El mensaje habla de ventas Y de cobros porque este metodo protege las dos
-     * cosas: cuando solo cubria {@code create}, decir "nuevas ventas" era
-     * exacto; ahora tambien rechaza cobrar una cambiaria ya emitida, que no es
-     * una venta nueva.
+     * Cubre tambien el COBRO, y eso resuelve el caso delicado: cobrar hoy una
+     * cambiaria antigua se rechaza si la caja de HOY ya cerro —ese dinero
+     * pertenece a un periodo ya firmado—, pero se acepta sin problema manana,
+     * cuando la caja del dia siguiente este abierta. Lo que decide es la fecha
+     * del COBRO, no la de emision del documento.
      */
     @Override
     @Transactional
@@ -261,59 +200,239 @@ public class CashClosureServiceImpl implements CashClosureService, CashClosureGu
         return mapper.toResponse(closure);
     }
 
-    @Override
-    public List<CashClosureResponseDTO> getRange(LocalDate from, LocalDate to) {
-        validateRange(from, to);
-        return repository
-                .findByWorkshopIdAndBusinessDateBetweenOrderByBusinessDateDescIdDesc(
-                        SecurityUtils.getWorkshopId(), from, to)
-                .stream()
-                .map(mapper::toResponse)
-                .toList();
-    }
+    // ── Cierre mensual ───────────────────────────────────────────
 
     /**
-     * Agregado del rango sobre los snapshots. Sirve igual para un dia, una
-     * semana, una quincena o un mes: un cierre mensual es este mismo calculo con
-     * {@code from} y {@code to} en los extremos del mes, no otra entidad.
+     * El mes, agregado sobre los cierres diarios CONFIRMADOS.
+     *
+     * Se construye desde los snapshots y no contra `sale`: si se recalculara,
+     * cobrar hoy una cambiaria de marzo cambiaria el cierre mensual de marzo,
+     * que ya se habia dado por bueno.
+     *
+     * El limite superior es el ultimo dia del mes que YA OCURRIO. En el mes en
+     * curso eso es hoy: contar como "pendientes" los dias que aun no han
+     * llegado presentaria como incompleto un mes que va perfectamente al dia.
+     *
+     * Son CUATRO consultas para el mes entero, no una por dia.
      */
     @Override
-    public CashClosureSummaryResponseDTO getSummary(LocalDate from, LocalDate to) {
-        validateRange(from, to);
+    public CashClosureMonthlyResponseDTO getMonthly(int year, int month) {
+        YearMonth requested = parseMonth(year, month);
         UUID workshopId = SecurityUtils.getWorkshopId();
+        LocalDate today = businessDate();
 
-        CashClosureSummaryProjection totals = repository.summarizeRange(workshopId, from, to);
-        List<CashClosureDaySummaryDTO> days =
-                repository.findDaySummaries(workshopId, from, to);
+        LocalDate from = requested.atDay(1);
+        LocalDate to = min(requested.atEndOfMonth(), today);
 
-        return new CashClosureSummaryResponseDTO(
+        if (to.isBefore(from)) {
+            // Un mes que todavia no ha empezado: no hay nada que agregar, y
+            // devolver ceros con "0 dias pendientes" sugeriria que esta cerrado.
+            return emptyMonth(requested, from);
+        }
+
+        CashClosureSummaryProjection totals =
+                repository.summarizeMonth(workshopId, from, to);
+        List<ClosureSoldItemDTO> items = monthlyItems(workshopId, from, to);
+        CashClosureCollectionsDTO collections =
+                monthlyCollections(workshopId, from, to);
+
+        long expectedDays = from.datesUntil(to.plusDays(1)).count();
+        long closedDays = totals.getClosureCount();
+        long pendingDays = Math.max(0L, expectedDays - closedDays);
+
+        return new CashClosureMonthlyResponseDTO(
+                requested.getYear(),
+                requested.getMonthValue(),
                 from,
                 to,
-                totals.getClosureCount(),
+                closedDays,
+                pendingDays,
+                pendingDays == 0L
+                        ? CashClosureMonthStatus.COMPLETE
+                        : CashClosureMonthStatus.PARTIAL,
+                items,
+                money(totals.getItemsBilledAmount()),
                 new CashClosureInvoicingDTO(
                         totals.getInvoiceCount(),
                         money(totals.getInvoiceTotal()),
                         totals.getExchangeInvoiceCount(),
                         money(totals.getExchangeInvoiceTotal()),
                         money(totals.getTotalInvoiced())),
-                new CashClosureCollectionsDTO(
-                        totals.getCashPaymentCount(),
-                        money(totals.getCashPayments()),
-                        totals.getCardPaymentCount(),
-                        money(totals.getCardPayments()),
-                        totals.getTransferPaymentCount(),
-                        money(totals.getTransferPayments()),
-                        money(totals.getTotalCollected())),
-                new CashClosureRangeReceivablesDTO(
+                new CashClosureExchangeDTO(
+                        totals.getExchangeInvoiceCount(),
+                        money(totals.getExchangeInvoiceTotal()),
+                        money(totals.getIssuedExchangePendingAmount()),
                         totals.getExchangeCollectedCount(),
                         money(totals.getExchangeCollectedAmount()),
-                        endingPendingExchangeAmount(workshopId, from, to)),
-                new CashClosureBalanceSummaryDTO(
-                        totals.getBalancedClosures(),
-                        totals.getShortClosures(),
-                        totals.getOverClosures(),
-                        money(totals.getNetCashDifference())),
-                days);
+                        money(totals.getPreviousExchangeCollectedAmount()),
+                        monthlyInvoices(workshopId, from, to, ExchangeInvoiceScope.ISSUED),
+                        monthlyInvoices(workshopId, from, to, ExchangeInvoiceScope.COLLECTED)),
+                collections,
+                monthlyRefunds(workshopId, from, to, totals),
+                money(collections.totalCollected()
+                        .subtract(money(totals.getTotalRefunded()))));
+    }
+
+    /**
+     * Las devoluciones del mes, agregadas de los SNAPSHOTS diarios.
+     *
+     * Los totales salen de los escalares que `summarizeMonth` ya trajo —no hay
+     * consulta extra para ellos— y el detalle de UNA consulta para todo el mes.
+     * Releer `sale_refund` seria mas simple y estaria mal: una devolucion
+     * registrada despues aparecerian en un mes que ya estaba dicho.
+     */
+    private CashClosureRefundsDTO monthlyRefunds(
+            UUID workshopId, LocalDate from, LocalDate to,
+            CashClosureSummaryProjection totals) {
+
+        List<ClosureRefundMethodDTO> methods = List.of(
+                new ClosureRefundMethodDTO(PaymentMethod.CASH,
+                        totals.getRefundCashCount(), money(totals.getRefundCash())),
+                new ClosureRefundMethodDTO(PaymentMethod.CARD,
+                        totals.getRefundCardCount(), money(totals.getRefundCard())),
+                new ClosureRefundMethodDTO(PaymentMethod.TRANSFER,
+                        totals.getRefundTransferCount(),
+                        money(totals.getRefundTransfer())));
+
+        List<ClosureRefundDTO> refunds = new ArrayList<>();
+        for (CashClosureRefund refund
+                : repository.findMonthlyRefunds(workshopId, from, to)) {
+            refunds.add(new ClosureRefundDTO(
+                    refund.getRefundId(),
+                    refund.getSaleId(),
+                    refund.getDocumentCode(),
+                    money(refund.getAmount()),
+                    refund.getEffectiveAt(),
+                    refund.getPaymentMethod(),
+                    refund.getPerformedByName(),
+                    refund.getReason()));
+        }
+
+        return new CashClosureRefundsDTO(
+                methods,
+                totals.getRefundCount(),
+                money(totals.getTotalRefunded()),
+                List.copyOf(refunds));
+    }
+
+    private CashClosureMonthlyResponseDTO emptyMonth(YearMonth month, LocalDate from) {
+        return new CashClosureMonthlyResponseDTO(
+                month.getYear(), month.getMonthValue(), from, from,
+                0L, 0L, CashClosureMonthStatus.PARTIAL,
+                List.of(), money(BigDecimal.ZERO),
+                new CashClosureInvoicingDTO(0L, money(BigDecimal.ZERO), 0L,
+                        money(BigDecimal.ZERO), money(BigDecimal.ZERO)),
+                new CashClosureExchangeDTO(0L, money(BigDecimal.ZERO),
+                        money(BigDecimal.ZERO), 0L, money(BigDecimal.ZERO),
+                        money(BigDecimal.ZERO), List.of(), List.of()),
+                new CashClosureCollectionsDTO(zeroMethods(), money(BigDecimal.ZERO)),
+                new CashClosureRefundsDTO(
+                        zeroRefundMethods(), 0L, money(BigDecimal.ZERO), List.of()),
+                money(BigDecimal.ZERO));
+    }
+
+    /** Las tres formas de devolucion en cero: un mes sin devoluciones las dice. */
+    private static List<ClosureRefundMethodDTO> zeroRefundMethods() {
+        List<ClosureRefundMethodDTO> methods = new ArrayList<>();
+        for (PaymentMethod method : PaymentMethod.values()) {
+            methods.add(new ClosureRefundMethodDTO(
+                    method, 0L, BigDecimal.ZERO.setScale(2)));
+        }
+        return List.copyOf(methods);
+    }
+
+    private List<ClosureSoldItemDTO> monthlyItems(
+            UUID workshopId, LocalDate from, LocalDate to) {
+
+        List<ClosureSoldItemDTO> items = new ArrayList<>();
+        for (CashClosureItemProjection row
+                : repository.findMonthlyItems(workshopId, from, to)) {
+            items.add(new ClosureSoldItemDTO(
+                    row.getProductId(),
+                    row.getItemName(),
+                    FamilyCategory.valueOf(row.getItemType()),
+                    row.getQuantity(),
+                    money(row.getBilledAmount())));
+        }
+        return List.copyOf(items);
+    }
+
+    private List<ClosureExchangeInvoiceDTO> monthlyInvoices(
+            UUID workshopId, LocalDate from, LocalDate to, ExchangeInvoiceScope scope) {
+
+        List<ClosureExchangeInvoiceDTO> invoices = new ArrayList<>();
+        for (CashClosureExchangeInvoice invoice
+                : repository.findMonthlyExchangeInvoices(workshopId, from, to, scope)) {
+            invoices.add(new ClosureExchangeInvoiceDTO(
+                    invoice.getSaleId(),
+                    invoice.getDocumentCode(),
+                    invoice.getCustomerName(),
+                    invoice.getIssuedAt(),
+                    invoice.getAmount(),
+                    invoice.isCollected(),
+                    invoice.getPaidAt(),
+                    invoice.getPaymentMethod()));
+        }
+        return List.copyOf(invoices);
+    }
+
+    /**
+     * Los cobros del mes por forma de pago, completando con cero las que no
+     * tengan fila para que la tabla salga siempre entera.
+     */
+    private CashClosureCollectionsDTO monthlyCollections(
+            UUID workshopId, LocalDate from, LocalDate to) {
+
+        Map<PaymentMethod, CashClosurePaymentMethodProjection> byMethod =
+                new EnumMap<>(PaymentMethod.class);
+        for (CashClosurePaymentMethodProjection row
+                : repository.findMonthlyPaymentMethods(workshopId, from, to)) {
+            byMethod.put(PaymentMethod.valueOf(row.getPaymentMethod()), row);
+        }
+
+        List<ClosurePaymentMethodDTO> methods = new ArrayList<>();
+        BigDecimal total = BigDecimal.ZERO;
+        for (PaymentMethod method : PaymentMethod.values()) {
+            CashClosurePaymentMethodProjection row = byMethod.get(method);
+            BigDecimal amount = row == null
+                    ? money(BigDecimal.ZERO) : money(row.getAmount());
+            methods.add(new ClosurePaymentMethodDTO(
+                    method, row == null ? 0L : row.getPaymentCount(), amount));
+            total = total.add(amount);
+        }
+
+        return new CashClosureCollectionsDTO(List.copyOf(methods), money(total));
+    }
+
+    private static List<ClosurePaymentMethodDTO> zeroMethods() {
+        List<ClosurePaymentMethodDTO> methods = new ArrayList<>();
+        for (PaymentMethod method : PaymentMethod.values()) {
+            methods.add(new ClosurePaymentMethodDTO(
+                    method, 0L, BigDecimal.ZERO.setScale(2)));
+        }
+        return List.copyOf(methods);
+    }
+
+    /**
+     * El mes pedido, validado. Un mes fuera de rango se rechaza con un error de
+     * negocio en vez de devolver una serie absurda.
+     */
+    private YearMonth parseMonth(int year, int month) {
+        if (month < 1 || month > 12) {
+            throw new ValidationException("El mes debe estar entre 1 y 12");
+        }
+        int currentYear = businessDate().getYear();
+        if (year < MIN_YEAR || year > currentYear + 1) {
+            throw new ValidationException("El ano solicitado esta fuera de rango");
+        }
+        return YearMonth.of(year, month);
+    }
+
+    /** Por debajo de esto el texto no es un ano de negocio. */
+    private static final int MIN_YEAR = 2000;
+
+    private static LocalDate min(LocalDate left, LocalDate right) {
+        return left.isBefore(right) ? left : right;
     }
 
     // ── Exportacion ──────────────────────────────────────────────
@@ -333,35 +452,17 @@ public class CashClosureServiceImpl implements CashClosureService, CashClosureGu
                 snapshot.closedBy());
 
         return new CashClosureDocumentDTO(
-                "cierre-caja-" + closure.getBusinessDate() + ".pdf", content);
-    }
-
-    @Override
-    public CashClosureDocumentDTO summaryDocument(LocalDate from, LocalDate to) {
-        CashClosureSummaryResponseDTO summary = getSummary(from, to);
-        byte[] content = reportService.renderSummary(
-                summary, headerOf(currentUserService.getCurrentWorkshop()));
-
-        return new CashClosureDocumentDTO(
-                "resumen-caja-" + from + "-a-" + to + ".pdf", content);
+                "cierre-caja-" + snapshot.businessDate() + ".pdf", content);
     }
 
     // ── Apoyo ────────────────────────────────────────────────────
 
     /**
-     * La fecha de negocio del taller. Se calcula UNA vez por operacion: si cada
-     * consulta llamara al reloj por su cuenta, una peticion servida justo en el
-     * cambio de dia mezclaria dos fechas distintas.
-     */
-    private LocalDate businessDate() {
-        return LocalDate.now(clock);
-    }
-
-    /**
-     * Toma el cerrojo del taller y devuelve la fecha operativa YA bajo cerrojo.
-     * El orden importa: leer el reloj despues de tener el cerrojo evita que dos
-     * transacciones en el limite del dia trabajen sobre fechas distintas creyendo
-     * que se estan serializando.
+     * Toma el cerrojo del taller y devuelve la fecha operativa.
+     *
+     * Bloquear la fila del taller es lo que serializa cierre y venta: las dos
+     * operaciones piden el mismo cerrojo, asi que una espera a que la otra
+     * confirme en vez de decidir sobre un estado que ya cambio.
      */
     private LocalDate lockBusinessDate(UUID workshopId) {
         workshopRepository.lockById(workshopId)
@@ -377,44 +478,13 @@ public class CashClosureServiceImpl implements CashClosureService, CashClosureGu
                         "No existe el cierre de caja especificado"));
     }
 
-    /**
-     * Saldo cambiario pendiente al final del rango: el del cierre mas reciente,
-     * NUNCA la suma de los diarios. Cada `pendingExchangeAmount` es una foto del
-     * saldo total en ese momento, asi que sumar tres dias con Q20,000, Q18,000 y
-     * Q25,000 daria Q63,000 de deuda que no existe; la respuesta correcta es
-     * Q25,000.
-     */
-    private BigDecimal endingPendingExchangeAmount(
-            UUID workshopId, LocalDate from, LocalDate to) {
-        List<BigDecimal> amounts = repository.findPendingExchangeAmounts(
-                workshopId, from, to, PageRequest.of(0, 1));
-        return amounts.isEmpty() ? money(BigDecimal.ZERO) : money(amounts.get(0));
-    }
-
-    private void validateRange(LocalDate from, LocalDate to) {
-        if (from == null || to == null) {
-            throw new ValidationException(
-                    "El rango de fechas es obligatorio: se requieren 'from' y 'to'");
-        }
-        if (from.isAfter(to)) {
-            throw new ValidationException(
-                    "La fecha inicial no puede ser posterior a la final");
-        }
-        if (from.plusDays(MAX_RANGE_DAYS - 1L).isBefore(to)) {
-            throw new ValidationException(
-                    "El rango no puede superar los " + MAX_RANGE_DAYS + " dias");
-        }
+    /** La fecha operativa del servidor. El navegador nunca decide el dia. */
+    private LocalDate businessDate() {
+        return LocalDate.now(clock);
     }
 
     private ReportHeaderDTO headerOf(Workshop workshop) {
         return new ReportHeaderDTO(workshop.getName(), workshop.getAddress());
-    }
-
-    private String fullNameOf(Employee employee) {
-        String firstName = employee.getFirstName() == null ? "" : employee.getFirstName();
-        String lastName = employee.getLastName() == null ? "" : employee.getLastName();
-        String fullName = (firstName + " " + lastName).trim();
-        return fullName.isEmpty() ? null : fullName;
     }
 
     private static BigDecimal money(BigDecimal amount) {

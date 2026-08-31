@@ -61,6 +61,32 @@ public class Inventory extends Auditable {
     @JoinColumn(name = "product_id")
     private Product product;
     private BigDecimal price;
+    /**
+     * Costo de referencia ACTUAL, NO verdad historica.
+     *
+     * Desde que existen los lotes ({@code InventoryAcquisition}) esta columna
+     * dejo de ser la contabilidad del inventario y se quedo con lo unico para lo
+     * que sirve de verdad: representar cuanto cuesta hoy reponer una unidad. Se
+     * reescribe con el costo unitario de la ULTIMA compra registrada, asi que su
+     * valor de ayer no se puede consultar.
+     *
+     * Por eso NINGUNA cifra historica puede leerla:
+     *
+     * <ul>
+     * <li>La ganancia de una venta pasada sale de
+     * {@code SaleDetail.costTotal}, capturado con FIFO el dia de la venta.</li>
+     * <li>El gasto en compras sale de los lotes, por su {@code acquiredAt}.</li>
+     * </ul>
+     *
+     * Calcular rentabilidad historica con este campo daria el margen que la
+     * venta HABRIA tenido si se hubiera hecho hoy, que no es lo que nadie
+     * pregunta.
+     *
+     * Sigue en uso para dos cosas legitimas, ambas sobre el presente: mostrar el
+     * costo vigente en el catalogo de Control, y servir de piso al precio de
+     * venta en {@code SaleDetailHandler.resolvePricing}, que impide despachar por
+     * debajo de lo que cuesta reponer.
+     */
     private BigDecimal cost;
 
     @Builder.Default

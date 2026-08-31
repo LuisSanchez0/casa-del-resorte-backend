@@ -36,6 +36,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
+import com.cns.spring_house.acquisition.entity.AcquisitionType;
 import com.cns.spring_house.dashboard.dto.AdminDashboardOverviewResponseDTO;
 import com.cns.spring_house.dashboard.dto.CustomerPerformanceDTO;
 import com.cns.spring_house.dashboard.dto.EmployeePerformanceDTO;
@@ -253,6 +254,14 @@ class AdminDashboardControllerTest {
                 secured.getOverview();
                 secured.getSalesTrend(SalesGranularity.DAY, null);
                 secured.getVehicleOccupancy(30);
+                // Las analiticas financieras nuevas viven bajo el MISMO
+                // `@PreAuthorize` de clase, asi que se comprueban aqui: una
+                // ruta nueva que se saltara la anotacion pasaria inadvertida.
+                secured.getAcquisitionTrend(SalesGranularity.DAY, null, null);
+                secured.getAcquisitionTrend(
+                        SalesGranularity.MONTH, null, AcquisitionType.IMPORTATION);
+                secured.getSalesProfitability(SalesGranularity.DAY, null);
+                secured.getTopSuppliers(SalesGranularity.DAY, null);
             }).doesNotThrowAnyException();
         }
 
@@ -270,12 +279,27 @@ class AdminDashboardControllerTest {
                 assertThatThrownBy(() -> secured.getVehicleOccupancy(30))
                         .as("vehicle-occupancy con rol %s", role)
                         .isInstanceOf(AccessDeniedException.class);
+                assertThatThrownBy(() ->
+                        secured.getAcquisitionTrend(SalesGranularity.DAY, null, null))
+                        .as("acquisition-trend con rol %s", role)
+                        .isInstanceOf(AccessDeniedException.class);
+                assertThatThrownBy(() ->
+                        secured.getSalesProfitability(SalesGranularity.DAY, null))
+                        .as("sales-profitability con rol %s", role)
+                        .isInstanceOf(AccessDeniedException.class);
+                assertThatThrownBy(() ->
+                        secured.getTopSuppliers(SalesGranularity.DAY, null))
+                        .as("top-suppliers con rol %s", role)
+                        .isInstanceOf(AccessDeniedException.class);
             }
 
             // Denegado en la puerta: el servicio nunca llega a consultar nada.
             verify(securedService, never()).getOverview();
             verify(securedService, never()).getSalesTrend(any(), any());
             verify(securedService, never()).getVehicleOccupancy(Mockito.anyInt());
+            verify(securedService, never()).getAcquisitionTrend(any(), any(), any());
+            verify(securedService, never()).getSalesCostProfitTrend(any(), any());
+            verify(securedService, never()).getTopSuppliers(any(), any());
         }
 
         @Test

@@ -181,7 +181,6 @@ class SecretaryDashboardQueriesTest {
                 .workshop(workshop)
                 .closedBy(employee)
                 .businessDate(businessDate)
-                .openingCash(zero)
                 .invoiceCount(0L)
                 .invoiceTotal(zero)
                 .exchangeInvoiceCount(0L)
@@ -194,13 +193,11 @@ class SecretaryDashboardQueriesTest {
                 .transferPaymentCount(0L)
                 .transferPayments(zero)
                 .totalCollected(zero)
+                .issuedExchangePendingAmount(zero)
+                .itemsBilledAmount(zero)
                 .exchangeCollectedCount(0L)
                 .exchangeCollectedAmount(zero)
                 .previousExchangeCollectedAmount(zero)
-                .pendingExchangeAmount(zero)
-                .expectedCash(zero)
-                .countedCash(zero)
-                .difference(zero)
                 .build());
     }
 

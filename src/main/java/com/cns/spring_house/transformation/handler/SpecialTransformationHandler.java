@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.cns.spring_house.family.entity.Attribute;
 import com.cns.spring_house.family.entity.AttributeDataType;
+import com.cns.spring_house.acquisition.service.InventoryLotService;
 import com.cns.spring_house.family.entity.Family;
 import com.cns.spring_house.family.entity.FamilyCategory;
 import com.cns.spring_house.inventory.entity.Inventory;
@@ -61,6 +62,7 @@ public class SpecialTransformationHandler implements TransformationHandler {
     private final InventoryItemRepository itemRepository;
     private final WorkshopRepository workshopRepository;
     private final ObjectMapper objectMapper;
+    private final InventoryLotService lotService;
 
     @Override
     public FamilyCategory getType() {
@@ -177,6 +179,11 @@ public class SpecialTransformationHandler implements TransformationHandler {
     private TransformationItem processInputItem(InventoryItem inputItem) {
         inputItem.setStatus(InventoryItemStatus.CONSUMED);
         inputItem.getInventory().removeStock(1);
+        // La pieza de entrada desaparece del inventario, asi que su lote se
+        // consume igual que en una venta. Sin esto, el inventario quedaria con
+        // menos existencias que remanente de lote y el FIFO acabaria costeando
+        // contra unidades que ya no estan.
+        lotService.consumeWithoutTrace(inputItem.getInventory(), 1);
         return TransformationItem.builder()
                 .item(inputItem)
                 .role(TransformationItemRole.INPUT)
@@ -763,6 +770,13 @@ public class SpecialTransformationHandler implements TransformationHandler {
                 .build();
         inventory.addItem(item);
         inventory.addStock(1);
+        // La pieza resultante entra como PRODUCTION: se fabrico a partir de
+        // material propio, no se le compro a nadie. No se le traslada el costo
+        // del material de entrada porque este sistema no modela costeo de
+        // manufactura, y repartirlo a ojo daria una cifra indefendible. Lo que
+        // se venda de aqui queda marcado como linea sin costo historico, que es
+        // la verdad, en lugar de como costo cero, que seria ganancia inventada.
+        lotService.registerProduction(inventory, 1);
         // Hibernate asigna el id al persistir. Sin este save la unidad seguía
         // siendo transitoria cuando se guardaba la Transformation, y el insert de
         // transformation_item viajaba con item_id nulo (violando el NOT NULL).

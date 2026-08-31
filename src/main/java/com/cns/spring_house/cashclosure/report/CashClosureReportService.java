@@ -1,7 +1,6 @@
 package com.cns.spring_house.cashclosure.report;
 
 import com.cns.spring_house.cashclosure.dto.CashClosureResponseDTO;
-import com.cns.spring_house.cashclosure.dto.CashClosureSummaryResponseDTO;
 
 /**
  * Genera los PDF del cierre de caja.
@@ -29,10 +28,5 @@ public interface CashClosureReportService {
             ReportHeaderDTO header,
             boolean draft,
             String responsible);
-
-    /** Reporte de un rango, construido sobre los snapshots del periodo. */
-    byte[] renderSummary(
-            CashClosureSummaryResponseDTO summary,
-            ReportHeaderDTO header);
 
 }

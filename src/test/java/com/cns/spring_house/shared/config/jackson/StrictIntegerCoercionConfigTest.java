@@ -87,15 +87,17 @@ class StrictIntegerCoercionConfigTest {
     }
 
     @Nested
-    @DisplayName("Modelo: year")
+    @DisplayName("Modelo: yearFrom y yearTo")
     class ModelYear {
 
         @Test
-        void acceptsAnIntegerYear() {
-            assertThat(read("""
+        void acceptsAnIntegerYearRange() {
+            CreateModelRequestDTO request = read("""
                     {"brand":"6c1f2f4e-0000-0000-0000-000000000000",
-                     "name":"Corolla","year":2024}
-                    """, CreateModelRequestDTO.class).year()).isEqualTo(2024);
+                     "name":"Corolla","yearFrom":2020,"yearTo":2024}
+                    """, CreateModelRequestDTO.class);
+            assertThat(request.yearFrom()).isEqualTo(2020);
+            assertThat(request.yearTo()).isEqualTo(2024);
         }
 
         /** El caso exacto que devolvía 201 guardando 2026. */
@@ -103,14 +105,26 @@ class StrictIntegerCoercionConfigTest {
         void rejectsAFractionalYear() {
             assertThatThrownBy(() -> read("""
                     {"brand":"6c1f2f4e-0000-0000-0000-000000000000",
-                     "name":"Corolla","year":2026.5}
+                     "name":"Corolla","yearFrom":2026.5,"yearTo":2026.5}
+                    """, CreateModelRequestDTO.class))
+                    .isInstanceOf(MismatchedInputException.class);
+        }
+
+        /** Los dos extremos son enteros; el segundo no se cuela por ir aparte. */
+        @Test
+        void rejectsAFractionalUpperBound() {
+            assertThatThrownBy(() -> read("""
+                    {"brand":"6c1f2f4e-0000-0000-0000-000000000000",
+                     "name":"Corolla","yearFrom":2020,"yearTo":2026.5}
                     """, CreateModelRequestDTO.class))
                     .isInstanceOf(MismatchedInputException.class);
         }
 
         @Test
         void rejectsAFractionalYearOnUpdateToo() {
-            assertThatThrownBy(() -> read("{\"year\":2026.5}", UpdateModelRequestDTO.class))
+            assertThatThrownBy(() -> read("{\"yearFrom\":2026.5}", UpdateModelRequestDTO.class))
+                    .isInstanceOf(MismatchedInputException.class);
+            assertThatThrownBy(() -> read("{\"yearTo\":2026.5}", UpdateModelRequestDTO.class))
                     .isInstanceOf(MismatchedInputException.class);
         }
     }

@@ -12,6 +12,8 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Clock;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -28,6 +30,11 @@ import org.springframework.boot.jpa.test.autoconfigure.TestEntityManager;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
+import com.cns.spring_house.acquisition.entity.AcquisitionOrigin;
+import com.cns.spring_house.acquisition.entity.InventoryAcquisition;
+import com.cns.spring_house.acquisition.repository.InventoryAcquisitionRepository;
+import com.cns.spring_house.acquisition.repository.SaleDetailCostAllocationRepository;
+import com.cns.spring_house.acquisition.service.InventoryLotService;
 import com.cns.spring_house.family.entity.Family;
 import com.cns.spring_house.family.entity.FamilyCategory;
 import com.cns.spring_house.inventory.entity.Inventory;
@@ -63,6 +70,12 @@ class ContainerTransformationDatabaseTest {
 
     @Autowired
     private TestEntityManager entityManager;
+
+    @Autowired
+    private InventoryAcquisitionRepository acquisitionRepository;
+
+    @Autowired
+    private SaleDetailCostAllocationRepository allocationRepository;
 
     private ContainerTransformationHandler handler;
 
@@ -126,7 +139,15 @@ class ContainerTransformationDatabaseTest {
 
     @BeforeEach
     void setUp() {
-        handler = new ContainerTransformationHandler(itemRepository);
+        // El libro de lotes es real, no simulado: desarmar una maleta consume su
+        // lote y devuelve los componentes como produccion, y eso es justo lo que
+        // esta prueba tiene que ver ocurrir contra PostgreSQL.
+        handler = new ContainerTransformationHandler(
+                itemRepository,
+                new InventoryLotService(
+                        acquisitionRepository,
+                        allocationRepository,
+                        Clock.systemDefaultZone()));
         workshop = entityManager.persistAndFlush(Workshop.builder()
                 .name("TALLER " + unique())
                 .address("DIRECCION")
@@ -171,6 +192,18 @@ class ContainerTransformationDatabaseTest {
                 .build());
     }
 
+    /** Lote de produccion que respalda `units` existencias ya sembradas. */
+    private InventoryAcquisition seedProductionLot(Inventory inventory, int units) {
+        return entityManager.persistAndFlush(InventoryAcquisition.builder()
+                .workshop(workshop)
+                .inventory(inventory)
+                .origin(AcquisitionOrigin.PRODUCTION)
+                .quantityReceived(units)
+                .quantityRemaining(units)
+                .acquiredAt(LocalDateTime.now())
+                .build());
+    }
+
     /**
      * Maleta física armada con `count` hojas dentro, tal y como la deja
      * ContainerInventoryHandler: la unidad del contenedor suma stock y cada hoja
@@ -185,6 +218,10 @@ class ContainerTransformationDatabaseTest {
             component.setContainer(bag);
         }
         containerInventory.addStock(1);
+        // Toda existencia necesita su lote. La maleta nace de un armado, asi que
+        // el suyo es de produccion: sin el, desarmarla se quedaria sin lote que
+        // consumir y el invariante entre stock y remanente no se sostendria.
+        seedProductionLot(containerInventory, 1);
         entityManager.flush();
         return bag;
     }

@@ -5,6 +5,9 @@ import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+
+import com.cns.spring_house.family.entity.FamilyCategory;
+import com.cns.spring_house.sale.entity.PaymentMethod;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 
@@ -57,6 +60,29 @@ final class ReportFormats {
 
     static String dateTime(LocalDateTime value) {
         return value == null ? "" : DATE_TIME.format(value);
+    }
+
+
+    /**
+     * La categoria de un articulo en el idioma del taller. Se traduce aqui y no
+     * en la plantilla para que el PDF y la pantalla usen las mismas palabras.
+     */
+    static String itemType(FamilyCategory category) {
+        return switch (category) {
+            case NORMAL -> "Producto";
+            case SPECIAL -> "Pieza";
+            case CONTAINER -> "Contenedor";
+            case JOB -> "Servicio";
+        };
+    }
+
+    /** La forma de pago en el idioma del taller. */
+    static String paymentMethod(PaymentMethod method) {
+        return switch (method) {
+            case CASH -> "Efectivo";
+            case CARD -> "Tarjeta";
+            case TRANSFER -> "Transferencia / Deposito";
+        };
     }
 
 }

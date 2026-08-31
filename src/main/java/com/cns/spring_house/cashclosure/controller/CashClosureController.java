@@ -1,7 +1,6 @@
 package com.cns.spring_house.cashclosure.controller;
 
 import java.time.LocalDate;
-import java.util.List;
 import java.util.UUID;
 
 import org.springframework.format.annotation.DateTimeFormat;
@@ -13,19 +12,15 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.cns.spring_house.cashclosure.dto.CashClosureBasePreviewResponseDTO;
 import com.cns.spring_house.cashclosure.dto.CashClosureDocumentDTO;
+import com.cns.spring_house.cashclosure.dto.CashClosureMonthlyResponseDTO;
 import com.cns.spring_house.cashclosure.dto.CashClosureResponseDTO;
-import com.cns.spring_house.cashclosure.dto.CashClosureSummaryResponseDTO;
-import com.cns.spring_house.cashclosure.dto.CreateCashClosureRequestDTO;
 import com.cns.spring_house.cashclosure.service.CashClosureService;
 
-import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 
 /**
@@ -34,7 +29,11 @@ import lombok.RequiredArgsConstructor;
  * El taller NO viaja en ninguna ruta, ni como parametro ni en el cuerpo: lo
  * resuelve el servicio desde el token, tambien en las descargas de PDF.
  *
- * Los segmentos literales (`/preview`, `/by-date`, `/summary`) se resuelven
+ * NINGUNA ruta acepta cifras. El cierre no recibe siquiera cuerpo: todo lo que
+ * lo compone lo calcula el servidor contra la base de datos, y aceptar un solo
+ * total del cliente permitiria cerrar una caja con los numeros que uno quisiera.
+ *
+ * Los segmentos literales (`/preview`, `/by-date`, `/monthly`) se resuelven
  * antes que `/{id}` porque el comparador de patrones de Spring prefiere el mas
  * especifico, igual que hacen `/dashboard` y `/exchange-invoices` en
  * {@code SaleController}.
@@ -50,7 +49,7 @@ public class CashClosureController {
     private final CashClosureService service;
 
     /**
-     * Cifras del dia en curso, sin arqueo. Consultarla no cierra la caja, no
+     * El dia en curso tal y como esta ahora. Consultarlo no cierra la caja, no
      * persiste nada y no bloquea ventas.
      *
      * Cuando el dia ya fue cerrado responde {@code alreadyClosed = true} con el
@@ -58,42 +57,18 @@ public class CashClosureController {
      * de un segundo cierre.
      */
     @GetMapping("/preview")
-    public ResponseEntity<CashClosureBasePreviewResponseDTO> getPreview() {
+    public ResponseEntity<CashClosureResponseDTO> getPreview() {
         return ResponseEntity
                 .status(HttpStatus.OK)
                 .body(service.getPreview());
     }
 
-    /**
-     * Previsualizacion final: las cifras recalculadas mas el arqueo declarado.
-     * Devuelve el documento que se persistiria, sin persistirlo.
-     */
-    @PostMapping("/preview")
-    public ResponseEntity<CashClosureResponseDTO> preview(
-            @RequestBody @Valid CreateCashClosureRequestDTO requestDTO) {
-        return ResponseEntity
-                .status(HttpStatus.OK)
-                .body(service.preview(requestDTO));
-    }
-
-    /**
-     * La previsualizacion final en PDF, para revisarla o firmarla antes de
-     * cerrar. NO crea el cierre y NO bloquea ventas; el documento sale marcado
-     * como PREVISUALIZACION - CAJA NO CERRADA.
-     */
-    @PostMapping("/preview/pdf")
-    public ResponseEntity<byte[]> previewDocument(
-            @RequestBody @Valid CreateCashClosureRequestDTO requestDTO) {
-        return download(service.previewDocument(requestDTO));
-    }
-
-    /** Confirma el cierre del dia y persiste el snapshot. */
+    /** Confirma el cierre del dia y persiste el snapshot. Sin cuerpo. */
     @PostMapping
-    public ResponseEntity<CashClosureResponseDTO> close(
-            @RequestBody @Valid CreateCashClosureRequestDTO requestDTO) {
+    public ResponseEntity<CashClosureResponseDTO> close() {
         return ResponseEntity
                 .status(HttpStatus.CREATED)
-                .body(service.close(requestDTO));
+                .body(service.close());
     }
 
     /** Cierre de una fecha concreta del taller autenticado. */
@@ -105,30 +80,22 @@ public class CashClosureController {
                 .body(service.getByDate(date));
     }
 
-    /** Agregado del rango sobre los snapshots. Un mes es un rango mas. */
-    @GetMapping("/summary")
-    public ResponseEntity<CashClosureSummaryResponseDTO> getSummary(
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+    /**
+     * Cierre MENSUAL: la misma estructura contable que un dia, agregada sobre
+     * los cierres diarios confirmados del mes.
+     *
+     * `year` y `month` en vez de un rango arbitrario: el negocio cierra por mes
+     * natural, y un rango libre permitia pedir "del 3 al 17", que no es un
+     * cierre de nada. El servicio los valida y responde 400 con mensaje de
+     * negocio si estan fuera de rango.
+     */
+    @GetMapping("/monthly")
+    public ResponseEntity<CashClosureMonthlyResponseDTO> getMonthly(
+            @RequestParam int year,
+            @RequestParam int month) {
         return ResponseEntity
                 .status(HttpStatus.OK)
-                .body(service.getSummary(from, to));
-    }
-
-    @GetMapping("/summary/pdf")
-    public ResponseEntity<byte[]> getSummaryDocument(
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
-        return download(service.summaryDocument(from, to));
-    }
-
-    @GetMapping
-    public ResponseEntity<List<CashClosureResponseDTO>> getRange(
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
-        return ResponseEntity
-                .status(HttpStatus.OK)
-                .body(service.getRange(from, to));
+                .body(service.getMonthly(year, month));
     }
 
     /** Snapshot historico. Un cierre de otro taller responde 404. */
@@ -148,8 +115,7 @@ public class CashClosureController {
     /**
      * `attachment` y no `inline`: estos documentos se archivan y se imprimen, y
      * el nombre del archivo forma parte de esa trazabilidad. El nombre lo decide
-     * el servicio, que es quien conoce la fecha operativa o los extremos del
-     * rango.
+     * el servicio, que es quien conoce la fecha operativa.
      */
     private ResponseEntity<byte[]> download(CashClosureDocumentDTO document) {
         ContentDisposition disposition = ContentDisposition

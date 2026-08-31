@@ -14,7 +14,19 @@ import java.util.function.UnaryOperator;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.cns.spring_house.acquisition.entity.AcquisitionType;
+import com.cns.spring_house.acquisition.repository.InventoryAcquisitionRepository;
+import com.cns.spring_house.acquisition.repository.projection.AcquisitionBucketProjection;
+import com.cns.spring_house.acquisition.repository.projection.SupplierPerformanceProjection;
+import com.cns.spring_house.dashboard.dto.AcquisitionTrendPointDTO;
+import com.cns.spring_house.dashboard.dto.AcquisitionTrendResponseDTO;
 import com.cns.spring_house.dashboard.dto.AdminDashboardOverviewResponseDTO;
+import com.cns.spring_house.dashboard.dto.CostCoverage;
+import com.cns.spring_house.dashboard.dto.SalesCostProfitPointDTO;
+import com.cns.spring_house.dashboard.dto.SalesCostProfitTrendResponseDTO;
+import com.cns.spring_house.dashboard.dto.SupplierPerformanceDTO;
+import com.cns.spring_house.dashboard.dto.TopSuppliersResponseDTO;
+import com.cns.spring_house.sale.repository.projection.SalesCostProfitBucketProjection;
 import com.cns.spring_house.dashboard.dto.CustomerPerformanceDTO;
 import com.cns.spring_house.dashboard.dto.EmployeePerformanceDTO;
 import com.cns.spring_house.dashboard.dto.ProductPerformanceDTO;
@@ -95,6 +107,7 @@ public class AdminDashboardServiceImpl implements AdminDashboardService {
     private final TransformationRepository transformationRepository;
     private final EmployeeRepository employeeRepository;
     private final InventoryRepository inventoryRepository;
+    private final InventoryAcquisitionRepository acquisitionRepository;
     private final Clock clock;
 
     // ── Resumen ──────────────────────────────────────────────────
@@ -251,6 +264,296 @@ public class AdminDashboardServiceImpl implements AdminDashboardService {
                     row == null ? BigDecimal.ZERO : row.getAmount()));
         }
         return series;
+    }
+
+    // ── Gasto en compras ─────────────────────────────────────────
+
+    /**
+     * La serie de GASTO EN COMPRAS.
+     *
+     * Misma maquinaria que la serie de ventas —resolver periodo, una consulta
+     * agregada, densificar, sumar en el servidor— porque es el mismo problema
+     * con otra tabla y otra fecha. Lo que NO comparte es el significado: aqui se
+     * mide dinero que SALIO hacia proveedores, fechado por `acquiredAt`, y en la
+     * otra dinero que se facturo. Restarlas por periodo no da ganancia.
+     *
+     * La primera compra solo se consulta para YEAR, la unica granularidad cuyo
+     * rango depende de la historia disponible, igual que en la serie de ventas:
+     * pedirla siempre seria una consulta desperdiciada en el caso comun.
+     */
+    @Override
+    public AcquisitionTrendResponseDTO getAcquisitionTrend(
+            SalesGranularity granularity, String period, AcquisitionType acquisitionType) {
+
+        UUID workshopId = SecurityUtils.getWorkshopId();
+        LocalDate businessDate = LocalDate.now(clock);
+
+        LocalDate historyStart = null;
+        if (granularity == SalesGranularity.YEAR) {
+            LocalDateTime firstPurchase = acquisitionRepository
+                    .findFirstPurchaseDate(workshopId);
+            historyStart = firstPurchase == null ? null : firstPurchase.toLocalDate();
+        }
+
+        SalesPeriod resolved = SalesPeriod.resolve(
+                granularity, period, businessDate, historyStart);
+
+        if (resolved.isEmpty()) {
+            return new AcquisitionTrendResponseDTO(
+                    granularity, acquisitionType, resolved.from(), resolved.to(),
+                    BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+                    0L, 0L, List.of());
+        }
+
+        // El enum se convierte a texto AQUI y no en la consulta: asi lo unico
+        // que puede llegar al SQL es un literal del enum, nunca texto libre.
+        String typeFilter = acquisitionType == null ? null : acquisitionType.name();
+
+        List<AcquisitionTrendPointDTO> points = densifyAcquisitions(
+                acquisitionRepository.findPurchaseBuckets(
+                        workshopId,
+                        granularity.sqlUnit(),
+                        resolved.from().atStartOfDay(),
+                        exclusiveEnd(resolved),
+                        typeFilter),
+                resolved);
+
+        BigDecimal total = BigDecimal.ZERO;
+        BigDecimal national = BigDecimal.ZERO;
+        BigDecimal importation = BigDecimal.ZERO;
+        long count = 0L;
+        long units = 0L;
+
+        for (AcquisitionTrendPointDTO point : points) {
+            total = total.add(point.amount());
+            national = national.add(point.nationalAmount());
+            importation = importation.add(point.importationAmount());
+            count += point.acquisitionCount();
+            units += point.unitsReceived();
+        }
+
+        return new AcquisitionTrendResponseDTO(
+                granularity, acquisitionType, resolved.from(), resolved.to(),
+                total, national, importation, count, units, points);
+    }
+
+    /**
+     * Igual que {@link #densifySales}: un intervalo sin compras vale cero y no
+     * se omite. Omitirlo uniria dos fechas lejanas con una recta y aparentaria
+     * compras intermedias que nunca existieron.
+     */
+    private List<AcquisitionTrendPointDTO> densifyAcquisitions(
+            List<AcquisitionBucketProjection> rows, SalesPeriod period) {
+
+        Map<LocalDate, AcquisitionBucketProjection> byBucket = new HashMap<>();
+        for (AcquisitionBucketProjection row : rows) {
+            byBucket.put(LocalDate.parse(row.getBucketDate()), row);
+        }
+
+        UnaryOperator<LocalDate> next = nextBucket(period);
+
+        List<AcquisitionTrendPointDTO> series = new ArrayList<>();
+        for (LocalDate bucket = period.from();
+                !bucket.isAfter(period.to());
+                bucket = next.apply(bucket)) {
+
+            AcquisitionBucketProjection row = byBucket.get(bucket);
+            series.add(new AcquisitionTrendPointDTO(
+                    bucket,
+                    row == null ? 0L : row.getAcquisitionCount(),
+                    row == null ? 0L : row.getUnitsReceived(),
+                    row == null ? BigDecimal.ZERO : row.getAmount(),
+                    row == null ? BigDecimal.ZERO : row.getNationalAmount(),
+                    row == null ? BigDecimal.ZERO : row.getImportationAmount()));
+        }
+        return series;
+    }
+
+    // ── Rentabilidad de ventas ───────────────────────────────────
+
+    /**
+     * La serie de COSTO DE LO VENDIDO y GANANCIA BRUTA.
+     *
+     * Se fecha por la emision de la venta y comparte universo exacto con la
+     * serie de ventas generadas (COMPLETED, por `completedAt`), de modo que las
+     * dos graficas se pueden leer una al lado de la otra. La ganancia sale de
+     * restar a cada linea SU propio costo historico, no de restar el gasto del
+     * periodo a la venta del periodo.
+     *
+     * La cobertura se calcula sobre los totales del periodo y viaja en la
+     * respuesta: si alguna linea no tenia costo, la interfaz lo dice en vez de
+     * presentar una ganancia parcial como si fuera completa.
+     */
+    @Override
+    public SalesCostProfitTrendResponseDTO getSalesCostProfitTrend(
+            SalesGranularity granularity, String period) {
+
+        UUID workshopId = SecurityUtils.getWorkshopId();
+        LocalDate businessDate = LocalDate.now(clock);
+
+        LocalDate historyStart = null;
+        if (granularity == SalesGranularity.YEAR) {
+            LocalDateTime firstSale = saleRepository
+                    .findFirstCompletedSaleDate(workshopId);
+            historyStart = firstSale == null ? null : firstSale.toLocalDate();
+        }
+
+        SalesPeriod resolved = SalesPeriod.resolve(
+                granularity, period, businessDate, historyStart);
+
+        if (resolved.isEmpty()) {
+            return new SalesCostProfitTrendResponseDTO(
+                    granularity, resolved.from(), resolved.to(),
+                    BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
+                    0L, 0L, BigDecimal.ZERO, CostCoverage.EMPTY, List.of());
+        }
+
+        List<SalesCostProfitPointDTO> points = densifyCostProfit(
+                saleRepository.findSalesCostProfitBuckets(
+                        workshopId,
+                        granularity.sqlUnit(),
+                        resolved.from().atStartOfDay(),
+                        exclusiveEnd(resolved)),
+                resolved);
+
+        BigDecimal coveredRevenue = BigDecimal.ZERO;
+        BigDecimal cost = BigDecimal.ZERO;
+        BigDecimal profit = BigDecimal.ZERO;
+        BigDecimal uncoveredRevenue = BigDecimal.ZERO;
+        long coveredLines = 0L;
+        long uncoveredLines = 0L;
+
+        for (SalesCostProfitPointDTO point : points) {
+            coveredRevenue = coveredRevenue.add(point.coveredRevenue());
+            cost = cost.add(point.costOfGoodsSold());
+            profit = profit.add(point.grossProfit());
+            uncoveredRevenue = uncoveredRevenue.add(point.uncoveredRevenue());
+            coveredLines += point.coveredLines();
+            uncoveredLines += point.uncoveredLines();
+        }
+
+        return new SalesCostProfitTrendResponseDTO(
+                granularity, resolved.from(), resolved.to(),
+                coveredRevenue, cost, profit,
+                coveredLines, uncoveredLines, uncoveredRevenue,
+                coverageOf(coveredLines, uncoveredLines), points);
+    }
+
+    /**
+     * Un periodo sin ninguna linea de producto es EMPTY y no COMPLETE: no hay
+     * nada que cubrir, que no es lo mismo que haberlo cubierto todo. Rotular de
+     * "historico completo" un mes sin ventas seria una afirmacion vacia.
+     */
+    private static CostCoverage coverageOf(long coveredLines, long uncoveredLines) {
+        if (coveredLines == 0L && uncoveredLines == 0L) {
+            return CostCoverage.EMPTY;
+        }
+        return uncoveredLines == 0L ? CostCoverage.COMPLETE : CostCoverage.PARTIAL;
+    }
+
+    private List<SalesCostProfitPointDTO> densifyCostProfit(
+            List<SalesCostProfitBucketProjection> rows, SalesPeriod period) {
+
+        Map<LocalDate, SalesCostProfitBucketProjection> byBucket = new HashMap<>();
+        for (SalesCostProfitBucketProjection row : rows) {
+            byBucket.put(LocalDate.parse(row.getBucketDate()), row);
+        }
+
+        UnaryOperator<LocalDate> next = nextBucket(period);
+
+        List<SalesCostProfitPointDTO> series = new ArrayList<>();
+        for (LocalDate bucket = period.from();
+                !bucket.isAfter(period.to());
+                bucket = next.apply(bucket)) {
+
+            SalesCostProfitBucketProjection row = byBucket.get(bucket);
+            series.add(new SalesCostProfitPointDTO(
+                    bucket,
+                    row == null ? BigDecimal.ZERO : row.getCoveredRevenue(),
+                    row == null ? BigDecimal.ZERO : row.getCostOfGoodsSold(),
+                    row == null ? BigDecimal.ZERO : row.getGrossProfit(),
+                    row == null ? 0L : row.getCoveredLines(),
+                    row == null ? 0L : row.getUncoveredLines(),
+                    row == null ? BigDecimal.ZERO : row.getUncoveredRevenue()));
+        }
+        return series;
+    }
+
+    // ── Proveedores ──────────────────────────────────────────────
+
+    /**
+     * Los cinco proveedores a los que mas se les ha comprado EN EL PERIODO
+     * seleccionado.
+     *
+     * Sigue el periodo de las graficas y no la historia entera a proposito: esta
+     * tarjeta vive junto a la de gasto en compras, y un ranking historico sin
+     * etiqueta al lado de una grafica mensual invita a leer las dos cifras como
+     * si hablaran del mismo tiempo. El rango que se midio viaja en la respuesta
+     * para que la interfaz lo rotule.
+     *
+     * El limite lo fija el servidor: `TOP_RANKING_LIMIT`, el mismo cinco que el
+     * resto de rankings del panel.
+     */
+    @Override
+    public TopSuppliersResponseDTO getTopSuppliers(
+            SalesGranularity granularity, String period) {
+
+        UUID workshopId = SecurityUtils.getWorkshopId();
+        LocalDate businessDate = LocalDate.now(clock);
+
+        LocalDate historyStart = null;
+        if (granularity == SalesGranularity.YEAR) {
+            LocalDateTime firstPurchase = acquisitionRepository
+                    .findFirstPurchaseDate(workshopId);
+            historyStart = firstPurchase == null ? null : firstPurchase.toLocalDate();
+        }
+
+        SalesPeriod resolved = SalesPeriod.resolve(
+                granularity, period, businessDate, historyStart);
+
+        if (resolved.isEmpty()) {
+            return new TopSuppliersResponseDTO(
+                    resolved.from(), resolved.to(), List.of());
+        }
+
+        List<SupplierPerformanceDTO> suppliers = acquisitionRepository
+                .findTopSuppliers(
+                        workshopId,
+                        resolved.from().atStartOfDay(),
+                        exclusiveEnd(resolved),
+                        TOP_RANKING_LIMIT)
+                .stream()
+                .map(AdminDashboardServiceImpl::toSupplierPerformance)
+                .toList();
+
+        return new TopSuppliersResponseDTO(
+                resolved.from(), resolved.to(), suppliers);
+    }
+
+    private static SupplierPerformanceDTO toSupplierPerformance(
+            SupplierPerformanceProjection projection) {
+        return new SupplierPerformanceDTO(
+                projection.getSupplierId(),
+                projection.getSupplierName(),
+                projection.getAcquisitionCount(),
+                projection.getUnitsReceived(),
+                projection.getTotalSpend(),
+                projection.getNationalSpend(),
+                projection.getImportationSpend());
+    }
+
+    /**
+     * El avance de un intervalo al siguiente segun la granularidad. Se comparte
+     * entre las tres series densificadas: la clave que devuelven las consultas
+     * ya viene normalizada al primer dia del intervalo, de modo que sumar un mes
+     * o un ano cae exactamente sobre la siguiente clave.
+     */
+    private static UnaryOperator<LocalDate> nextBucket(SalesPeriod period) {
+        return switch (period.granularity()) {
+            case DAY -> date -> date.plusDays(1);
+            case MONTH -> date -> date.plusMonths(1);
+            case YEAR -> date -> date.plusYears(1);
+        };
     }
 
     // ── Ocupacion del taller ─────────────────────────────────────

@@ -11,6 +11,8 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Clock;
+import java.time.LocalDateTime;
 import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.List;
@@ -31,6 +33,12 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtAut
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
+import com.cns.spring_house.acquisition.entity.AcquisitionOrigin;
+import com.cns.spring_house.acquisition.entity.InventoryAcquisition;
+import com.cns.spring_house.acquisition.repository.InventoryAcquisitionRepository;
+import com.cns.spring_house.acquisition.repository.SaleDetailCostAllocationRepository;
+import com.cns.spring_house.acquisition.service.InventoryLotService;
+import com.cns.spring_house.sale.repository.SaleDetailRepository;
 import com.cns.spring_house.employee.entity.Employee;
 import com.cns.spring_house.family.entity.Family;
 import com.cns.spring_house.family.entity.FamilyCategory;
@@ -38,6 +46,7 @@ import com.cns.spring_house.inventory.entity.Inventory;
 import com.cns.spring_house.inventory.entity.InventoryItem;
 import com.cns.spring_house.inventory.entity.InventoryItemStatus;
 import com.cns.spring_house.inventory.repository.InventoryItemRepository;
+import com.cns.spring_house.inventory.repository.InventoryRepository;
 import com.cns.spring_house.product.entity.Product;
 import com.cns.spring_house.sale.dto.AddSaleDetailRequestDTO;
 import com.cns.spring_house.sale.entity.Sale;
@@ -74,6 +83,18 @@ class ContainerSaleDetailRollbackTest {
 
     @Autowired
     private TestEntityManager entityManager;
+
+    @Autowired
+    private InventoryRepository inventoryRepository;
+
+    @Autowired
+    private InventoryAcquisitionRepository acquisitionRepository;
+
+    @Autowired
+    private SaleDetailCostAllocationRepository allocationRepository;
+
+    @Autowired
+    private SaleDetailRepository saleDetailRepository;
 
     private ContainerSaleDetailHandler handler;
 
@@ -137,7 +158,17 @@ class ContainerSaleDetailRollbackTest {
 
     @BeforeEach
     void setUp() {
-        handler = new ContainerSaleDetailHandler(itemRepository);
+        // Libro de lotes real: vender la maleta consume su lote y quitar la
+        // linea se lo devuelve. Que esas dos operaciones sean simetricas es
+        // exactamente lo que esta prueba vigila.
+        handler = new ContainerSaleDetailHandler(
+                itemRepository,
+                inventoryRepository,
+                new InventoryLotService(
+                        acquisitionRepository,
+                        allocationRepository,
+                        Clock.systemDefaultZone()),
+                saleDetailRepository);
         workshop = entityManager.persistAndFlush(Workshop.builder()
                 .name("TALLER " + unique())
                 .address("DIRECCION")
@@ -205,6 +236,16 @@ class ContainerSaleDetailRollbackTest {
             component.setContainer(bag);
         }
         containerInventory.addStock(1);
+        // La maleta nace de un armado, asi que su lote es de produccion: sin el,
+        // venderla se quedaria sin lote que consumir.
+        entityManager.persistAndFlush(InventoryAcquisition.builder()
+                .workshop(workshop)
+                .inventory(containerInventory)
+                .origin(AcquisitionOrigin.PRODUCTION)
+                .quantityReceived(1)
+                .quantityRemaining(1)
+                .acquiredAt(LocalDateTime.now())
+                .build());
         entityManager.flush();
         return bag;
     }

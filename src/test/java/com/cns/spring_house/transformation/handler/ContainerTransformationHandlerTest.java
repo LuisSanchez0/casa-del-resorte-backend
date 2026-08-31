@@ -16,6 +16,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import com.cns.spring_house.acquisition.service.InventoryLotService;
 import com.cns.spring_house.family.entity.Family;
 import com.cns.spring_house.family.entity.FamilyCategory;
 import com.cns.spring_house.inventory.entity.Inventory;
@@ -34,6 +35,13 @@ class ContainerTransformationHandlerTest {
 
     @Mock
     private InventoryItemRepository itemRepository;
+
+    /**
+     * El libro de lotes: toda entrada o salida de stock deja ahora su lote. Se
+     * simula porque estas pruebas miden la transformacion, no el FIFO.
+     */
+    @Mock
+    private InventoryLotService lotService;
 
     @InjectMocks
     private ContainerTransformationHandler handler;

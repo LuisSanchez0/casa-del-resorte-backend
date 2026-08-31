@@ -35,6 +35,12 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtAut
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
+import com.cns.spring_house.acquisition.entity.AcquisitionOrigin;
+import com.cns.spring_house.acquisition.entity.AcquisitionType;
+import com.cns.spring_house.acquisition.entity.InventoryAcquisition;
+import com.cns.spring_house.acquisition.repository.InventoryAcquisitionRepository;
+import com.cns.spring_house.supplier.entity.Supplier;
+import com.cns.spring_house.supplier.repository.SupplierRepository;
 import com.cns.spring_house.employee.entity.Employee;
 import com.cns.spring_house.employee.repository.EmployeeRepository;
 import com.cns.spring_house.family.entity.Family;
@@ -139,6 +145,12 @@ class SaleServiceDatabaseTest {
 
     @Autowired
     private JobLogRepository jobLogRepository;
+
+    @Autowired
+    private InventoryAcquisitionRepository acquisitionRepository;
+
+    @Autowired
+    private SupplierRepository supplierRepository;
 
     @DynamicPropertySource
     static void temporaryDatabase(DynamicPropertyRegistry registry)
@@ -293,8 +305,20 @@ class SaleServiceDatabaseTest {
                 .build());
     }
 
+    /**
+     * Inventario con existencias Y con el LOTE que las respalda.
+     *
+     * Las dos cosas van juntas desde que el costo es historico: sembrar stock
+     * sin lote deja un inventario que el FIFO no puede costear, y vender de el
+     * falla —correctamente— con un error de integridad. Que este helper sea el
+     * unico sitio donde nace un inventario es lo que garantiza que ninguna
+     * prueba se olvide del lote.
+     *
+     * El costo del lote es el mismo `10.00` que el costo de referencia, de modo
+     * que las comprobaciones de piso de precio siguen midiendo lo que median.
+     */
     private Inventory inventory(Workshop workshop, Product product, int stock) {
-        return inventoryRepository.save(Inventory.builder()
+        Inventory inventory = inventoryRepository.save(Inventory.builder()
                 .product(product)
                 .workshop(workshop)
                 .price(new BigDecimal("100.00"))
@@ -302,6 +326,39 @@ class SaleServiceDatabaseTest {
                 .stock(stock)
                 .minStock(0)
                 .build());
+
+        if (stock > 0) {
+            purchaseLot(inventory, stock, new BigDecimal("10.00"));
+        }
+
+        return inventory;
+    }
+
+    /** Lote de COMPRA que respalda `units` existencias al costo indicado. */
+    private InventoryAcquisition purchaseLot(
+            Inventory inventory, int units, BigDecimal unitCost) {
+        return acquisitionRepository.save(InventoryAcquisition.builder()
+                .workshop(inventory.getWorkshop())
+                .inventory(inventory)
+                .supplier(supplier(inventory.getWorkshop()))
+                .origin(AcquisitionOrigin.PURCHASE)
+                .acquisitionType(AcquisitionType.NATIONAL)
+                .quantityReceived(units)
+                .quantityRemaining(units)
+                .unitCost(unitCost)
+                .acquiredAt(LocalDateTime.now())
+                .build());
+    }
+
+    /** Un proveedor por taller, reutilizado: el nombre es unico por taller. */
+    private final Map<UUID, Supplier> suppliers = new HashMap<>();
+
+    private Supplier supplier(Workshop workshop) {
+        return suppliers.computeIfAbsent(workshop.getId(), ignored ->
+                supplierRepository.save(Supplier.builder()
+                        .workshop(workshop)
+                        .name("PROVEEDOR " + unique())
+                        .build()));
     }
 
     private InventoryItem availableItem(Inventory inventory) {
@@ -1385,6 +1442,293 @@ class SaleServiceDatabaseTest {
                 .extracting(SaleDetail::getId)
                 .containsExactlyElementsOf(
                         detailsBefore.stream().map(SaleDetail::getId).toList());
+    }
+
+    // ── Precio de un producto sin precio asignado ────────────────
+    //
+    // `inventory.price` es `NUMERIC(10,2) NOT NULL CHECK (>= 0)`: el esquema no
+    // admite nulo, asi que el CERO es la unica forma de decir "sin precio
+    // asignado". Fijarlo durante una venta escribe DOS cosas —la linea y el
+    // precio vigente del taller— y las dos tienen que ir juntas: antes eran dos
+    // peticiones HTTP seguidas, y entre una y otra cabia una venta cobrada a un
+    // precio que el catalogo nunca llego a aprender.
+
+    /** Un inventario sin precio asignado, opcionalmente sin lote que lo respalde. */
+    private Inventory unpricedInventory(
+            Workshop workshop, Product product, int stock, boolean withLot) {
+        Inventory inventory = inventoryRepository.save(Inventory.builder()
+                .product(product)
+                .workshop(workshop)
+                .price(BigDecimal.ZERO)
+                .cost(new BigDecimal("10.00"))
+                .stock(stock)
+                .minStock(0)
+                .build());
+
+        if (withLot && stock > 0) {
+            purchaseLot(inventory, stock, new BigDecimal("10.00"));
+        }
+
+        return inventory;
+    }
+
+    private BigDecimal catalogPriceOf(Inventory inventory) {
+        return inventoryRepository.findById(inventory.getId())
+                .orElseThrow()
+                .getPrice();
+    }
+
+    @Test
+    void aManualPriceOnAnUnpricedProductIsStoredInTheSaleAndInTheCatalog() {
+        Workshop workshop = authenticatedWorkshop();
+        Product product = product(FamilyCategory.NORMAL);
+        Inventory stock = unpricedInventory(workshop, product, 10, true);
+        Sale sale = openSale(workshop);
+
+        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+                product.getId(), null, null, 2, new BigDecimal("250.50"), null));
+
+        // La linea cobra lo que el cajero indico...
+        assertThat(reload(sale).getDetails())
+                .singleElement()
+                .satisfies(detail -> {
+                    assertThat(detail.getPrice()).isEqualByComparingTo("250.50");
+                    assertThat(detail.getSubTotal()).isEqualByComparingTo("501.00");
+                });
+
+        // ...y el taller aprende ese precio para las proximas ventas, en la
+        // MISMA transaccion: no hay un instante en el que exista una sin el otro.
+        assertThat(catalogPriceOf(stock)).isEqualByComparingTo("250.50");
+    }
+
+    /**
+     * Sin precio no hay venta: dejarlo vacio hacia que el precio efectivo cayera
+     * en el cero del catalogo y la pieza se despachara gratis.
+     */
+    @Test
+    void anUnpricedProductCannotBeSoldWithoutAManualPrice() {
+        Workshop workshop = authenticatedWorkshop();
+        Product product = product(FamilyCategory.NORMAL);
+        Inventory stock = unpricedInventory(workshop, product, 10, true);
+        Sale sale = openSale(workshop);
+
+        assertThatThrownBy(() -> service.addDetail(
+                sale.getId(), new AddSaleDetailRequestDTO(
+                        product.getId(), null, null, 1, null, null)))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("no tiene un precio de venta asignado");
+
+        assertThat(reload(sale).getDetails()).isEmpty();
+        assertThat(catalogPriceOf(stock)).isEqualByComparingTo("0.00");
+        assertThat(inventoryRepository.findById(stock.getId())
+                .orElseThrow().getStock()).isEqualTo(10);
+    }
+
+    /** Un cero explicito es lo mismo que no indicar nada: no es un precio. */
+    @Test
+    void anUnpricedProductCannotBeSoldAtZero() {
+        Workshop workshop = authenticatedWorkshop();
+        Product product = product(FamilyCategory.NORMAL);
+        Inventory stock = unpricedInventory(workshop, product, 10, true);
+        Sale sale = openSale(workshop);
+
+        assertThatThrownBy(() -> service.addDetail(
+                sale.getId(), new AddSaleDetailRequestDTO(
+                        product.getId(), null, null, 1, BigDecimal.ZERO, null)))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("no tiene un precio de venta asignado");
+
+        assertThat(catalogPriceOf(stock)).isEqualByComparingTo("0.00");
+    }
+
+    /**
+     * Si la linea se rechaza, el catalogo no se entera. Es la mitad facil de la
+     * atomicidad: la validacion ocurre antes de escribir nada.
+     */
+    @Test
+    void aRejectedLineLeavesTheCatalogPriceUntouched() {
+        Workshop workshop = authenticatedWorkshop();
+        Product product = product(FamilyCategory.NORMAL);
+        Inventory stock = unpricedInventory(workshop, product, 10, true);
+        Sale sale = openSale(workshop);
+
+        // Por debajo del costo de adquisicion (10.00).
+        assertThatThrownBy(() -> service.addDetail(
+                sale.getId(), new AddSaleDetailRequestDTO(
+                        product.getId(), null, null, 1, new BigDecimal("5.00"), null)))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("costo de adquisicion");
+
+        assertThat(reload(sale).getDetails()).isEmpty();
+        assertThat(catalogPriceOf(stock)).isEqualByComparingTo("0.00");
+    }
+
+    /**
+     * La otra mitad, y la que de verdad prueba la transaccion: un fallo POSTERIOR
+     * a haber fijado el precio y a haber persistido la linea.
+     *
+     * Se provoca con un inventario que tiene existencias pero NINGUN lote que
+     * las respalde: el precio ya se asigno, el `SaleDetail` ya se guardo con
+     * `saveAndFlush` y el stock ya se descontó cuando el costeo FIFO se queda
+     * sin lote del que consumir. Si las dos escrituras no compartieran
+     * transaccion, el catalogo se quedaria con un precio nuevo procedente de una
+     * venta que nunca existio.
+     */
+    @Test
+    void aFailureAfterPricingRollsBackBothTheLineAndTheCatalogPrice() {
+        Workshop workshop = authenticatedWorkshop();
+        Product product = product(FamilyCategory.NORMAL);
+        Inventory stock = unpricedInventory(workshop, product, 10, false);
+        Sale sale = openSale(workshop);
+
+        assertThatThrownBy(() -> service.addDetail(
+                sale.getId(), new AddSaleDetailRequestDTO(
+                        product.getId(), null, null, 1, new BigDecimal("250.00"), null)))
+                .isInstanceOf(RuntimeException.class);
+
+        assertThat(reload(sale).getDetails()).isEmpty();
+        assertThat(catalogPriceOf(stock)).isEqualByComparingTo("0.00");
+        assertThat(inventoryRepository.findById(stock.getId())
+                .orElseThrow().getStock()).isEqualTo(10);
+    }
+
+    /**
+     * Con precio de catalogo, un importe escrito a mano es un DESCUENTO de esta
+     * venta. Reescribir el catalogo con el seria dejar que una rebaja puntual
+     * cambiara el precio del taller.
+     */
+    @Test
+    void aCustomPriceOnAPricedProductDoesNotRewriteTheCatalog() {
+        Workshop workshop = authenticatedWorkshop();
+        Product product = product(FamilyCategory.NORMAL);
+        Inventory stock = inventory(workshop, product, 10);
+        Sale sale = openSale(workshop);
+
+        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+                product.getId(), null, null, 1, new BigDecimal("80.00"), null));
+
+        assertThat(reload(sale).getDetails())
+                .singleElement()
+                .satisfies(detail ->
+                        assertThat(detail.getPrice()).isEqualByComparingTo("80.00"));
+        assertThat(catalogPriceOf(stock)).isEqualByComparingTo("100.00");
+    }
+
+    /**
+     * El precio de la linea es historia y no se recalcula: una vez asignado el
+     * precio del taller, cambiarlo despues no toca la venta que lo estreno.
+     */
+    @Test
+    void theHistoricalLinePriceSurvivesALaterCatalogChange() {
+        Workshop workshop = authenticatedWorkshop();
+        Product product = product(FamilyCategory.NORMAL);
+        Inventory stock = unpricedInventory(workshop, product, 10, true);
+        Sale sale = openSale(workshop);
+
+        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+                product.getId(), null, null, 1, new BigDecimal("250.00"), null));
+
+        Inventory reloaded = inventoryRepository.findById(stock.getId()).orElseThrow();
+        reloaded.setPrice(new BigDecimal("999.00"));
+        inventoryRepository.saveAndFlush(reloaded);
+
+        assertThat(reload(sale).getDetails())
+                .singleElement()
+                .satisfies(detail -> {
+                    assertThat(detail.getPrice()).isEqualByComparingTo("250.00");
+                    assertThat(detail.getSubTotal()).isEqualByComparingTo("250.00");
+                });
+    }
+
+    /** Una unidad concreta (SPECIAL) sigue la misma regla que el resto. */
+    @Test
+    void anUnpricedSpecialItemAlsoTeachesItsPriceToTheCatalog() {
+        Workshop workshop = authenticatedWorkshop();
+        Product product = product(FamilyCategory.SPECIAL);
+        Inventory stock = unpricedInventory(workshop, product, 1, true);
+        InventoryItem item = availableItem(stock);
+        Sale sale = openSale(workshop);
+
+        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+                product.getId(), item.getId(), null, null,
+                new BigDecimal("330.00"), null));
+
+        assertThat(reload(sale).getDetails())
+                .singleElement()
+                .satisfies(detail ->
+                        assertThat(detail.getPrice()).isEqualByComparingTo("330.00"));
+        assertThat(catalogPriceOf(stock)).isEqualByComparingTo("330.00");
+    }
+
+    // ── Precio de un servicio sin precio asignado ────────────────
+    //
+    // `job.price` tiene el MISMO esquema que el del inventario, sin nulo
+    // posible, asi que el cero significa lo mismo: sin asignar. Un taller no
+    // regala mano de obra.
+
+    @Test
+    void aManualPriceOnAnUnpricedServiceIsStoredInTheSaleAndInTheCatalog() {
+        Workshop workshop = authenticatedWorkshop();
+        Product jobProduct = product(FamilyCategory.JOB);
+        Job service_ = jobRepository.save(Job.builder()
+                .product(jobProduct)
+                .workshop(workshop)
+                .price(BigDecimal.ZERO)
+                .build());
+        Sale sale = openSale(workshop);
+
+        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+                jobProduct.getId(), null, null, 2, new BigDecimal("90.00"), null));
+
+        assertThat(reload(sale).getDetails())
+                .singleElement()
+                .satisfies(detail -> {
+                    assertThat(detail.getPrice()).isEqualByComparingTo("90.00");
+                    assertThat(detail.getSubTotal()).isEqualByComparingTo("180.00");
+                });
+        assertThat(jobRepository.findById(service_.getId())
+                .orElseThrow().getPrice()).isEqualByComparingTo("90.00");
+    }
+
+    @Test
+    void anUnpricedServiceCannotBeSoldWithoutAManualPrice() {
+        Workshop workshop = authenticatedWorkshop();
+        Product jobProduct = product(FamilyCategory.JOB);
+        Job service_ = jobRepository.save(Job.builder()
+                .product(jobProduct)
+                .workshop(workshop)
+                .price(BigDecimal.ZERO)
+                .build());
+        Sale sale = openSale(workshop);
+
+        assertThatThrownBy(() -> service.addDetail(
+                sale.getId(), new AddSaleDetailRequestDTO(
+                        jobProduct.getId(), null, null, 1, null, null)))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("no tiene un precio de venta asignado");
+
+        assertThat(reload(sale).getDetails()).isEmpty();
+        assertThat(jobRepository.findById(service_.getId())
+                .orElseThrow().getPrice()).isEqualByComparingTo("0.00");
+    }
+
+    /** Con precio configurado, una rebaja de mano de obra no toca el catalogo. */
+    @Test
+    void aCustomPriceOnAPricedServiceDoesNotRewriteTheCatalog() {
+        Workshop workshop = authenticatedWorkshop();
+        Product jobProduct = product(FamilyCategory.JOB);
+        Job service_ = job(workshop, jobProduct);
+        Sale sale = openSale(workshop);
+
+        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+                jobProduct.getId(), null, null, 1, new BigDecimal("20.00"), null));
+
+        assertThat(reload(sale).getDetails())
+                .singleElement()
+                .satisfies(detail ->
+                        assertThat(detail.getPrice()).isEqualByComparingTo("20.00"));
+        assertThat(jobRepository.findById(service_.getId())
+                .orElseThrow().getPrice()).isEqualByComparingTo("150.00");
     }
 
 }

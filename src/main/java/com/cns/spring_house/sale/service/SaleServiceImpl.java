@@ -1,6 +1,8 @@
 package com.cns.spring_house.sale.service;
 
+import java.math.BigDecimal;
 import java.time.Clock;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -26,6 +28,10 @@ import com.cns.spring_house.sale.dto.CompleteSaleRequestDTO;
 import com.cns.spring_house.sale.dto.CreateSaleRequestDTO;
 import com.cns.spring_house.sale.dto.ExchangeInvoiceSummaryDTO;
 import com.cns.spring_house.sale.dto.RegisterPaymentRequestDTO;
+import com.cns.spring_house.refund.entity.SaleRefund;
+import com.cns.spring_house.refund.entity.SaleRefundType;
+import com.cns.spring_house.refund.repository.SaleRefundRepository;
+import com.cns.spring_house.sale.dto.RefundRequestDTO;
 import com.cns.spring_house.sale.dto.ReverseSaleRequestDTO;
 import com.cns.spring_house.sale.dto.SaleResponseDTO;
 import com.cns.spring_house.sale.dto.SaleSummaryDTO;
@@ -102,6 +108,7 @@ public class SaleServiceImpl implements SaleService {
      * tiene un unico sitio donde se responde.
      */
     private final CashClosureGuard cashClosureGuard;
+    private final SaleRefundRepository refundRepository;
     /**
      * Fuente unica de "ahora" para los sellos financieros de la venta.
      *
@@ -418,13 +425,33 @@ public class SaleServiceImpl implements SaleService {
      * (en una factura normal) ya se cobro— asi que reutiliza los mismos
      * handlers de restauracion, no el flujo de cancelacion.
      *
-     * No toca `paymentStatus`, `paymentMethod` ni `paidAt`: este sistema no
-     * modela un reembolso o nota de credito fiscal, solo la reversion interna
-     * de lo que la venta reservo. Esa distincion se documenta explicitamente
-     * porque revertir NO anula legalmente un documento ya emitido.
+     * SIGUE sin tocar `paymentStatus`, `paymentMethod` ni `paidAt`. Revertir no
+     * anula legalmente un documento ya emitido, y la venta conserva la verdad
+     * de que se cobro. Lo que ahora SI se registra, cuando lo hubo, es el hecho
+     * separado de que el dinero volvio al cliente: {@link SaleRefund}, con su
+     * fecha propia.
+     *
+     * La devolucion NO se deduce del estado. Se puede revertir sin devolver
+     * —el cliente se lleva otra cosa, o se le abona despues— asi que solo
+     * existe si la peticion la trae.
+     *
+     * ORDEN DE LAS VALIDACIONES: todo lo que puede rechazar la operacion se
+     * comprueba ANTES de tocar nada. Si la caja del dia ya esta cerrada y se
+     * pedia devolver dinero, la peticion entera se rechaza sin haber restaurado
+     * existencias; lo contrario dejaria la venta revertida, el stock devuelto y
+     * la devolucion sin registrar, que es el peor de los estados posibles.
      */
     @Override
     public SaleResponseDTO reverse(UUID id, ReverseSaleRequestDTO requestDTO) {
+        // Devolver dinero mueve la caja, asi que el cerrojo del dia se toma
+        // ANTES de leer el estado de la venta. Si se leyera primero, dos
+        // devoluciones simultaneas decidirian las dos sobre la misma foto
+        // "todavia COMPLETED" y la segunda chocaria contra un indice unico en
+        // vez de recibir un error de negocio legible.
+        if (requestDTO.hasRefund()) {
+            cashClosureGuard.ensureCashRegisterIsOpen(SecurityUtils.getWorkshopId());
+        }
+
         Sale sale = findOwnedSale(id);
         if (sale.getStatus() == SaleStatus.PENDING) {
             throw new ValidationException(
@@ -437,11 +464,83 @@ public class SaleServiceImpl implements SaleService {
         if (sale.getStatus() == SaleStatus.REVERSED) {
             throw new ValidationException("La venta ya fue revertida");
         }
+
+        SaleRefund refund = requestDTO.hasRefund()
+                ? prepareRefund(sale, requestDTO)
+                : null;
+
         sale.getDetails().forEach(this::restoreDetailForReversal);
         sale.setStatus(SaleStatus.REVERSED);
         recordAction(sale, SaleActionType.REVERSE_COMPLETED, requestDTO.reason());
         sale = repository.save(sale);
+
+        if (refund != null) {
+            refundRepository.save(refund);
+        }
+
         return mapper.toResponse(sale);
+    }
+
+    /**
+     * Valida y construye la devolucion SIN persistirla todavia.
+     *
+     * Se separa para que todas sus negativas ocurran antes de la primera
+     * mutacion. Las cuatro razones por las que una devolucion se rechaza:
+     *
+     *   1. no hubo dinero que devolver  (la venta nunca se cobro)
+     *   2. se devuelve mas de lo cobrado
+     *   3. la venta ya tiene devolucion
+     *   4. la caja del dia ya esta cerrada
+     */
+    private SaleRefund prepareRefund(Sale sale, ReverseSaleRequestDTO requestDTO) {
+        RefundRequestDTO requested = requestDTO.refund();
+
+        // 1. Sin cobro no hay devolucion posible. Es el caso de la cambiaria
+        // emitida y aun pendiente: se facturo a credito, nunca entro dinero, y
+        // "devolver" algo que no se recibio no significa nada. Se mira el
+        // ESTADO DE PAGO, no el tipo de documento.
+        if (sale.getPaymentStatus() != PaymentStatus.PAID) {
+            throw new ValidationException(
+                    "No se puede registrar una devolucion de una venta que no fue cobrada");
+        }
+
+        // 2. Lo devuelto no puede superar lo cobrado. El importe puede ser
+        // MENOR —una devolucion parcial es legitima— pero nunca mayor.
+        BigDecimal collected = sale.getTotal();
+        if (requested.amount().compareTo(collected) > 0) {
+            throw new ValidationException(
+                    "El monto devuelto no puede superar lo cobrado por la venta");
+        }
+
+        // 3. Una devolucion por venta. La base lo garantiza con un UNIQUE; esto
+        // solo convierte la violacion en un error legible en el caso normal.
+        if (refundRepository.existsBySaleId(sale.getId())) {
+            throw new ValidationException("La venta ya tiene una devolucion registrada");
+        }
+
+        // Ya NO se exige que el dia del cobro este cerrado.
+        //
+        // Esa restriccion existia para tapar un defecto que estaba en otro
+        // sitio: el cierre borraba el cobro de una venta revertida, asi que una
+        // devolucion el mismo dia restaba una salida cuyo ingreso habia
+        // desaparecido. Arreglado el cobro —que ahora sobrevive a la reversion,
+        // porque el dinero entro cuando entro— el mismo dia cuadra solo:
+        // entraron Q1,000, salieron Q400, quedan Q600. Prohibir la devolucion
+        // era esconder la mitad de un movimiento real.
+        //
+        // Lo que SI se mantiene es el cierre confirmado: eso lo comprueba
+        // `ensureCashRegisterIsOpen` al principio de `reverse`.
+
+        return SaleRefund.builder()
+                .workshop(sale.getWorkshop())
+                .sale(sale)
+                .type(SaleRefundType.REFUND)
+                .amount(requested.amount())
+                .effectiveAt(LocalDateTime.now(clock))
+                .paymentMethod(requested.paymentMethod())
+                .reason(requestDTO.reason())
+                .performedBy(currentUserService.getCurrentEmployee())
+                .build();
     }
 
     /**

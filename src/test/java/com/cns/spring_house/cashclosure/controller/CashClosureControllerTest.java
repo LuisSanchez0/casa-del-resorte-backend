@@ -1,7 +1,7 @@
 package com.cns.spring_house.cashclosure.controller;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -12,7 +12,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -25,34 +24,34 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
-import com.cns.spring_house.cashclosure.dto.CashClosureBalanceSummaryDTO;
-import com.cns.spring_house.cashclosure.dto.CashClosureBasePreviewResponseDTO;
 import com.cns.spring_house.cashclosure.dto.CashClosureCollectionsDTO;
+import com.cns.spring_house.cashclosure.dto.ClosureRefundMethodDTO;
+import com.cns.spring_house.cashclosure.dto.CashClosureRefundsDTO;
 import com.cns.spring_house.cashclosure.dto.CashClosureDocumentDTO;
+import com.cns.spring_house.cashclosure.dto.CashClosureExchangeDTO;
 import com.cns.spring_house.cashclosure.dto.CashClosureInvoicingDTO;
-import com.cns.spring_house.cashclosure.dto.CashClosureRangeReceivablesDTO;
-import com.cns.spring_house.cashclosure.dto.CashClosureReceivablesDTO;
+import com.cns.spring_house.cashclosure.dto.CashClosureMonthStatus;
+import com.cns.spring_house.cashclosure.dto.CashClosureMonthlyResponseDTO;
 import com.cns.spring_house.cashclosure.dto.CashClosureResponseDTO;
-import com.cns.spring_house.cashclosure.dto.CashClosureSummaryResponseDTO;
-import com.cns.spring_house.cashclosure.dto.CashReconciliationDTO;
-import com.cns.spring_house.cashclosure.entity.CashBalanceStatus;
+import com.cns.spring_house.cashclosure.dto.ClosureExchangeInvoiceDTO;
+import com.cns.spring_house.cashclosure.dto.ClosurePaymentMethodDTO;
+import com.cns.spring_house.cashclosure.dto.ClosureSoldItemDTO;
 import com.cns.spring_house.cashclosure.service.CashClosureService;
+import com.cns.spring_house.family.entity.FamilyCategory;
+import com.cns.spring_house.sale.entity.PaymentMethod;
 import com.cns.spring_house.shared.controller.GlobalExceptionHandler;
-import com.cns.spring_house.shared.exception.EntityNotFoundException;
 import com.cns.spring_house.shared.exception.ValidationException;
 
 /**
- * El contrato HTTP del cierre de caja, comprobado donde lo consume el cliente:
- * que ruta responde, que llega al servicio y con que cabeceras se descargan los
- * PDF.
+ * El contrato HTTP del cierre de caja: que ruta responde, que llega al servicio
+ * y —sobre todo— que NO se puede enviar.
  *
- * El controlador no decide nada de negocio; aqui solo se comprueba que traduce
- * y delega. Que la previsualizacion no cierre la caja se verifica en las dos
- * capas: aqui, viendo que exportar el borrador nunca llama a `close`, y contra
- * la base de datos en las pruebas del servicio.
+ * La comprobacion que mas importa aqui es negativa: ninguna ruta acepta cifras.
+ * El cierre ni siquiera recibe cuerpo. Aceptar un total del cliente permitiria
+ * cerrar una caja con los numeros que uno quisiera, y esa puerta se cierra en el
+ * contrato, no en el formulario.
  */
 @ExtendWith(MockitoExtension.class)
 class CashClosureControllerTest {
@@ -72,279 +71,89 @@ class CashClosureControllerTest {
                 .build();
     }
 
-    // ── Datos ────────────────────────────────────────────────────
-
-    private static final String VALID_BODY = """
-        { "openingCash": 500.00, "countedCash": 7480.00, "notes": "  Sin novedad  " }
-    """;
-
-    private CashClosureBasePreviewResponseDTO basePreview(boolean closed, UUID closureId) {
-        return new CashClosureBasePreviewResponseDTO(
-                BUSINESS_DATE, invoicing(), collections(), receivables(),
-                closed, closureId);
-    }
-
-    private CashClosureInvoicingDTO invoicing() {
-        return new CashClosureInvoicingDTO(15, new BigDecimal("12000.00"),
-                3, new BigDecimal("8000.00"), new BigDecimal("20000.00"));
-    }
-
-    private CashClosureCollectionsDTO collections() {
-        return new CashClosureCollectionsDTO(
-                10, new BigDecimal("7000.00"),
-                6, new BigDecimal("6000.00"),
-                4, new BigDecimal("5000.00"),
-                new BigDecimal("18000.00"));
-    }
-
-    private CashClosureReceivablesDTO receivables() {
-        return new CashClosureReceivablesDTO(2, new BigDecimal("3000.00"),
-                new BigDecimal("1000.00"), new BigDecimal("25000.00"));
-    }
-
-    private CashClosureResponseDTO closure(UUID id) {
-        return new CashClosureResponseDTO(
-                id, BUSINESS_DATE,
-                id == null ? null : LocalDateTime.of(2026, 8, 20, 19, 0),
-                id == null ? null : "ANA LOPEZ",
-                id != null,
-                invoicing(), collections(), receivables(),
-                new CashReconciliationDTO(
-                        new BigDecimal("500.00"), new BigDecimal("7500.00"),
-                        new BigDecimal("7480.00"), new BigDecimal("-20.00"),
-                        CashBalanceStatus.SHORT),
-                null);
-    }
-
-    private CashClosureDocumentDTO document(String fileName) {
-        return new CashClosureDocumentDTO(
-                fileName, "%PDF-1.6\nfake".getBytes(StandardCharsets.US_ASCII));
-    }
-
-    // ── GET preview ──────────────────────────────────────────────
+    // ── Previsualizacion ─────────────────────────────────────────
 
     @Test
-    void theBasePreviewIsServedWithoutAnyWorkshopParameter() throws Exception {
-        when(service.getPreview()).thenReturn(basePreview(false, null));
+    void previewReturnsTheLiveDayWithoutClosingAnything() throws Exception {
+        when(service.getPreview()).thenReturn(closure(null));
 
         mockMvc.perform(get("/v1/cash-closures/preview"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.businessDate").value("2026-08-20"))
-                .andExpect(jsonPath("$.invoicing.totalInvoiced").value(20000.00))
-                .andExpect(jsonPath("$.collections.totalCollected").value(18000.00))
-                .andExpect(jsonPath("$.receivables.pendingAmount").value(25000.00))
                 .andExpect(jsonPath("$.alreadyClosed").value(false))
-                .andExpect(jsonPath("$.closureId").doesNotExist());
-    }
-
-    /** `/preview` es un segmento literal: nunca lo captura `/{id}`. */
-    @Test
-    void theLiteralPreviewSegmentWinsOverThePathVariable() throws Exception {
-        when(service.getPreview()).thenReturn(basePreview(false, null));
-
-        mockMvc.perform(get("/v1/cash-closures/preview")).andExpect(status().isOk());
+                .andExpect(jsonPath("$.items[0].name").value("RESORTE"))
+                .andExpect(jsonPath("$.collections.totalCollected").value(6000.00));
 
         verify(service).getPreview();
-        verify(service, never()).get(any());
     }
 
+    /**
+     * La respuesta NO expone arqueo. Si alguien reintrodujera el fondo inicial o
+     * el efectivo contado, esta prueba lo detecta.
+     */
     @Test
-    void anAlreadyClosedDayIsReportedWithItsClosureIdentifier() throws Exception {
-        UUID closureId = UUID.randomUUID();
-        when(service.getPreview()).thenReturn(basePreview(true, closureId));
+    void theResponseCarriesNoCashCountFields() throws Exception {
+        when(service.getPreview()).thenReturn(closure(null));
 
         mockMvc.perform(get("/v1/cash-closures/preview"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.alreadyClosed").value(true))
-                .andExpect(jsonPath("$.closureId").value(closureId.toString()));
-    }
-
-    // ── POST preview ─────────────────────────────────────────────
-
-    @Test
-    void theFinalPreviewReturnsTheDocumentWithoutIdentityOrClosureTimestamp()
-            throws Exception {
-        when(service.preview(any())).thenReturn(closure(null));
-
-        mockMvc.perform(post("/v1/cash-closures/preview")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(VALID_BODY))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.id").doesNotExist())
-                .andExpect(jsonPath("$.closedAt").doesNotExist())
-                .andExpect(jsonPath("$.cashReconciliation.expectedCash").value(7500.00))
-                .andExpect(jsonPath("$.cashReconciliation.difference").value(-20.00))
-                .andExpect(jsonPath("$.cashReconciliation.status").value("SHORT"));
-
-        verify(service, never()).close(any());
-    }
-
-    @Test
-    void aNegativeOrMalformedArqueoIsRejectedBeforeReachingTheService()
-            throws Exception {
-        mockMvc.perform(post("/v1/cash-closures/preview")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"openingCash\": -1, \"countedCash\": 100}"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.errors.openingCash").exists());
-
-        mockMvc.perform(post("/v1/cash-closures/preview")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"countedCash\": 100}"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.errors.openingCash").exists());
-
-        mockMvc.perform(post("/v1/cash-closures/preview")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"openingCash\": 1.234, \"countedCash\": 100}"))
-                .andExpect(status().isBadRequest());
-
-        verify(service, never()).preview(any());
-    }
-
-    /** El servidor no acepta totales del cliente: si los manda, se ignoran. */
-    @Test
-    void figuresSentByTheClientAreNotEvenPartOfTheContract() throws Exception {
-        when(service.preview(any())).thenReturn(closure(null));
-
-        mockMvc.perform(post("/v1/cash-closures/preview")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                            {
-                              "openingCash": 500.00,
-                              "countedCash": 7480.00,
-                              "totalCollected": 999999.00,
-                              "expectedCash": 1.00,
-                              "difference": 0.00,
-                              "pendingExchangeAmount": 0.00
-                            }
-                        """))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.collections.totalCollected").value(18000.00))
-                .andExpect(jsonPath("$.cashReconciliation.expectedCash").value(7500.00));
-    }
-
-    // ── PDF de previsualizacion ──────────────────────────────────
-
-    @Test
-    void thePreviewPdfIsDownloadedAsAnAttachmentAndNeverClosesTheRegister()
-            throws Exception {
-        when(service.previewDocument(any()))
-                .thenReturn(document("previsualizacion-cierre-caja-2026-08-20.pdf"));
-
-        MvcResult result = mockMvc.perform(post("/v1/cash-closures/preview/pdf")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(VALID_BODY))
-                .andExpect(status().isOk())
-                .andExpect(header().string("Content-Type", "application/pdf"))
-                .andExpect(header().string("Content-Disposition",
-                        "attachment; filename=\"previsualizacion-cierre-caja-2026-08-20.pdf\""))
-                .andReturn();
-
-        byte[] body = result.getResponse().getContentAsByteArray();
-        assertThat(body).isNotEmpty();
-        assertThat(new String(body, 0, 5, StandardCharsets.US_ASCII)).isEqualTo("%PDF-");
-
-        verify(service).previewDocument(any());
-        verify(service, never()).close(any());
+                .andExpect(jsonPath("$.cashReconciliation").doesNotExist())
+                .andExpect(jsonPath("$.openingCash").doesNotExist())
+                .andExpect(jsonPath("$.countedCash").doesNotExist())
+                .andExpect(jsonPath("$.difference").doesNotExist())
+                .andExpect(jsonPath("$.notes").doesNotExist());
     }
 
     // ── Cierre ───────────────────────────────────────────────────
 
     @Test
-    void closingRespondsCreatedWithTheConfirmedSnapshot() throws Exception {
-        UUID closureId = UUID.randomUUID();
-        when(service.close(any())).thenReturn(closure(closureId));
+    void closeConfirmsTheDay() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(service.close()).thenReturn(closure(id));
 
-        mockMvc.perform(post("/v1/cash-closures")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(VALID_BODY))
+        mockMvc.perform(post("/v1/cash-closures"))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.id").value(closureId.toString()))
-                .andExpect(jsonPath("$.closedAt").exists())
-                .andExpect(jsonPath("$.closedBy").value("ANA LOPEZ"))
+                .andExpect(jsonPath("$.id").value(id.toString()))
                 .andExpect(jsonPath("$.alreadyClosed").value(true));
+
+        verify(service).close();
     }
 
+    /**
+     * El cierre no recibe cuerpo. Aunque alguien mande uno con cifras, no hay
+     * donde aterrizen: el metodo del servicio no toma parametros.
+     */
     @Test
-    void closingTwiceIsAnUnderstandableBadRequestAndNotAServerError()
-            throws Exception {
-        when(service.close(any())).thenThrow(new ValidationException(
-                "La caja de este taller ya fue cerrada para la fecha 2026-08-20"));
+    void closeIgnoresAnyBodySentByTheClient() throws Exception {
+        when(service.close()).thenReturn(closure(UUID.randomUUID()));
 
         mockMvc.perform(post("/v1/cash-closures")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(VALID_BODY))
+                        .content("{\"openingCash\":500,\"countedCash\":9999,"
+                                + "\"totalCollected\":123456}"))
+                .andExpect(status().isCreated());
+
+        // La firma no admite argumentos: nada de lo enviado puede influir.
+        verify(service).close();
+    }
+
+    /** Cerrar dos veces el mismo dia responde 400 de negocio, no 500. */
+    @Test
+    void closingTwiceRespondsWithABusinessError() throws Exception {
+        when(service.close()).thenThrow(
+                new ValidationException("La caja de este taller ya fue cerrada"));
+
+        mockMvc.perform(post("/v1/cash-closures"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.detail").value(
-                        "La caja de este taller ya fue cerrada para la fecha 2026-08-20"));
+                .andExpect(jsonPath("$.detail")
+                        .value("La caja de este taller ya fue cerrada"));
     }
 
-    /** Las observaciones se recortan y una nota en blanco se guarda como null. */
-    @Test
-    void notesAreTrimmedAndBlankNotesBecomeNull() throws Exception {
-        when(service.close(any())).thenReturn(closure(UUID.randomUUID()));
-
-        var captor = org.mockito.ArgumentCaptor.forClass(
-                com.cns.spring_house.cashclosure.dto.CreateCashClosureRequestDTO.class);
-
-        mockMvc.perform(post("/v1/cash-closures")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(VALID_BODY))
-                .andExpect(status().isCreated());
-        mockMvc.perform(post("/v1/cash-closures")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"openingCash\":0,\"countedCash\":0,\"notes\":\"   \"}"))
-                .andExpect(status().isCreated());
-
-        verify(service, org.mockito.Mockito.times(2)).close(captor.capture());
-        assertThat(captor.getAllValues().get(0).notes()).isEqualTo("Sin novedad");
-        assertThat(captor.getAllValues().get(1).notes()).isNull();
-    }
-
-    // ── Historico ────────────────────────────────────────────────
+    // ── Lecturas historicas ──────────────────────────────────────
 
     @Test
-    void aHistoricalClosureIsServedFromItsSnapshot() throws Exception {
-        UUID closureId = UUID.randomUUID();
-        when(service.get(closureId)).thenReturn(closure(closureId));
-
-        mockMvc.perform(get("/v1/cash-closures/" + closureId))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.id").value(closureId.toString()))
-                .andExpect(jsonPath("$.invoicing.totalInvoiced").value(20000.00));
-    }
-
-    /** Un cierre de otro taller responde igual que uno inexistente. */
-    @Test
-    void aClosureFromAnotherWorkshopIsIndistinguishableFromOneThatDoesNotExist()
-            throws Exception {
-        UUID closureId = UUID.randomUUID();
-        when(service.get(closureId)).thenThrow(
-                new EntityNotFoundException("No existe el cierre de caja especificado"));
-
-        mockMvc.perform(get("/v1/cash-closures/" + closureId))
-                .andExpect(status().isNotFound());
-    }
-
-    @Test
-    void theHistoricalPdfIsDownloadedWithItsBusinessDateInTheFileName()
-            throws Exception {
-        UUID closureId = UUID.randomUUID();
-        when(service.document(closureId))
-                .thenReturn(document("cierre-caja-2026-08-20.pdf"));
-
-        mockMvc.perform(get("/v1/cash-closures/" + closureId + "/pdf"))
-                .andExpect(status().isOk())
-                .andExpect(header().string("Content-Type", "application/pdf"))
-                .andExpect(header().string("Content-Disposition",
-                        "attachment; filename=\"cierre-caja-2026-08-20.pdf\""));
-    }
-
-    @Test
-    void aClosureCanBeLookedUpByItsBusinessDate() throws Exception {
-        UUID closureId = UUID.randomUUID();
-        when(service.getByDate(BUSINESS_DATE)).thenReturn(closure(closureId));
+    void readsAClosureByDate() throws Exception {
+        when(service.getByDate(BUSINESS_DATE)).thenReturn(closure(UUID.randomUUID()));
 
         mockMvc.perform(get("/v1/cash-closures/by-date").param("date", "2026-08-20"))
                 .andExpect(status().isOk())
@@ -354,71 +163,145 @@ class CashClosureControllerTest {
     }
 
     @Test
-    void theRangeListingIsDelegatedWithBothEnds() throws Exception {
-        when(service.getRange(LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 3)))
-                .thenReturn(List.of(closure(UUID.randomUUID())));
+    void readsAClosureById() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(service.get(id)).thenReturn(closure(id));
 
-        mockMvc.perform(get("/v1/cash-closures")
-                        .param("from", "2026-08-01")
-                        .param("to", "2026-08-03"))
+        mockMvc.perform(get("/v1/cash-closures/{id}", id))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(1));
-
-        verify(service).getRange(LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 3));
+                .andExpect(jsonPath("$.id").value(id.toString()));
     }
 
-    // ── Resumen ──────────────────────────────────────────────────
+    // ── Cierre mensual ───────────────────────────────────────────
 
     @Test
-    void theRangeSummaryReportsTheEndingPortfolioAndTheBalanceCounts()
-            throws Exception {
-        when(service.getSummary(LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 31)))
-                .thenReturn(new CashClosureSummaryResponseDTO(
-                        LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 31), 25,
-                        invoicing(), collections(),
-                        new CashClosureRangeReceivablesDTO(
-                                12, new BigDecimal("23000.00"),
-                                new BigDecimal("25000.00")),
-                        new CashClosureBalanceSummaryDTO(
-                                20, 3, 2, new BigDecimal("-15.00")),
-                        List.of()));
+    void readsTheMonthlyClosure() throws Exception {
+        when(service.getMonthly(2026, 8)).thenReturn(monthly());
 
-        mockMvc.perform(get("/v1/cash-closures/summary")
-                        .param("from", "2026-08-01")
-                        .param("to", "2026-08-31"))
+        mockMvc.perform(get("/v1/cash-closures/monthly")
+                        .param("year", "2026")
+                        .param("month", "8"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.closureCount").value(25))
-                .andExpect(jsonPath("$.receivables.endingPendingAmount").value(25000.00))
-                .andExpect(jsonPath("$.balance.balancedClosures").value(20))
-                .andExpect(jsonPath("$.balance.shortClosures").value(3))
-                .andExpect(jsonPath("$.balance.overClosures").value(2))
-                .andExpect(jsonPath("$.balance.netCashDifference").value(-15.00));
+                .andExpect(jsonPath("$.year").value(2026))
+                .andExpect(jsonPath("$.month").value(8))
+                .andExpect(jsonPath("$.status").value("PARTIAL"))
+                .andExpect(jsonPath("$.closedDays").value(12))
+                .andExpect(jsonPath("$.pendingDays").value(8));
+
+        verify(service).getMonthly(2026, 8);
     }
 
+    /** Un mes fuera de rango responde 400 de negocio. */
     @Test
-    void theRangeSummaryPdfIsDownloadedWithBothEndsInTheFileName() throws Exception {
-        when(service.summaryDocument(
-                LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 31)))
-                .thenReturn(document("resumen-caja-2026-08-01-a-2026-08-31.pdf"));
+    void rejectsAnInvalidMonth() throws Exception {
+        when(service.getMonthly(eq(2026), eq(13)))
+                .thenThrow(new ValidationException("El mes debe estar entre 1 y 12"));
 
-        mockMvc.perform(get("/v1/cash-closures/summary/pdf")
-                        .param("from", "2026-08-01")
-                        .param("to", "2026-08-31"))
-                .andExpect(status().isOk())
-                .andExpect(header().string("Content-Type", "application/pdf"))
-                .andExpect(header().string("Content-Disposition",
-                        "attachment; filename=\"resumen-caja-2026-08-01-a-2026-08-31.pdf\""));
-    }
-
-    @Test
-    void anInvertedRangeIsAValidationErrorAndNotAServerError() throws Exception {
-        when(service.getSummary(any(), any())).thenThrow(new ValidationException(
-                "La fecha inicial no puede ser posterior a la final"));
-
-        mockMvc.perform(get("/v1/cash-closures/summary")
-                        .param("from", "2026-08-31")
-                        .param("to", "2026-08-01"))
+        mockMvc.perform(get("/v1/cash-closures/monthly")
+                        .param("year", "2026")
+                        .param("month", "13"))
                 .andExpect(status().isBadRequest());
+    }
+
+    // ── Exportacion ──────────────────────────────────────────────
+
+    /**
+     * `attachment`: estos documentos se archivan e imprimen, y el nombre del
+     * archivo forma parte de esa trazabilidad.
+     */
+    @Test
+    void downloadsTheClosurePdfAsAnAttachment() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(service.document(id)).thenReturn(
+                new CashClosureDocumentDTO("cierre-caja-2026-08-20.pdf",
+                        new byte[] { 1, 2, 3 }));
+
+        mockMvc.perform(get("/v1/cash-closures/{id}/pdf", id))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Disposition",
+                        org.hamcrest.Matchers.containsString("attachment")))
+                .andExpect(header().string("Content-Disposition",
+                        org.hamcrest.Matchers.containsString("cierre-caja-2026-08-20.pdf")))
+                .andExpect(header().string("Content-Type", "application/pdf"));
+    }
+
+    // ── Aislamiento ──────────────────────────────────────────────
+
+    /**
+     * NINGUNA ruta acepta taller. No es una omision: es la garantia de
+     * aislamiento, y el servicio lo resuelve desde el token. Esta prueba falla
+     * el dia que alguien anada el parametro.
+     */
+    @Test
+    void noRouteAcceptsAWorkshop() throws Exception {
+        when(service.getPreview()).thenReturn(closure(null));
+
+        // El parametro se manda y el servicio se llama igual, sin recibirlo:
+        // no hay forma de pedir la caja de otro taller.
+        mockMvc.perform(get("/v1/cash-closures/preview")
+                        .param("workshop", UUID.randomUUID().toString())
+                        .param("workshopId", UUID.randomUUID().toString()))
+                .andExpect(status().isOk());
+
+        verify(service).getPreview();
+        verify(service, never()).getByDate(any());
+    }
+
+    // ── Datos ────────────────────────────────────────────────────
+
+    private CashClosureResponseDTO closure(UUID id) {
+        return new CashClosureResponseDTO(
+                id,
+                BUSINESS_DATE,
+                id == null ? null : LocalDateTime.of(2026, 8, 20, 19, 0),
+                id == null ? null : "ANA LOPEZ",
+                id != null,
+                List.of(new ClosureSoldItemDTO(
+                        UUID.randomUUID(), "RESORTE", FamilyCategory.NORMAL,
+                        4L, new BigDecimal("2000.00"))),
+                new BigDecimal("2000.00"),
+                new CashClosureInvoicingDTO(
+                        2L, new BigDecimal("5000.00"),
+                        1L, new BigDecimal("2000.00"),
+                        new BigDecimal("7000.00")),
+                new CashClosureExchangeDTO(
+                        1L, new BigDecimal("2000.00"), new BigDecimal("2000.00"),
+                        1L, new BigDecimal("1000.00"), new BigDecimal("1000.00"),
+                        List.of(new ClosureExchangeInvoiceDTO(
+                                UUID.randomUUID(), "A1B2C3D4", "TRANSPORTES",
+                                LocalDateTime.of(2026, 8, 20, 11, 0),
+                                new BigDecimal("2000.00"), false, null, null)),
+                        List.of()),
+                new CashClosureCollectionsDTO(
+                        List.of(
+                                new ClosurePaymentMethodDTO(
+                                        PaymentMethod.CASH, 2L, new BigDecimal("6000.00")),
+                                new ClosurePaymentMethodDTO(
+                                        PaymentMethod.CARD, 0L, new BigDecimal("0.00")),
+                                new ClosurePaymentMethodDTO(
+                                        PaymentMethod.TRANSFER, 0L, new BigDecimal("0.00"))),
+                        new BigDecimal("6000.00")),
+                new CashClosureRefundsDTO(
+                        List.of(
+                                new ClosureRefundMethodDTO(
+                                        PaymentMethod.CASH, 0L, new BigDecimal("0.00")),
+                                new ClosureRefundMethodDTO(
+                                        PaymentMethod.CARD, 0L, new BigDecimal("0.00")),
+                                new ClosureRefundMethodDTO(
+                                        PaymentMethod.TRANSFER, 0L, new BigDecimal("0.00"))),
+                        0L, new BigDecimal("0.00"), List.of()),
+                new BigDecimal("6000.00"));
+    }
+
+    private CashClosureMonthlyResponseDTO monthly() {
+        CashClosureResponseDTO daily = closure(UUID.randomUUID());
+        return new CashClosureMonthlyResponseDTO(
+                2026, 8,
+                LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 20),
+                12L, 8L, CashClosureMonthStatus.PARTIAL,
+                daily.items(), daily.itemsBilledAmount(),
+                daily.invoicing(), daily.exchange(), daily.collections(),
+                daily.refunds(), daily.netPeriod());
     }
 
 }

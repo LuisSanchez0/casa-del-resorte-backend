@@ -20,12 +20,15 @@ import com.cns.spring_house.sale.entity.InvoiceType;
 import com.cns.spring_house.sale.entity.PaymentStatus;
 import com.cns.spring_house.sale.entity.Sale;
 import com.cns.spring_house.sale.entity.SaleStatus;
+import com.cns.spring_house.sale.repository.projection.ClosureExchangeInvoiceProjection;
+import com.cns.spring_house.sale.repository.projection.ClosureSoldItemProjection;
 import com.cns.spring_house.sale.repository.projection.CustomerPerformanceProjection;
 import com.cns.spring_house.sale.repository.projection.InvoiceTypeStatProjection;
 import com.cns.spring_house.sale.repository.projection.PaymentMethodStatProjection;
 import com.cns.spring_house.sale.repository.projection.ProductPerformanceProjection;
 import com.cns.spring_house.sale.repository.projection.SalesBucketProjection;
 import com.cns.spring_house.sale.repository.projection.SalesByDayProjection;
+import com.cns.spring_house.sale.repository.projection.SalesCostProfitBucketProjection;
 import com.cns.spring_house.sale.repository.projection.SalesSummaryProjection;
 import com.cns.spring_house.sale.repository.projection.TopProductProjection;
 
@@ -380,6 +383,51 @@ public interface SaleRepository extends JpaRepository<Sale, UUID>, JpaSpecificat
             @Param("from") LocalDateTime from,
             @Param("to") LocalDateTime to);
 
+    /**
+     * Lo COBRADO por forma de pago dentro de `[from, to)`, para el cierre de
+     * caja.
+     *
+     * Existe separada de {@link #findPaymentMethodsBetween} porque las dos
+     * responden preguntas distintas, y la diferencia importa:
+     *
+     *   dashboard  cobros de ventas VIGENTES. No tiene columna de
+     *              devoluciones, asi que incluir una venta revertida le haria
+     *              enseñar dinero que quizas ya salio, sin forma de verlo.
+     *   cierre     el MOVIMIENTO DE CAJA. Aqui si existe la contraparte —las
+     *              devoluciones y el neto— asi que puede decir la verdad
+     *              completa: entraron Q1,000 y salieron Q400.
+     *
+     * Compartian consulta mientras significaban lo mismo. Ya no significan lo
+     * mismo, y forzarlas a compartirla obligaria a que una de las dos mintiera.
+     *
+     * UN COBRO NO SE BORRA PORQUE LA VENTA SE REVIERTA DESPUES: el dinero entro
+     * cuando entro. Lo que la reversion produce, si hubo devolucion, es una
+     * salida aparte con su propia fecha.
+     *
+     * El conjunto de estados es exacto y no un `!= CANCELLED`:
+     *   COMPLETED + PAID   cobro normal
+     *   REVERSED  + PAID   se cobro y luego se deshizo la venta
+     *   PENDING            nunca esta PAID (registerPayment exige COMPLETED)
+     *   CANCELLED          solo se cancela lo PENDING, que nunca estuvo pagado
+     */
+    @Query(nativeQuery = true, value = """
+        SELECT sale.payment_method AS method,
+               COUNT(*) AS saleCount,
+               COALESCE(SUM(sale.total), 0) AS amount
+        FROM sale
+        WHERE sale.workshop_id = :workshopId
+          AND sale.status IN ('COMPLETED', 'REVERSED')
+          AND sale.payment_status = 'PAID'
+          AND sale.paid_at >= :from
+          AND sale.paid_at < :to
+        GROUP BY sale.payment_method
+        ORDER BY amount DESC
+    """)
+    List<PaymentMethodStatProjection> findCollectedPaymentMethodsBetween(
+            @Param("workshopId") UUID workshopId,
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to);
+
     @Query(nativeQuery = true, value = """
         SELECT sale.payment_method AS method,
                COUNT(*) AS saleCount,
@@ -446,7 +494,26 @@ public interface SaleRepository extends JpaRepository<Sale, UUID>, JpaSpecificat
                COALESCE(SUM(sale.total), 0) AS amount
         FROM sale
         WHERE sale.workshop_id = :workshopId
-          AND sale.status = 'COMPLETED'
+          -- UN COBRO NO SE BORRA PORQUE LA VENTA SE REVIERTA DESPUES.
+          --
+          -- El dinero entro cuando entro. Si a las 10:00 se cobraron Q1,000 y a
+          -- las 15:00 se revirtio la venta, ese ingreso ocurrio: lo que la
+          -- reversion produce, si hubo devolucion, es una SALIDA aparte y con
+          -- su propia fecha. Filtrar por `status = COMPLETED` borraba el
+          -- ingreso del dia y dejaba la devolucion restando sola, con lo que la
+          -- caja cerraba en negativo sin faltar un quetzal en el cajon.
+          --
+          -- Los cuatro estados posibles, y por que este es el conjunto exacto:
+          --   COMPLETED + PAID   el cobro normal
+          --   REVERSED  + PAID   se cobro y despues se deshizo la venta: el
+          --                      ingreso sigue siendo real
+          --   PENDING            nunca esta PAID (registerPayment exige
+          --                      COMPLETED), asi que no puede aportar nada
+          --   CANCELLED          solo se cancela una venta PENDING, que nunca
+          --                      estuvo pagada; se excluye de forma explicita
+          --                      para que ningun cambio futuro pueda colar un
+          --                      cobro inventado
+          AND sale.status IN ('COMPLETED', 'REVERSED')
           AND sale.invoice_type = 'EXCHANGE_INVOICE'
           AND sale.payment_status = 'PAID'
           AND sale.paid_at >= :from
@@ -470,7 +537,9 @@ public interface SaleRepository extends JpaRepository<Sale, UUID>, JpaSpecificat
                COALESCE(SUM(sale.total), 0) AS amount
         FROM sale
         WHERE sale.workshop_id = :workshopId
-          AND sale.status = 'COMPLETED'
+          -- Mismo criterio de cobro que arriba: revertir despues no borra
+          -- que el dinero entro.
+          AND sale.status IN ('COMPLETED', 'REVERSED')
           AND sale.invoice_type = 'EXCHANGE_INVOICE'
           AND sale.payment_status = 'PAID'
           AND sale.paid_at >= :from
@@ -478,6 +547,141 @@ public interface SaleRepository extends JpaRepository<Sale, UUID>, JpaSpecificat
           AND sale.completed_at < :from
     """)
     SalesSummaryProjection summarizePreviousExchangeInvoicesCollectedBetween(
+            @Param("workshopId") UUID workshopId,
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to);
+
+    /**
+     * ARTICULOS VENDIDOS en el periodo, agregados por la base de datos.
+     *
+     * Es actividad FACTURADA, no cobrada: se fecha por `completed_at`, de modo
+     * que una cambiaria emitida y aun sin cobrar SI aporta sus articulos aqui.
+     * Su dinero no entra en lo cobrado hasta que se pague, y eso lo decide otra
+     * consulta distinta.
+     *
+     * Se agrupa por `product.id`, la identidad ESTABLE, y NO por el nombre: el
+     * catalogo real tiene productos distintos que se llaman igual, y agruparlos
+     * por texto los presentaria como un solo articulo.
+     *
+     * NO se filtra por categoria. Los servicios (JOB) entran igual que la
+     * mercaderia: la pregunta es "que se facturo", y una instalacion facturada
+     * es dinero facturado. La categoria viaja en `itemType` para que la pantalla
+     * pueda distinguirlos sin que ninguna linea que aporta dinero se pierda por
+     * el camino.
+     *
+     * `sub_total` es el importe HISTORICO de la linea, con el ajuste manual de
+     * precio ya incluido.
+     *
+     * El orden termina en `product.id` para que sea total: dos productos
+     * homonimos con las mismas cifras podrian alternarse entre peticiones
+     * identicas, y el snapshot quedaria distinto segun el plan de ejecucion.
+     */
+    @Query(nativeQuery = true, value = """
+        SELECT product.id AS productId,
+               product.name AS itemName,
+               family.category AS itemType,
+               SUM(detail.quantity) AS quantity,
+               COALESCE(SUM(detail.sub_total), 0) AS billedAmount
+        FROM sale_detail detail
+        JOIN sale ON sale.id = detail.sale_id
+        JOIN product ON product.id = detail.product_id
+        JOIN family ON family.id = product.family_id
+        WHERE sale.workshop_id = :workshopId
+          AND sale.status = 'COMPLETED'
+          AND sale.completed_at >= :from
+          AND sale.completed_at < :to
+        GROUP BY product.id, product.name, family.category
+        ORDER BY billedAmount DESC, quantity DESC, product.name ASC, product.id ASC
+    """)
+    List<ClosureSoldItemProjection> findSoldItemsBetween(
+            @Param("workshopId") UUID workshopId,
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to);
+
+    /**
+     * Las cambiarias EMITIDAS en el periodo, con su estado de cobro AHORA.
+     *
+     * Se fecha por `completed_at`. El estado que devuelve es el actual; quien la
+     * llama al cerrar lo congela en el snapshot, y a partir de ahi el historico
+     * ya no vuelve a preguntarlo.
+     *
+     * Orden determinista por fecha de emision e id: sin la segunda clave, dos
+     * documentos emitidos en el mismo instante podrian alternarse.
+     */
+    @Query(nativeQuery = true, value = """
+        SELECT sale.id AS saleId,
+               customer.name AS customerName,
+               sale.completed_at AS issuedAt,
+               sale.total AS amount,
+               sale.payment_status AS paymentStatus,
+               sale.paid_at AS paidAt,
+               sale.payment_method AS paymentMethod
+        FROM sale
+        LEFT JOIN customer ON customer.id = sale.customer_id
+        WHERE sale.workshop_id = :workshopId
+          AND sale.status = 'COMPLETED'
+          AND sale.invoice_type = 'EXCHANGE_INVOICE'
+          AND sale.completed_at >= :from
+          AND sale.completed_at < :to
+        ORDER BY sale.completed_at ASC, sale.id ASC
+    """)
+    List<ClosureExchangeInvoiceProjection> findExchangeInvoicesIssuedBetween(
+            @Param("workshopId") UUID workshopId,
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to);
+
+    /**
+     * Las cambiarias COBRADAS en el periodo, se emitieran cuando se emitieran.
+     *
+     * Se fecha por `paid_at` y NO se exige que `completed_at` caiga en la misma
+     * ventana: ese es exactamente el caso que el cierre tiene que recoger —una
+     * cambiaria del lunes cobrada el miercoles pertenece a los cobros del
+     * miercoles—. Filtrar tambien por fecha de emision la haria desaparecer de
+     * los dos dias.
+     */
+    @Query(nativeQuery = true, value = """
+        SELECT sale.id AS saleId,
+               customer.name AS customerName,
+               sale.completed_at AS issuedAt,
+               sale.total AS amount,
+               sale.payment_status AS paymentStatus,
+               sale.paid_at AS paidAt,
+               sale.payment_method AS paymentMethod
+        FROM sale
+        LEFT JOIN customer ON customer.id = sale.customer_id
+        WHERE sale.workshop_id = :workshopId
+          -- Mismo criterio de cobro: el documento se cobro, y eso no lo
+          -- deshace un cambio de estado posterior.
+          AND sale.status IN ('COMPLETED', 'REVERSED')
+          AND sale.invoice_type = 'EXCHANGE_INVOICE'
+          AND sale.payment_status = 'PAID'
+          AND sale.paid_at >= :from
+          AND sale.paid_at < :to
+        ORDER BY sale.paid_at ASC, sale.id ASC
+    """)
+    List<ClosureExchangeInvoiceProjection> findExchangeInvoicesCollectedBetween(
+            @Param("workshopId") UUID workshopId,
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to);
+
+    /**
+     * De las cambiarias EMITIDAS en el periodo, lo que sigue sin cobrarse.
+     *
+     * No es la cartera global del taller: solo mira los documentos del periodo.
+     * La cartera global es otra pregunta y tiene su propia consulta.
+     */
+    @Query(nativeQuery = true, value = """
+        SELECT COUNT(*) AS salesCount,
+               COALESCE(SUM(sale.total), 0) AS amount
+        FROM sale
+        WHERE sale.workshop_id = :workshopId
+          AND sale.status = 'COMPLETED'
+          AND sale.invoice_type = 'EXCHANGE_INVOICE'
+          AND sale.payment_status = 'PENDING'
+          AND sale.completed_at >= :from
+          AND sale.completed_at < :to
+    """)
+    SalesSummaryProjection summarizeIssuedExchangeInvoicesPendingBetween(
             @Param("workshopId") UUID workshopId,
             @Param("from") LocalDateTime from,
             @Param("to") LocalDateTime to);
@@ -597,6 +801,76 @@ public interface SaleRepository extends JpaRepository<Sale, UUID>, JpaSpecificat
         ORDER BY 1
     """)
     List<SalesBucketProjection> findGeneratedSalesBuckets(
+            @Param("workshopId") UUID workshopId,
+            @Param("unit") String unit,
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to);
+
+    /**
+     * Serie de COSTO DE LO VENDIDO y GANANCIA BRUTA dentro de `[from, to)`.
+     *
+     * Es una pregunta DISTINTA de la de {@link #findGeneratedSalesBuckets} y de
+     * la del gasto en compras, y la diferencia importa:
+     *
+     * <pre>
+     * ventas generadas   lo que se facturo            por completed_at
+     * gasto en compras   lo que se pago a proveedores por acquired_at
+     * costo vendido      lo que costo lo despachado   por completed_at
+     * </pre>
+     *
+     * Restar el gasto de un mes a la venta de ese mes NO da la ganancia: la
+     * mercaderia se compra en un mes y se vende en otro. La ganancia sale de
+     * aqui, linea a linea, comparando cada venta con el costo de SU propia
+     * mercaderia.
+     *
+     * Se fecha por `completed_at` y se filtra por COMPLETED, exactamente el
+     * mismo universo que la serie de ventas generadas. No por `paid_at`: eso es
+     * caja, tiene su propia regla y su propio dueño (el cierre diario), y una
+     * cambiaria emitida sin cobrar ya entrego mercaderia y ya genero margen.
+     * Compartir universo con la serie de ventas es lo que permite leer las dos
+     * graficas juntas sin que se contradigan.
+     *
+     * CANCELLED y REVERSED quedan fuera, igual que en el resto de agregados.
+     *
+     * `cost_total` NULL se trata como "sin costo conocido", NUNCA como cero:
+     * los importes suman con `FILTER` sobre las lineas cubiertas y las
+     * descubiertas se reportan aparte. Sumarlas como cero convertiria su precio
+     * integro en ganancia e inflaria el margen del taller.
+     *
+     * Los servicios quedan fuera POR CATEGORIA, con el mismo
+     * `family.category <> 'JOB'` que usan los rankings de producto: un servicio
+     * no tiene costo de adquisicion en este modelo —`Job.price` es precio, no
+     * costo— y contarlo como linea descubierta ensuciaria la cobertura con algo
+     * que nunca podra cubrirse.
+     *
+     * `GROUP BY` posicional por el mismo motivo que la serie de ventas: al
+     * enlazarse, cada `:unit` es un marcador distinto y PostgreSQL rechazaria la
+     * consulta si la expresion se repitiera.
+     */
+    @Query(nativeQuery = true, value = """
+        SELECT TO_CHAR(DATE_TRUNC(CAST(:unit AS text), sale.completed_at), 'YYYY-MM-DD') AS bucketDate,
+               COALESCE(SUM(detail.sub_total)
+                        FILTER (WHERE detail.cost_total IS NOT NULL), 0) AS coveredRevenue,
+               COALESCE(SUM(detail.cost_total), 0) AS costOfGoodsSold,
+               COALESCE(SUM(detail.sub_total - detail.cost_total)
+                        FILTER (WHERE detail.cost_total IS NOT NULL), 0) AS grossProfit,
+               COUNT(*) FILTER (WHERE detail.cost_total IS NOT NULL) AS coveredLines,
+               COUNT(*) FILTER (WHERE detail.cost_total IS NULL) AS uncoveredLines,
+               COALESCE(SUM(detail.sub_total)
+                        FILTER (WHERE detail.cost_total IS NULL), 0) AS uncoveredRevenue
+        FROM sale_detail detail
+        JOIN sale ON sale.id = detail.sale_id
+        JOIN product ON product.id = detail.product_id
+        JOIN family ON family.id = product.family_id
+        WHERE sale.workshop_id = :workshopId
+          AND sale.status = 'COMPLETED'
+          AND family.category <> 'JOB'
+          AND sale.completed_at >= :from
+          AND sale.completed_at < :to
+        GROUP BY 1
+        ORDER BY 1
+    """)
+    List<SalesCostProfitBucketProjection> findSalesCostProfitBuckets(
             @Param("workshopId") UUID workshopId,
             @Param("unit") String unit,
             @Param("from") LocalDateTime from,

@@ -37,8 +37,11 @@ public class JobSaleDetailHandler implements SaleDetailHandler {
     @Override
     @Transactional(propagation = Propagation.MANDATORY)
     public SaleDetail addDetail(Sale sale, AddSaleDetailRequestDTO requestDTO) {
+        // Con cerrojo: el precio del servicio puede fijarse en esta misma venta
+        // (ver `createDetail`), asi que la fila se lee bloqueada desde el
+        // principio, igual que hace el inventario con sus existencias.
         Job job = repository
-                .findByProductIdAndWorkshopId(
+                .findByProductIdAndWorkshopIdForUpdate(
                         requestDTO.product(), SecurityUtils.getWorkshopId())
                 .orElseThrow(() -> new EntityNotFoundException(
                         "No existe el servicio especificado"));
@@ -65,7 +68,20 @@ public class JobSaleDetailHandler implements SaleDetailHandler {
      * comerciales legitimos sobre mano de obra.
      */
     private SaleDetail createDetail(Job job, AddSaleDetailRequestDTO requestDTO) {
-        BigDecimal price = resolvePrice(requestDTO.price(), job.getPrice(), null);
+        PricingOutcome pricing = resolvePricing(
+                requestDTO.price(), job.getPrice(), null);
+        BigDecimal price = pricing.price();
+
+        // `job.price` es el precio de catalogo del servicio y tiene el MISMO
+        // esquema que el del inventario —`NUMERIC(10,2) NOT NULL CHECK (>= 0)`,
+        // sin nulo posible—, asi que el cero significa aqui lo mismo: sin precio
+        // asignado. Un taller no regala mano de obra. El servicio esta
+        // bloqueado y gestionado, de modo que el precio queda en la misma
+        // transaccion que la linea.
+        if (pricing.becomesCatalogPrice()) {
+            job.setPrice(pricing.price());
+        }
+
         BigDecimal subTotal = price.multiply(
                 BigDecimal.valueOf(requestDTO.quantity()));
         return SaleDetail.builder()

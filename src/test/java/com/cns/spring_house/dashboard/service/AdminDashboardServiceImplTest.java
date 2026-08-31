@@ -6,9 +6,11 @@ import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
@@ -34,6 +36,18 @@ import com.cns.spring_house.dashboard.dto.SalesGranularity;
 import com.cns.spring_house.dashboard.dto.SalesTrendPointDTO;
 import com.cns.spring_house.dashboard.dto.SalesTrendResponseDTO;
 import com.cns.spring_house.dashboard.dto.VehicleOccupancyResponseDTO;
+import com.cns.spring_house.acquisition.entity.AcquisitionType;
+import com.cns.spring_house.acquisition.repository.InventoryAcquisitionRepository;
+import com.cns.spring_house.acquisition.repository.projection.AcquisitionBucketProjection;
+import com.cns.spring_house.acquisition.repository.projection.SupplierPerformanceProjection;
+import com.cns.spring_house.dashboard.dto.AcquisitionTrendPointDTO;
+import com.cns.spring_house.dashboard.dto.AcquisitionTrendResponseDTO;
+import com.cns.spring_house.dashboard.dto.CostCoverage;
+import com.cns.spring_house.dashboard.dto.SalesCostProfitPointDTO;
+import com.cns.spring_house.dashboard.dto.SalesCostProfitTrendResponseDTO;
+import com.cns.spring_house.dashboard.dto.SupplierPerformanceDTO;
+import com.cns.spring_house.dashboard.dto.TopSuppliersResponseDTO;
+import com.cns.spring_house.sale.repository.projection.SalesCostProfitBucketProjection;
 import com.cns.spring_house.employee.repository.EmployeeRepository;
 import com.cns.spring_house.inventory.repository.InventoryRepository;
 import com.cns.spring_house.job.repository.JobLogRepository;
@@ -82,6 +96,9 @@ class AdminDashboardServiceImplTest {
     @Mock
     private InventoryRepository inventoryRepository;
 
+    @Mock
+    private InventoryAcquisitionRepository acquisitionRepository;
+
     private AdminDashboardServiceImpl service;
 
     private final UUID workshopId = UUID.randomUUID();
@@ -96,7 +113,7 @@ class AdminDashboardServiceImplTest {
         service = new AdminDashboardServiceImpl(
                 saleRepository, vehicleMovementRepository, jobLogRepository,
                 transformationRepository, employeeRepository, inventoryRepository,
-                fixedClock);
+                acquisitionRepository, fixedClock);
 
         Jwt jwt = Jwt.withTokenValue("token")
                 .header("alg", "HS256")
@@ -408,6 +425,232 @@ class AdminDashboardServiceImplTest {
             public BigDecimal getAmount() {
                 return new BigDecimal(amount);
             }
+        };
+    }
+
+    // ═══ Gasto en compras ════════════════════════════════════════
+
+    @Test
+    void acquisitionTrendFillsEmptyBucketsWithZero() {
+        when(acquisitionRepository.findPurchaseBuckets(
+                eq(workshopId), eq("day"), any(), any(), isNull()))
+                .thenReturn(List.of(
+                        acquisitionBucket("2026-07-01", 1L, 10L, "1000.00", "1000.00", "0.00"),
+                        acquisitionBucket("2026-07-03", 1L, 5L, "600.00", "0.00", "600.00")));
+
+        AcquisitionTrendResponseDTO trend = service.getAcquisitionTrend(
+                SalesGranularity.DAY, "2026-07", null);
+
+        assertThat(trend.points()).hasSize(31);
+        assertThat(trend.points().subList(0, 3))
+                .extracting(point -> point.bucket().toString(),
+                        AcquisitionTrendPointDTO::amount)
+                .containsExactly(
+                        tuple("2026-07-01", new BigDecimal("1000.00")),
+                        tuple("2026-07-02", BigDecimal.ZERO),
+                        tuple("2026-07-03", new BigDecimal("600.00")));
+    }
+
+    /** Los totales los suma el SERVIDOR; el cliente no vuelve a sumar importes. */
+    @Test
+    void acquisitionTrendTotalsTheReturnedPoints() {
+        when(acquisitionRepository.findPurchaseBuckets(
+                eq(workshopId), eq("day"), any(), any(), isNull()))
+                .thenReturn(List.of(
+                        acquisitionBucket("2026-07-01", 2L, 10L, "1000.00", "700.00", "300.00"),
+                        acquisitionBucket("2026-07-03", 1L, 5L, "600.00", "0.00", "600.00")));
+
+        AcquisitionTrendResponseDTO trend = service.getAcquisitionTrend(
+                SalesGranularity.DAY, "2026-07", null);
+
+        assertThat(trend.totalAmount()).isEqualByComparingTo("1600.00");
+        assertThat(trend.totalNationalAmount()).isEqualByComparingTo("700.00");
+        assertThat(trend.totalImportationAmount()).isEqualByComparingTo("900.00");
+        assertThat(trend.acquisitionCount()).isEqualTo(3L);
+        assertThat(trend.unitsReceived()).isEqualTo(15L);
+    }
+
+    /**
+     * El tipo llega a la consulta como el LITERAL del enum, nunca como texto
+     * libre del cliente: es lo que impide que un valor arbitrario alcance el SQL.
+     */
+    @Test
+    void acquisitionTrendPassesTheTypeAsAnEnumLiteral() {
+        when(acquisitionRepository.findPurchaseBuckets(
+                eq(workshopId), eq("day"), any(), any(), eq("IMPORTATION")))
+                .thenReturn(List.of());
+
+        AcquisitionTrendResponseDTO trend = service.getAcquisitionTrend(
+                SalesGranularity.DAY, "2026-07", AcquisitionType.IMPORTATION);
+
+        assertThat(trend.acquisitionType()).isEqualTo(AcquisitionType.IMPORTATION);
+        verify(acquisitionRepository).findPurchaseBuckets(
+                eq(workshopId), eq("day"), any(), any(), eq("IMPORTATION"));
+    }
+
+    /** Un periodo que aun no ha empezado devuelve serie vacia, no ceros. */
+    @Test
+    void acquisitionTrendReturnsNothingForAFuturePeriod() {
+        AcquisitionTrendResponseDTO trend = service.getAcquisitionTrend(
+                SalesGranularity.DAY, "2026-12", null);
+
+        assertThat(trend.points()).isEmpty();
+        assertThat(trend.totalAmount()).isEqualByComparingTo("0");
+        verifyNoInteractions(acquisitionRepository);
+    }
+
+    /** Solo la serie ANUAL necesita saber desde cuando hay compras. */
+    @Test
+    void onlyTheYearlyAcquisitionTrendLooksUpTheFirstPurchase() {
+        when(acquisitionRepository.findPurchaseBuckets(
+                eq(workshopId), any(), any(), any(), isNull()))
+                .thenReturn(List.of());
+
+        service.getAcquisitionTrend(SalesGranularity.DAY, null, null);
+        service.getAcquisitionTrend(SalesGranularity.MONTH, null, null);
+        verify(acquisitionRepository, never()).findFirstPurchaseDate(any());
+
+        service.getAcquisitionTrend(SalesGranularity.YEAR, null, null);
+        verify(acquisitionRepository).findFirstPurchaseDate(workshopId);
+    }
+
+    // ═══ Rentabilidad de ventas ══════════════════════════════════
+
+    @Test
+    void profitTrendFillsEmptyBucketsAndTotalsThem() {
+        when(saleRepository.findSalesCostProfitBuckets(
+                eq(workshopId), eq("day"), any(), any()))
+                .thenReturn(List.of(
+                        profitBucket("2026-07-01", "680.00", "400.00", "280.00", 1L, 0L, "0.00"),
+                        profitBucket("2026-07-03", "300.00", "100.00", "200.00", 1L, 0L, "0.00")));
+
+        SalesCostProfitTrendResponseDTO trend = service.getSalesCostProfitTrend(
+                SalesGranularity.DAY, "2026-07");
+
+        assertThat(trend.points()).hasSize(31);
+        assertThat(trend.points().get(1).grossProfit()).isEqualByComparingTo("0");
+        assertThat(trend.totalCostOfGoodsSold()).isEqualByComparingTo("500.00");
+        assertThat(trend.totalGrossProfit()).isEqualByComparingTo("480.00");
+        assertThat(trend.totalCoveredRevenue()).isEqualByComparingTo("980.00");
+    }
+
+    /** Todas las lineas con costo: el periodo se puede leer al pie de la letra. */
+    @Test
+    void profitCoverageIsCompleteWhenEveryLineHasCost() {
+        when(saleRepository.findSalesCostProfitBuckets(
+                eq(workshopId), eq("day"), any(), any()))
+                .thenReturn(List.of(
+                        profitBucket("2026-07-01", "680.00", "400.00", "280.00", 3L, 0L, "0.00")));
+
+        assertThat(service.getSalesCostProfitTrend(SalesGranularity.DAY, "2026-07")
+                .coverage()).isEqualTo(CostCoverage.COMPLETE);
+    }
+
+    /**
+     * Basta UNA linea sin costo para que el periodo sea PARCIAL. La venta que
+     * queda fuera viaja aparte, para que la interfaz pueda decir de que tamaño
+     * es el hueco en vez de disimularlo.
+     */
+    @Test
+    void profitCoverageIsPartialWhenSomeLineLacksCost() {
+        when(saleRepository.findSalesCostProfitBuckets(
+                eq(workshopId), eq("day"), any(), any()))
+                .thenReturn(List.of(
+                        profitBucket("2026-07-01", "680.00", "400.00", "280.00", 3L, 1L, "150.00")));
+
+        SalesCostProfitTrendResponseDTO trend = service.getSalesCostProfitTrend(
+                SalesGranularity.DAY, "2026-07");
+
+        assertThat(trend.coverage()).isEqualTo(CostCoverage.PARTIAL);
+        assertThat(trend.uncoveredLines()).isEqualTo(1L);
+        assertThat(trend.uncoveredRevenue()).isEqualByComparingTo("150.00");
+    }
+
+    /**
+     * Sin lineas no es COMPLETE sino EMPTY: no hay nada que cubrir, que no es lo
+     * mismo que haberlo cubierto todo. Rotular "historico completo" un mes sin
+     * ventas seria una afirmacion vacia.
+     */
+    @Test
+    void profitCoverageIsEmptyWithoutAnyProductLine() {
+        when(saleRepository.findSalesCostProfitBuckets(
+                eq(workshopId), eq("day"), any(), any()))
+                .thenReturn(List.of());
+
+        assertThat(service.getSalesCostProfitTrend(SalesGranularity.DAY, "2026-07")
+                .coverage()).isEqualTo(CostCoverage.EMPTY);
+    }
+
+    // ═══ Top de proveedores ══════════════════════════════════════
+
+    @Test
+    void topSuppliersAsksForFiveAndReportsTheMeasuredPeriod() {
+        when(acquisitionRepository.findTopSuppliers(
+                eq(workshopId), any(), any(), eq(5)))
+                .thenReturn(List.of(supplierRow("Resortes", 2L, 15L, "1500.00")));
+
+        TopSuppliersResponseDTO response = service.getTopSuppliers(
+                SalesGranularity.DAY, "2026-07");
+
+        assertThat(response.suppliers())
+                .extracting(SupplierPerformanceDTO::supplierName)
+                .containsExactly("Resortes");
+        assertThat(response.suppliers().get(0).totalSpend())
+                .isEqualByComparingTo("1500.00");
+        // El rango medido viaja en la respuesta para que la tarjeta lo rotule y
+        // nadie lea un ranking de julio como si fuera historico.
+        assertThat(response.from()).isEqualTo(LocalDate.of(2026, 7, 1));
+        assertThat(response.to()).isEqualTo(LocalDate.of(2026, 7, 31));
+    }
+
+    @Test
+    void topSuppliersReturnsNothingForAFuturePeriod() {
+        TopSuppliersResponseDTO response = service.getTopSuppliers(
+                SalesGranularity.DAY, "2026-12");
+
+        assertThat(response.suppliers()).isEmpty();
+        verifyNoInteractions(acquisitionRepository);
+    }
+
+    // ── Proyecciones simuladas ───────────────────────────────────
+
+    private static AcquisitionBucketProjection acquisitionBucket(
+            String date, long count, long units,
+            String amount, String national, String importation) {
+        return new AcquisitionBucketProjection() {
+            @Override public String getBucketDate() { return date; }
+            @Override public long getAcquisitionCount() { return count; }
+            @Override public long getUnitsReceived() { return units; }
+            @Override public BigDecimal getAmount() { return new BigDecimal(amount); }
+            @Override public BigDecimal getNationalAmount() { return new BigDecimal(national); }
+            @Override public BigDecimal getImportationAmount() { return new BigDecimal(importation); }
+        };
+    }
+
+    private static SalesCostProfitBucketProjection profitBucket(
+            String date, String revenue, String cost, String profit,
+            long covered, long uncovered, String uncoveredRevenue) {
+        return new SalesCostProfitBucketProjection() {
+            @Override public String getBucketDate() { return date; }
+            @Override public BigDecimal getCoveredRevenue() { return new BigDecimal(revenue); }
+            @Override public BigDecimal getCostOfGoodsSold() { return new BigDecimal(cost); }
+            @Override public BigDecimal getGrossProfit() { return new BigDecimal(profit); }
+            @Override public long getCoveredLines() { return covered; }
+            @Override public long getUncoveredLines() { return uncovered; }
+            @Override public BigDecimal getUncoveredRevenue() { return new BigDecimal(uncoveredRevenue); }
+        };
+    }
+
+    private static SupplierPerformanceProjection supplierRow(
+            String name, long count, long units, String spend) {
+        return new SupplierPerformanceProjection() {
+            @Override public UUID getSupplierId() { return UUID.randomUUID(); }
+            @Override public String getSupplierName() { return name; }
+            @Override public long getAcquisitionCount() { return count; }
+            @Override public long getUnitsReceived() { return units; }
+            @Override public BigDecimal getTotalSpend() { return new BigDecimal(spend); }
+            @Override public BigDecimal getNationalSpend() { return new BigDecimal(spend); }
+            @Override public BigDecimal getImportationSpend() { return BigDecimal.ZERO; }
         };
     }
 

@@ -1,18 +1,18 @@
 package com.cns.spring_house.cashclosure.repository;
 
-import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-import com.cns.spring_house.cashclosure.dto.CashClosureDaySummaryDTO;
 import com.cns.spring_house.cashclosure.entity.CashClosure;
+import com.cns.spring_house.cashclosure.entity.CashClosureRefund;
+import com.cns.spring_house.cashclosure.repository.projection.CashClosureItemProjection;
+import com.cns.spring_house.cashclosure.repository.projection.CashClosurePaymentMethodProjection;
 import com.cns.spring_house.cashclosure.repository.projection.CashClosureStampProjection;
 import com.cns.spring_house.cashclosure.repository.projection.CashClosureSummaryProjection;
 
@@ -21,10 +21,18 @@ public interface CashClosureRepository extends JpaRepository<CashClosure, UUID> 
     /**
      * Existencia del cierre de una fecha operativa. La usan el propio cierre
      * —para dar un mensaje entendible antes de chocar con el UNIQUE— y el
-     * bloqueo de nuevas ventas.
+     * bloqueo de nuevas ventas y cobros.
      */
     boolean existsByWorkshopIdAndBusinessDate(UUID workshopId, LocalDate businessDate);
 
+    /**
+     * El cierre de una fecha.
+     *
+     * El detalle NO se une aqui: las tres colecciones se acotan por lote en la
+     * propia entidad. Unirlas seria imposible —Hibernate rechaza fusionar varias
+     * colecciones— y multiplicaria las filas del resultado. Ver
+     * {@code CashClosure.items}.
+     */
     Optional<CashClosure> findByWorkshopIdAndBusinessDate(
             UUID workshopId, LocalDate businessDate);
 
@@ -33,8 +41,8 @@ public interface CashClosureRepository extends JpaRepository<CashClosure, UUID> 
      * cierre y el instante en que se confirmo.
      *
      * Existe aparte del anterior porque el dashboard de secretaria solo
-     * necesita eso, y cargar la entidad para descartarla casi entera cuesta dos
-     * SELECT de mas: taller y empleado que cerro son {@code @ManyToOne} EAGER.
+     * necesita eso, y cargar la entidad con su detalle para descartarla casi
+     * entera cuesta varias consultas de mas.
      *
      * `closedAt` es `createdAt` por la razon que explica {@code CashClosure}: la
      * fila se inserta al cerrar y nunca se modifica.
@@ -51,35 +59,23 @@ public interface CashClosureRepository extends JpaRepository<CashClosure, UUID> 
 
     /**
      * Nunca se lee un cierre solo por id: con el UUID a mano, `findById` dejaria
-     * leer y exportar el cierre de otro taller. Mismo criterio que
+     * leer el cierre de otro taller. Mismo criterio que
      * {@code SaleRepository.findByIdAndWorkshopId}.
      */
     Optional<CashClosure> findByIdAndWorkshopId(UUID id, UUID workshopId);
 
-    /**
-     * Cierres del rango, del mas reciente al mas antiguo.
-     *
-     * `business_date` es DATE, no timestamp: aqui los extremos SI son inclusivos
-     * —un cierre del dia `to` pertenece al rango `to`—, a diferencia de las
-     * ventanas `[from, to)` que se aplican sobre `completed_at` y `paid_at`,
-     * donde el limite superior es un instante y tiene que quedar fuera.
-     *
-     * El desempate por id hace el orden determinista cuando dos filas comparten
-     * fecha, cosa que el UNIQUE(workshop, business_date) impide dentro de un
-     * taller pero que igualmente evita que el orden dependa del plan de
-     * ejecucion.
-     */
-    List<CashClosure> findByWorkshopIdAndBusinessDateBetweenOrderByBusinessDateDescIdDesc(
-            UUID workshopId, LocalDate from, LocalDate to);
+    // ── Cierre mensual ───────────────────────────────────────────
+    //
+    // El mes se agrega sobre los SNAPSHOTS diarios y no contra `sale`. Es lo
+    // que preserva la verdad historica: recalcularlo contra las ventas actuales
+    // haria que cobrar hoy una cambiaria de marzo cambiara el cierre de marzo.
+    //
+    // Son CUATRO consultas para todo el mes —escalares, articulos, documentos y
+    // formas de pago—, no una por dia.
 
     /**
-     * Agregado del rango, sumado por la base de datos. No se descargan los
-     * cierres para recorrerlos en Java, igual que en el dashboard de ventas.
-     *
-     * Los tres contadores de cuadre salen de un CASE sobre el signo de
-     * `difference`, que es exactamente la regla que aplica
-     * {@code CashBalanceStatus.of(...)}: cero cuadra, negativo falta, positivo
-     * sobra.
+     * Los escalares del mes. `business_date` es DATE, asi que los extremos son
+     * inclusivos, a diferencia de las ventanas `[from, to)` sobre instantes.
      */
     @Query("""
         SELECT COUNT(closure) AS closureCount,
@@ -88,84 +84,131 @@ public interface CashClosureRepository extends JpaRepository<CashClosure, UUID> 
                COALESCE(SUM(closure.exchangeInvoiceCount), 0) AS exchangeInvoiceCount,
                COALESCE(SUM(closure.exchangeInvoiceTotal), 0) AS exchangeInvoiceTotal,
                COALESCE(SUM(closure.totalInvoiced), 0) AS totalInvoiced,
-               COALESCE(SUM(closure.cashPaymentCount), 0) AS cashPaymentCount,
-               COALESCE(SUM(closure.cashPayments), 0) AS cashPayments,
-               COALESCE(SUM(closure.cardPaymentCount), 0) AS cardPaymentCount,
-               COALESCE(SUM(closure.cardPayments), 0) AS cardPayments,
-               COALESCE(SUM(closure.transferPaymentCount), 0) AS transferPaymentCount,
-               COALESCE(SUM(closure.transferPayments), 0) AS transferPayments,
                COALESCE(SUM(closure.totalCollected), 0) AS totalCollected,
                COALESCE(SUM(closure.exchangeCollectedCount), 0) AS exchangeCollectedCount,
                COALESCE(SUM(closure.exchangeCollectedAmount), 0) AS exchangeCollectedAmount,
-               COALESCE(SUM(CASE WHEN closure.difference = 0 THEN 1 ELSE 0 END), 0)
-                   AS balancedClosures,
-               COALESCE(SUM(CASE WHEN closure.difference < 0 THEN 1 ELSE 0 END), 0)
-                   AS shortClosures,
-               COALESCE(SUM(CASE WHEN closure.difference > 0 THEN 1 ELSE 0 END), 0)
-                   AS overClosures,
-               COALESCE(SUM(closure.difference), 0) AS netCashDifference
+               COALESCE(SUM(closure.previousExchangeCollectedAmount), 0)
+                   AS previousExchangeCollectedAmount,
+               COALESCE(SUM(closure.issuedExchangePendingAmount), 0)
+                   AS issuedExchangePendingAmount,
+               COALESCE(SUM(closure.itemsBilledAmount), 0) AS itemsBilledAmount,
+               COALESCE(SUM(closure.refundCount), 0) AS refundCount,
+               COALESCE(SUM(closure.totalRefunded), 0) AS totalRefunded,
+               COALESCE(SUM(closure.refundCashCount), 0) AS refundCashCount,
+               COALESCE(SUM(closure.refundCash), 0) AS refundCash,
+               COALESCE(SUM(closure.refundCardCount), 0) AS refundCardCount,
+               COALESCE(SUM(closure.refundCard), 0) AS refundCard,
+               COALESCE(SUM(closure.refundTransferCount), 0) AS refundTransferCount,
+               COALESCE(SUM(closure.refundTransfer), 0) AS refundTransfer
         FROM CashClosure closure
         WHERE closure.workshop.id = :workshopId
           AND closure.businessDate >= :from
           AND closure.businessDate <= :to
     """)
-    CashClosureSummaryProjection summarizeRange(
+    CashClosureSummaryProjection summarizeMonth(
             @Param("workshopId") UUID workshopId,
             @Param("from") LocalDate from,
             @Param("to") LocalDate to);
 
     /**
-     * Saldos cambiarios pendientes del rango, del cierre mas reciente al mas
-     * antiguo. El servicio pide UNA sola fila con un Pageable: el saldo final
-     * del rango es el del ultimo cierre, no la suma de los diarios.
+     * Los articulos del mes, reagregados por producto sobre el detalle diario.
      *
-     * Se resuelve con una consulta propia y no leyendo la lista completa para
-     * que el resumen no dependa de haber cargado antes todos los cierres.
+     * Un mismo producto vendido en quince dias distintos tiene quince filas de
+     * detalle; aqui vuelve como UNA con la cantidad y el importe del mes.
      */
     @Query("""
-        SELECT closure.pendingExchangeAmount
-        FROM CashClosure closure
-        WHERE closure.workshop.id = :workshopId
-          AND closure.businessDate >= :from
-          AND closure.businessDate <= :to
-        ORDER BY closure.businessDate DESC, closure.id DESC
+        SELECT item.productId AS productId,
+               MAX(item.itemName) AS itemName,
+               MAX(CAST(item.itemType AS String)) AS itemType,
+               COALESCE(SUM(item.quantity), 0) AS quantity,
+               COALESCE(SUM(item.billedAmount), 0) AS billedAmount
+        FROM CashClosureItem item
+        WHERE item.cashClosure.workshop.id = :workshopId
+          AND item.cashClosure.businessDate >= :from
+          AND item.cashClosure.businessDate <= :to
+        GROUP BY item.productId
+        ORDER BY COALESCE(SUM(item.billedAmount), 0) DESC,
+                 COALESCE(SUM(item.quantity), 0) DESC,
+                 item.productId ASC
     """)
-    List<BigDecimal> findPendingExchangeAmounts(
+    List<CashClosureItemProjection> findMonthlyItems(
             @Param("workshopId") UUID workshopId,
             @Param("from") LocalDate from,
-            @Param("to") LocalDate to,
-            Pageable pageable);
+            @Param("to") LocalDate to);
 
     /**
-     * Filas de la tabla diaria del resumen. Es una proyeccion y no la entidad
-     * porque el reporte solo necesita ocho columnas por dia, y porque cargar
-     * cada `CashClosure` arrastraria su taller y su empleado.
+     * Los documentos cambiarios del mes de UN papel concreto (emitidos o
+     * cobrados), tal y como los congelo cada cierre diario.
      *
-     * Solo hay fila para los dias que tienen cierre: un dia sin cerrar no se
-     * inventa en cero.
-     *
-     * Ordena ASCENDENTE, al reves que el listado de cierres. No es un descuido:
-     * el listado es una bandeja donde lo ultimo cerrado es lo que se busca,
-     * mientras que esto es el detalle de un periodo, y un mes se lee del dia 1
-     * al 31, de arriba abajo.
+     * Se lee del snapshot y no de `sale`: el estado que interesa es el que
+     * tenian al cerrar su dia.
      */
     @Query("""
-        SELECT new com.cns.spring_house.cashclosure.dto.CashClosureDaySummaryDTO(
-            closure.id,
-            closure.businessDate,
-            closure.totalInvoiced,
-            closure.totalCollected,
-            closure.cashPayments,
-            closure.cardPayments,
-            closure.transferPayments,
-            closure.difference)
+        SELECT invoice
+        FROM CashClosureExchangeInvoice invoice
+        WHERE invoice.cashClosure.workshop.id = :workshopId
+          AND invoice.cashClosure.businessDate >= :from
+          AND invoice.cashClosure.businessDate <= :to
+          AND invoice.scope = :scope
+        ORDER BY invoice.issuedAt ASC, invoice.saleId ASC
+    """)
+    List<com.cns.spring_house.cashclosure.entity.CashClosureExchangeInvoice>
+            findMonthlyExchangeInvoices(
+                    @Param("workshopId") UUID workshopId,
+                    @Param("from") LocalDate from,
+                    @Param("to") LocalDate to,
+                    @Param("scope")
+                    com.cns.spring_house.cashclosure.entity.ExchangeInvoiceScope scope);
+
+    /** Lo cobrado en el mes por forma de pago, sumado sobre el detalle diario. */
+    @Query("""
+        SELECT CAST(total.paymentMethod AS String) AS paymentMethod,
+               COALESCE(SUM(total.paymentCount), 0) AS paymentCount,
+               COALESCE(SUM(total.amount), 0) AS amount
+        FROM CashClosurePaymentMethodTotal total
+        WHERE total.cashClosure.workshop.id = :workshopId
+          AND total.cashClosure.businessDate >= :from
+          AND total.cashClosure.businessDate <= :to
+        GROUP BY total.paymentMethod
+    """)
+    List<CashClosurePaymentMethodProjection> findMonthlyPaymentMethods(
+            @Param("workshopId") UUID workshopId,
+            @Param("from") LocalDate from,
+            @Param("to") LocalDate to);
+
+    /**
+     * Las devoluciones de los cierres CONFIRMADOS del mes.
+     *
+     * Se leen de los snapshots y no de `sale_refund` a proposito: releer los
+     * eventos vivos de un dia ya cerrado permitiria que una devolucion
+     * registrada despues apareciera en un mes que ya estaba dicho. El mes
+     * cuenta lo que sus dias contaron.
+     *
+     * Una sola consulta para todo el mes, no una por dia.
+     */
+    @Query("""
+        SELECT refund
+        FROM CashClosureRefund refund
+        WHERE refund.cashClosure.workshop.id = :workshopId
+          AND refund.cashClosure.businessDate >= :from
+          AND refund.cashClosure.businessDate <= :to
+        ORDER BY refund.effectiveAt ASC, refund.refundId ASC
+    """)
+    List<CashClosureRefund> findMonthlyRefunds(
+            @Param("workshopId") UUID workshopId,
+            @Param("from") LocalDate from,
+            @Param("to") LocalDate to);
+
+    /** Fechas del mes que ya tienen cierre, para calcular los dias pendientes. */
+    @Query("""
+        SELECT closure.businessDate
         FROM CashClosure closure
         WHERE closure.workshop.id = :workshopId
           AND closure.businessDate >= :from
           AND closure.businessDate <= :to
-        ORDER BY closure.businessDate ASC, closure.id ASC
+        ORDER BY closure.businessDate ASC
     """)
-    List<CashClosureDaySummaryDTO> findDaySummaries(
+    List<LocalDate> findClosedDates(
             @Param("workshopId") UUID workshopId,
             @Param("from") LocalDate from,
             @Param("to") LocalDate to);

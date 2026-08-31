@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.cns.spring_house.acquisition.service.InventoryLotService;
 import com.cns.spring_house.family.entity.FamilyCategory;
 import com.cns.spring_house.inventory.entity.InventoryItem;
 import com.cns.spring_house.inventory.entity.InventoryItemStatus;
@@ -28,6 +29,7 @@ import lombok.RequiredArgsConstructor;
 public class ContainerTransformationHandler implements TransformationHandler {
 
     private final InventoryItemRepository itemRepository;
+    private final InventoryLotService lotService;
 
     @Override
     public FamilyCategory getType() {
@@ -58,6 +60,14 @@ public class ContainerTransformationHandler implements TransformationHandler {
             inputItem.releaseItem(component);
             component.setStatus(InventoryItemStatus.AVAILABLE);
             component.getInventory().addStock(1);
+            // El componente vuelve al inventario individual, asi que necesita un
+            // lote que respalde esa existencia. Entra como PRODUCTION y NO
+            // recuperando el lote que consumio al armarse: aquel se consumio sin
+            // traza —no habia linea de venta a la que atribuirlo— y adivinar
+            // cual era repondria en el lote equivocado. Se declara la
+            // consecuencia: un componente que se armo y se volvio a soltar
+            // pierde su costo de compra original.
+            lotService.registerProduction(component.getInventory(), 1);
             transformation.addItem(TransformationItem.builder()
                     .item(component)
                     .role(TransformationItemRole.RELEASED)
@@ -129,6 +139,9 @@ public class ContainerTransformationHandler implements TransformationHandler {
         } else if (inputItem.getStatus() != InventoryItemStatus.CONSUMED) {
             inputItem.setStatus(InventoryItemStatus.CONSUMED);
             inputItem.getInventory().removeStock(1);
+            // La maleta deja de existir como unidad vendible: su lote se
+            // consume, igual que si se hubiera vendido.
+            lotService.consumeWithoutTrace(inputItem.getInventory(), 1);
         }
 
         return TransformationItem.builder()

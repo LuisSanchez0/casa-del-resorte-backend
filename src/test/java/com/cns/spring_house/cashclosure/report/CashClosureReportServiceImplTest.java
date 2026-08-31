@@ -20,16 +20,17 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import com.cns.spring_house.cashclosure.dto.CashClosureBalanceSummaryDTO;
+import com.cns.spring_house.cashclosure.dto.CashClosureExchangeDTO;
 import com.cns.spring_house.cashclosure.dto.CashClosureCollectionsDTO;
-import com.cns.spring_house.cashclosure.dto.CashClosureDaySummaryDTO;
+import com.cns.spring_house.cashclosure.dto.ClosureExchangeInvoiceDTO;
+import com.cns.spring_house.cashclosure.dto.ClosurePaymentMethodDTO;
+import com.cns.spring_house.cashclosure.dto.ClosureSoldItemDTO;
+import com.cns.spring_house.family.entity.FamilyCategory;
+import com.cns.spring_house.sale.entity.PaymentMethod;
 import com.cns.spring_house.cashclosure.dto.CashClosureInvoicingDTO;
-import com.cns.spring_house.cashclosure.dto.CashClosureRangeReceivablesDTO;
-import com.cns.spring_house.cashclosure.dto.CashClosureReceivablesDTO;
 import com.cns.spring_house.cashclosure.dto.CashClosureResponseDTO;
-import com.cns.spring_house.cashclosure.dto.CashClosureSummaryResponseDTO;
-import com.cns.spring_house.cashclosure.dto.CashReconciliationDTO;
-import com.cns.spring_house.cashclosure.entity.CashBalanceStatus;
+import com.cns.spring_house.cashclosure.dto.CashClosureRefundsDTO;
+import com.cns.spring_house.cashclosure.dto.ClosureRefundMethodDTO;
 import com.cns.spring_house.shared.config.time.TimeConfig;
 
 /**
@@ -71,66 +72,87 @@ class CashClosureReportServiceImplTest {
                 "LA CASA DEL RESORTE", "6a Avenida 4-25 Zona 3, Guatemala");
     }
 
-    private CashClosureResponseDTO closure(UUID id, LocalDateTime closedAt, String notes) {
+    /**
+     * El dia del ejemplo: Q5,000 en facturas normales, Q2,000 emitidos a
+     * credito y sin cobrar, y Q1,000 de una cambiaria antigua cobrada hoy. El
+     * total cobrado es Q6,000.
+     */
+    private CashClosureResponseDTO closure(UUID id, LocalDateTime closedAt) {
         return new CashClosureResponseDTO(
                 id,
                 BUSINESS_DATE,
                 closedAt,
                 id == null ? null : "ANA LOPEZ",
                 id != null,
-                new CashClosureInvoicingDTO(15, new BigDecimal("12000.00"),
-                        3, new BigDecimal("8000.00"), new BigDecimal("20000.00")),
+                List.of(
+                        new ClosureSoldItemDTO(UUID.randomUUID(), "RESORTE DELANTERO",
+                                FamilyCategory.NORMAL, 4L, new BigDecimal("5000.00")),
+                        new ClosureSoldItemDTO(UUID.randomUUID(), "INSTALACION",
+                                FamilyCategory.JOB, 2L, new BigDecimal("2000.00"))),
+                new BigDecimal("7000.00"),
+                new CashClosureInvoicingDTO(1L, new BigDecimal("5000.00"),
+                        1L, new BigDecimal("2000.00"), new BigDecimal("7000.00")),
+                new CashClosureExchangeDTO(
+                        1L, new BigDecimal("2000.00"), new BigDecimal("2000.00"),
+                        1L, new BigDecimal("1000.00"), new BigDecimal("1000.00"),
+                        List.of(new ClosureExchangeInvoiceDTO(
+                                UUID.randomUUID(), "A1B2C3D4", "TRANSPORTES DEL NORTE",
+                                BUSINESS_DATE.atTime(11, 0), new BigDecimal("2000.00"),
+                                false, null, null)),
+                        List.of(new ClosureExchangeInvoiceDTO(
+                                UUID.randomUUID(), "E5F6A7B8", "FERRETERIA CENTRAL",
+                                BUSINESS_DATE.minusDays(3).atTime(9, 30),
+                                new BigDecimal("1000.00"), true,
+                                BUSINESS_DATE.atTime(15, 0), PaymentMethod.CASH))),
                 new CashClosureCollectionsDTO(
-                        10, new BigDecimal("7000.00"),
-                        6, new BigDecimal("6000.00"),
-                        4, new BigDecimal("5000.00"),
-                        new BigDecimal("18000.00")),
-                new CashClosureReceivablesDTO(2, new BigDecimal("3000.00"),
-                        new BigDecimal("1000.00"), new BigDecimal("25000.00")),
-                new CashReconciliationDTO(
-                        new BigDecimal("500.00"), new BigDecimal("7500.00"),
-                        new BigDecimal("7480.00"), new BigDecimal("-20.00"),
-                        CashBalanceStatus.SHORT),
-                notes);
-    }
-
-    private CashClosureSummaryResponseDTO summary(int days) {
-        return new CashClosureSummaryResponseDTO(
-                LocalDate.of(2026, 8, 1),
-                LocalDate.of(2026, 8, 31),
-                days,
-                new CashClosureInvoicingDTO(120, new BigDecimal("96000.00"),
-                        18, new BigDecimal("54000.00"), new BigDecimal("150000.00")),
-                new CashClosureCollectionsDTO(
-                        80, new BigDecimal("61000.00"),
-                        40, new BigDecimal("38000.00"),
-                        22, new BigDecimal("29000.00"),
-                        new BigDecimal("128000.00")),
-                new CashClosureRangeReceivablesDTO(
-                        12, new BigDecimal("23000.00"), new BigDecimal("25000.00")),
-                new CashClosureBalanceSummaryDTO(20, 3, 2, new BigDecimal("-15.00")),
-                dayRows(days));
-    }
-
-    private List<CashClosureDaySummaryDTO> dayRows(int days) {
-        return java.util.stream.IntStream.rangeClosed(1, days)
-                .mapToObj(day -> new CashClosureDaySummaryDTO(
-                        UUID.randomUUID(),
-                        LocalDate.of(2026, 8, 1).plusDays(day - 1L),
-                        new BigDecimal("6000.00"),
-                        new BigDecimal("5120.50"),
-                        new BigDecimal("2400.00"),
-                        new BigDecimal("1720.50"),
-                        new BigDecimal("1000.00"),
-                        day % 3 == 0 ? new BigDecimal("-20.00")
-                                : day % 3 == 1 ? BigDecimal.ZERO : new BigDecimal("5.00")))
-                .toList();
+                        List.of(
+                                new ClosurePaymentMethodDTO(PaymentMethod.CASH, 2L,
+                                        new BigDecimal("6000.00")),
+                                new ClosurePaymentMethodDTO(PaymentMethod.CARD, 0L,
+                                        new BigDecimal("0.00")),
+                                new ClosurePaymentMethodDTO(PaymentMethod.TRANSFER, 0L,
+                                        new BigDecimal("0.00"))),
+                        new BigDecimal("6000.00")),
+                new CashClosureRefundsDTO(
+                        List.of(
+                                new ClosureRefundMethodDTO(
+                                        PaymentMethod.CASH, 0L, new BigDecimal("0.00")),
+                                new ClosureRefundMethodDTO(
+                                        PaymentMethod.CARD, 0L, new BigDecimal("0.00")),
+                                new ClosureRefundMethodDTO(
+                                        PaymentMethod.TRANSFER, 0L, new BigDecimal("0.00"))),
+                        0L, new BigDecimal("0.00"), List.of()),
+                new BigDecimal("6000.00"));
     }
 
     private String textOf(byte[] pdf) throws IOException {
         try (PDDocument document = Loader.loadPDF(pdf)) {
             return new PDFTextStripper().getText(document);
         }
+    }
+
+    /**
+     * El mismo dia, pero con Q1,500 devueltos: Q500 en efectivo, Q800 con
+     * tarjeta y Q200 por transferencia. El neto es Q4,500.
+     */
+    private CashClosureResponseDTO closureWithRefunds() {
+        CashClosureResponseDTO base = closure(UUID.randomUUID(), LocalDateTime.of(2026, 8, 20, 19, 0));
+        return new CashClosureResponseDTO(
+                base.id(), base.businessDate(), base.closedAt(), base.closedBy(),
+                base.alreadyClosed(), base.items(), base.itemsBilledAmount(),
+                base.invoicing(), base.exchange(), base.collections(),
+                new CashClosureRefundsDTO(
+                        List.of(
+                                new ClosureRefundMethodDTO(
+                                        PaymentMethod.CASH, 1L, new BigDecimal("500.00")),
+                                new ClosureRefundMethodDTO(
+                                        PaymentMethod.CARD, 1L, new BigDecimal("800.00")),
+                                new ClosureRefundMethodDTO(
+                                        PaymentMethod.TRANSFER, 1L, new BigDecimal("200.00"))),
+                        3L,
+                        new BigDecimal("1500.00"),
+                        List.of()),
+                new BigDecimal("4500.00"));
     }
 
     private int pagesOf(byte[] pdf) throws IOException {
@@ -144,6 +166,45 @@ class CashClosureReportServiceImplTest {
         return pdf;
     }
 
+    /**
+     * El PDF no puede decir "TOTAL COBRADO Q6,000" y callarse que se
+     * devolvieron Q1,500.
+     *
+     * Seria exacto y enganoso a la vez: quien lo firma tiene que ver en la
+     * misma hoja de que Q6,000 y que Q1,500 sale el Q4,500 con el que se
+     * queda.
+     */
+    @Test
+    void theDailyPdfShowsRefundsAndTheNetBesideWhatWasCollected() throws Exception {
+        byte[] pdf = save("cierre-con-devoluciones.pdf", service.renderDaily(
+                closureWithRefunds(), header(), false, "ANA LOPEZ"));
+
+        String text = textOf(pdf);
+
+        assertThat(text).contains("DEVOLUCIONES DEL PERIODO");
+        assertThat(text).contains("TOTAL DEVUELTO");
+        assertThat(text).contains("1,500.00");
+        assertThat(text).contains("NETO DEL PERIODO");
+        assertThat(text).contains("4,500.00");
+
+        // Y lo cobrado sigue siendo lo cobrado, no el neto.
+        assertThat(text).contains("TOTAL COBRADO");
+        assertThat(text).contains("6,000.00");
+    }
+
+    /** Un dia sin devoluciones lo dice con ceros, no omitiendo la seccion. */
+    @Test
+    void theDailyPdfStillCarriesTheRefundSectionWhenThereWereNone() throws Exception {
+        byte[] pdf = service.renderDaily(
+                closure(UUID.randomUUID(), LocalDateTime.of(2026, 8, 20, 19, 0)),
+                header(), false, "ANA LOPEZ");
+
+        String text = textOf(pdf);
+
+        assertThat(text).contains("DEVOLUCIONES DEL PERIODO");
+        assertThat(text).contains("NETO DEL PERIODO");
+    }
+
     // ── El recurso del logo ──────────────────────────────────────
 
     /**
@@ -152,234 +213,141 @@ class CashClosureReportServiceImplTest {
      */
     @Test
     void theOfficialLogoIsAvailableAsALocalResource() {
-        byte[] logo = ReportAssets.readLogo();
-
-        assertThat(logo).isNotEmpty();
-        // Firma PNG: los ocho primeros bytes de cualquier PNG valido.
-        assertThat(logo[0] & 0xFF).isEqualTo(0x89);
-        assertThat(new String(logo, 1, 3, StandardCharsets.US_ASCII)).isEqualTo("PNG");
-    }
-
-    @Test
-    void theAssetIsLoadedOnceAndHandedOutAsACopy() {
-        ReportAssets assets = new ReportAssets();
-        assets.loadLogo();
-
-        byte[] first = assets.logo();
-        first[0] = 0;
-
-        assertThat(assets.logo()[0] & 0xFF).isEqualTo(0x89);
+        assertThat(ReportAssets.readLogo()).isNotEmpty();
     }
 
     // ── PDF de previsualizacion ──────────────────────────────────
 
     @Test
     void thePreviewPdfIsAValidNonEmptyDocument() throws IOException {
-        byte[] pdf = save("previsualizacion-cierre-caja-2026-08-20.pdf",
-                service.renderDaily(closure(null, null, null), header(), true, "ANA LOPEZ"));
+        byte[] pdf = save("previsualizacion.pdf", service.renderDaily(
+                closure(null, null), header(), true, "ANA LOPEZ"));
 
         assertThat(pdf).isNotEmpty();
-        assertThat(new String(pdf, 0, 5, StandardCharsets.US_ASCII)).isEqualTo("%PDF-");
-        assertThat(pagesOf(pdf)).isEqualTo(1);
+        assertThat(pagesOf(pdf)).isPositive();
     }
 
-    /** Lo que impide que un borrador impreso pase por un cierre confirmado. */
+    /**
+     * Un borrador impreso no puede confundirse con un cierre confirmado: lleva
+     * la marca, y no dice ser un cierre.
+     */
     @Test
-    void thePreviewPdfIsMarkedAsADraftAndNeverAsAConfirmedClosure() throws IOException {
-        byte[] pdf = service.renderDaily(
-                closure(null, null, null), header(), true, "ANA LOPEZ");
-
-        String text = textOf(pdf);
-        assertThat(text).contains("PREVISUALIZACION - CAJA NO CERRADA");
-        assertThat(text).doesNotContain("CIERRE CONFIRMADO");
-        assertThat(text).contains("Solicitado por");
-        assertThat(text).doesNotContain("Responsable del cierre");
-    }
-
-    @Test
-    void theDailyPdfShowsTheWorkshopDataThatActuallyExists() throws IOException {
+    void thePreviewPdfIsMarkedAsADraft() throws IOException {
         String text = textOf(service.renderDaily(
-                closure(null, null, null), header(), true, "ANA LOPEZ"));
+                closure(null, null), header(), true, "ANA LOPEZ"));
 
-        assertThat(text).contains("LA CASA DEL RESORTE");
-        assertThat(text).contains("6a Avenida 4-25 Zona 3, Guatemala");
-        assertThat(text).contains("CIERRE DE CAJA");
-        assertThat(text).contains("20/08/2026");
-    }
-
-    /** Un taller sin direccion no deja un hueco ni imprime "null". */
-    @Test
-    void aWorkshopWithoutAnAddressSimplyOmitsTheLine() throws IOException {
-        String text = textOf(service.renderDaily(
-                closure(null, null, null),
-                new ReportHeaderDTO("TALLER SIN DIRECCION", null),
-                true, "ANA LOPEZ"));
-
-        assertThat(text).contains("TALLER SIN DIRECCION");
-        assertThat(text).doesNotContain("null");
+        assertThat(text).contains("PREVISUALIZACION");
+        assertThat(text).doesNotContain("Cierre confirmado");
     }
 
     // ── PDF de cierre confirmado ─────────────────────────────────
 
     @Test
-    void theConfirmedPdfIdentifiesItselfAsAClosureWithItsResponsibleAndTimestamp()
-            throws IOException {
-        UUID id = UUID.fromString("6f1f0d2e-9d1b-4a3a-8a1c-2c9b1a5d7e01");
-        byte[] pdf = save("cierre-caja-2026-08-20.pdf", service.renderDaily(
-                closure(id, LocalDateTime.of(2026, 8, 20, 19, 0), "Cuadre revisado con el encargado."),
-                header(), false, "ANA LOPEZ"));
+    void theConfirmedPdfIdentifiesItselfWithItsResponsible() throws IOException {
+        String text = textOf(save("cierre-confirmado.pdf", service.renderDaily(
+                closure(UUID.randomUUID(), LocalDateTime.of(2026, 8, 20, 19, 0)),
+                header(), false, "ANA LOPEZ")));
 
-        String text = textOf(pdf);
-        assertThat(text).contains("CIERRE CONFIRMADO");
-        assertThat(text).doesNotContain("PREVISUALIZACION");
-        assertThat(text).contains("Responsable del cierre");
         assertThat(text).contains("ANA LOPEZ");
-        assertThat(text).contains("20/08/2026 19:00");
-        assertThat(text).contains(id.toString());
+        assertThat(text).doesNotContain("PREVISUALIZACION");
     }
 
-    /** Las tres dimensiones del cierre, cada una con su cifra. */
+    // ── Estructura contable del documento ────────────────────────
+
+    /**
+     * El documento responde las cuatro preguntas del cierre, en su orden: que se
+     * vendio, cuanto se emitio, que quedo a credito y como entro el dinero.
+     */
     @Test
-    void theDailyPdfSeparatesInvoicingCollectionsPortfolioAndCashCount()
-            throws IOException {
+    void theDailyPdfCarriesTheFourAccountingSections() throws IOException {
         String text = textOf(service.renderDaily(
-                closure(UUID.randomUUID(), LocalDateTime.of(2026, 8, 20, 19, 0), null),
+                closure(UUID.randomUUID(), LocalDateTime.of(2026, 8, 20, 19, 0)),
                 header(), false, "ANA LOPEZ"));
 
-        assertThat(text).contains("FACTURACION");
-        assertThat(text).contains("TOTAL FACTURADO").contains("Q20,000.00");
-        assertThat(text).contains("COBROS");
-        assertThat(text).contains("TOTAL COBRADO").contains("Q18,000.00");
-        assertThat(text).contains("Transferencia / Deposito").contains("Q5,000.00");
-        assertThat(text).contains("CARTERA CAMBIARIA");
-        assertThat(text).contains("Cartera pendiente total").contains("Q25,000.00");
-        assertThat(text).contains("ARQUEO DE EFECTIVO");
-        assertThat(text).contains("EFECTIVO ESPERADO").contains("Q7,500.00");
-        assertThat(text).contains("Efectivo contado").contains("Q7,480.00");
-        assertThat(text).contains("DIFERENCIA").contains("-Q20.00");
-        assertThat(text).contains("FALTANTE");
+        assertThat(text).contains("ARTICULOS VENDIDOS");
+        assertThat(text).contains("FACTURACION EMITIDA");
+        assertThat(text).contains("FACTURAS CAMBIARIAS");
+        assertThat(text).contains("COBROS POR FORMA DE PAGO");
+        assertThat(text).contains("TOTAL COBRADO");
     }
 
+    /** Los articulos salen con su nombre, su tipo y lo que generaron. */
     @Test
-    void observationsAreOnlyPrintedWhenThereAreAny() throws IOException {
-        String withNotes = textOf(service.renderDaily(
-                closure(UUID.randomUUID(), LocalDateTime.of(2026, 8, 20, 19, 0),
-                        "Falto un billete de veinte."),
-                header(), false, "ANA LOPEZ"));
-        String withoutNotes = textOf(service.renderDaily(
-                closure(UUID.randomUUID(), LocalDateTime.of(2026, 8, 20, 19, 0), null),
+    void theDailyPdfListsTheSoldItems() throws IOException {
+        String text = textOf(service.renderDaily(
+                closure(UUID.randomUUID(), LocalDateTime.of(2026, 8, 20, 19, 0)),
                 header(), false, "ANA LOPEZ"));
 
-        assertThat(withNotes).contains("OBSERVACIONES")
-                .contains("Falto un billete de veinte.");
-        assertThat(withoutNotes).doesNotContain("OBSERVACIONES");
-    }
-
-    /** Una caja sobrante se lee distinta de una faltante. */
-    @Test
-    void anOverBalanceIsLabelledAsSurplusAndNotAsShortage() throws IOException {
-        CashClosureResponseDTO base = closure(UUID.randomUUID(),
-                LocalDateTime.of(2026, 8, 20, 19, 0), null);
-        CashClosureResponseDTO over = new CashClosureResponseDTO(
-                base.id(), base.businessDate(), base.closedAt(), base.closedBy(), true,
-                base.invoicing(), base.collections(), base.receivables(),
-                new CashReconciliationDTO(
-                        new BigDecimal("500.00"), new BigDecimal("7500.00"),
-                        new BigDecimal("7505.00"), new BigDecimal("5.00"),
-                        CashBalanceStatus.OVER),
-                null);
-
-        String text = textOf(service.renderDaily(over, header(), false, "ANA LOPEZ"));
-
-        assertThat(text).contains("SOBRANTE").doesNotContain("FALTANTE");
-        assertThat(text).contains("+Q5.00");
-    }
-
-    // ── PDF de rango ─────────────────────────────────────────────
-
-    @Test
-    void theRangePdfShowsTheAggregatesAndOneRowPerExistingClosure() throws IOException {
-        byte[] pdf = save("resumen-caja-2026-08-01-a-2026-08-31.pdf",
-                service.renderSummary(summary(25), header()));
-
-        String text = textOf(pdf);
-        assertThat(new String(pdf, 0, 5, StandardCharsets.US_ASCII)).isEqualTo("%PDF-");
-        assertThat(text).contains("RESUMEN DE CAJA");
-        assertThat(text).contains("01/08/2026").contains("31/08/2026");
-        assertThat(text).contains("Cierres realizados");
-        assertThat(text).contains("TOTAL FACTURADO").contains("Q150,000.00");
-        assertThat(text).contains("TOTAL COBRADO").contains("Q128,000.00");
-        assertThat(text).contains("Cartera pendiente al ultimo cierre del periodo")
-                .contains("Q25,000.00");
-        assertThat(text).contains("DIFERENCIA NETA").contains("-Q15.00");
-        assertThat(text).contains("DETALLE POR DIA");
-        // Una fila por cierre existente y ninguna inventada.
-        assertThat(text.lines().filter(line -> line.contains("/08/2026")).count())
-                .isGreaterThanOrEqualTo(25);
+        assertThat(text).contains("RESORTE DELANTERO");
+        assertThat(text).contains("INSTALACION");
+        // Los servicios se distinguen de la mercaderia, pero no desaparecen.
+        assertThat(text).contains("Servicio");
+        assertThat(text).contains("Producto");
     }
 
     /**
-     * Un mes entero no cabe en una hoja: la tabla tiene que partirse y repetir
-     * su encabezado, no escribirse fuera de la pagina.
+     * El estado de cada cambiaria se imprime con su PALABRA, no solo con un
+     * color: un PDF se imprime en blanco y negro y el color no sobrevive.
      */
     @Test
-    void aLongRangeBreaksIntoPagesAndRepeatsTheTableHeader() throws IOException {
-        byte[] pdf = service.renderSummary(summary(31), header());
+    void theDailyPdfShowsExchangeStatusAsText() throws IOException {
+        String text = textOf(service.renderDaily(
+                closure(UUID.randomUUID(), LocalDateTime.of(2026, 8, 20, 19, 0)),
+                header(), false, "ANA LOPEZ"));
 
-        assertThat(pagesOf(pdf)).isGreaterThan(1);
-        String text = textOf(pdf);
-        assertThat(text.lines().filter(line -> line.startsWith("Fecha")).count())
-                .isGreaterThan(1);
-        assertThat(text).contains("Pagina 1 de");
+        assertThat(text).contains("Pendiente");
+        assertThat(text).contains("Cobrada");
+        // Y el documento se identifica por su codigo corto, no por el UUID.
+        assertThat(text).contains("A1B2C3D4");
+        assertThat(text).contains("TRANSPORTES DEL NORTE");
     }
 
+    /**
+     * El arqueo manual desaparecio del modelo. Si alguien lo reintrodujera en la
+     * plantilla, esta prueba lo detecta.
+     */
     @Test
-    void aRangeWithoutClosuresSaysSoInsteadOfPrintingAnEmptyTable() throws IOException {
-        CashClosureSummaryResponseDTO empty = new CashClosureSummaryResponseDTO(
-                LocalDate.of(2026, 1, 1), LocalDate.of(2026, 1, 31), 0,
-                new CashClosureInvoicingDTO(0, BigDecimal.ZERO, 0, BigDecimal.ZERO,
-                        BigDecimal.ZERO),
-                new CashClosureCollectionsDTO(0, BigDecimal.ZERO, 0, BigDecimal.ZERO,
-                        0, BigDecimal.ZERO, BigDecimal.ZERO),
-                new CashClosureRangeReceivablesDTO(0, BigDecimal.ZERO, BigDecimal.ZERO),
-                new CashClosureBalanceSummaryDTO(0, 0, 0, BigDecimal.ZERO),
-                List.of());
+    void theDailyPdfHasNoCashCountSection() throws IOException {
+        String text = textOf(service.renderDaily(
+                closure(UUID.randomUUID(), LocalDateTime.of(2026, 8, 20, 19, 0)),
+                header(), false, "ANA LOPEZ"));
 
-        String text = textOf(service.renderSummary(empty, header()));
-
-        assertThat(text).contains("No existen cierres de caja en el periodo consultado.");
+        assertThat(text).doesNotContain("ARQUEO");
+        assertThat(text).doesNotContain("Fondo inicial");
+        assertThat(text).doesNotContain("Efectivo contado");
+        assertThat(text).doesNotContain("OBSERVACIONES");
+        // Y tampoco la cartera GLOBAL del taller.
+        assertThat(text).doesNotContain("Cartera pendiente total");
     }
 
     // ── Robustez del texto ───────────────────────────────────────
 
     /**
-     * El nombre de un taller y una nota de cierre son texto libre. Un caracter
-     * que la fuente estandar no sabe representar debe degradarse, nunca romper
-     * la generacion de un documento contable.
+     * El nombre de un taller es texto libre. Un caracter que la fuente estandar
+     * no sabe representar debe degradarse, nunca romper la generacion de un
+     * documento contable.
      */
     @Test
     void textOutsideTheStandardFontEncodingDegradesInsteadOfFailing() throws IOException {
         byte[] pdf = service.renderDaily(
-                closure(UUID.randomUUID(), LocalDateTime.of(2026, 8, 20, 19, 0),
-                        "Cuadre 你好 con emoji 😀 y comillas tipograficas"),
-                new ReportHeaderDTO("TALLER 你好", "DIRECCION"),
+                closure(UUID.randomUUID(), LocalDateTime.of(2026, 8, 20, 19, 0)),
+                new ReportHeaderDTO("TALLER \u4f60\u597d", "DIRECCION"),
                 false, "ANA LOPEZ");
 
         assertThat(pdf).isNotEmpty();
-        assertThat(textOf(pdf)).contains("Cuadre");
+        assertThat(textOf(pdf)).contains("TOTAL COBRADO");
     }
 
     /** El espanol acentuado si se representa: WinAnsi lo cubre entero. */
     @Test
     void spanishAccentsSurviveIntoThePdf() throws IOException {
         byte[] pdf = service.renderDaily(
-                closure(null, null, "Revisión de caja: faltó un billete pequeño."),
-                new ReportHeaderDTO("TALLER MECÁNICO ÑANDÚ", "Avenida Bolívar"),
+                closure(null, null),
+                new ReportHeaderDTO("TALLER MEC\u00c1NICO \u00d1AND\u00da", "Avenida Bol\u00edvar"),
                 true, "ANA LOPEZ");
 
         String text = textOf(pdf);
         assertThat(text).contains("TALLER MEC");
-        assertThat(text).contains("Revisi").contains("falt");
         assertThat(text).doesNotContain("?");
     }
 

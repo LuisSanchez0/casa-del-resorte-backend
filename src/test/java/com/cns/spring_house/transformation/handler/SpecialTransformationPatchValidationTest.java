@@ -31,6 +31,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 
+import com.cns.spring_house.acquisition.service.InventoryLotService;
 import com.cns.spring_house.family.entity.Attribute;
 import com.cns.spring_house.family.entity.AttributeDataType;
 import com.cns.spring_house.family.entity.Family;
@@ -82,6 +83,13 @@ class SpecialTransformationPatchValidationTest {
 
     @Mock
     private ObjectMapper objectMapper;
+
+    /**
+     * El libro de lotes: toda entrada o salida de stock deja ahora su lote. Se
+     * simula porque estas pruebas miden la transformacion, no el FIFO.
+     */
+    @Mock
+    private InventoryLotService lotService;
 
     @InjectMocks
     private SpecialTransformationHandler handler;

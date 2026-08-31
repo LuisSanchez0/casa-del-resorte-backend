@@ -23,6 +23,7 @@ import com.cns.spring_house.family.dto.CreateAttributeRequestDTO;
 import com.cns.spring_house.family.dto.CreateFamilyRequestDTO;
 import com.cns.spring_house.family.dto.UpdateAttributeRequestDTO;
 import com.cns.spring_house.family.dto.UpdateFamilyRequestDTO;
+import com.cns.spring_house.acquisition.entity.AcquisitionType;
 import com.cns.spring_house.inventory.dto.AddStockRequestDTO;
 import com.cns.spring_house.inventory.dto.CreateInventoryRequestDTO;
 import com.cns.spring_house.job.dto.CreateJobRequestDTO;
@@ -325,24 +326,37 @@ class ColumnLimitValidationTest {
         @Test
         void acceptsAModelNameAtTheLimit() {
             assertThat(invalidFields(new CreateModelRequestDTO(
-                    UUID.randomUUID(), text(ColumnLimits.MODEL_NAME), 2024))).isEmpty();
+                    UUID.randomUUID(), text(ColumnLimits.MODEL_NAME), 2024, 2024))).isEmpty();
         }
 
         @Test
         void rejectsAModelNameOneCharacterTooLong() {
             assertThat(invalidFields(new CreateModelRequestDTO(
-                    UUID.randomUUID(), text(ColumnLimits.MODEL_NAME + 1), 2024)))
+                    UUID.randomUUID(), text(ColumnLimits.MODEL_NAME + 1), 2024, 2024)))
                     .containsExactly("name");
         }
 
-        /** El CHECK de la columna arranca en 1900. */
+        /** El CHECK de la columna arranca en 1900, y acota los DOS extremos. */
         @Test
         void rejectsAYearBelowTheSchemaMinimum() {
             assertThat(invalidFields(new CreateModelRequestDTO(
-                    UUID.randomUUID(), "Corolla", ColumnLimits.MODEL_YEAR_MIN - 1)))
-                    .containsExactly("year");
+                    UUID.randomUUID(), "Corolla",
+                    ColumnLimits.MODEL_YEAR_MIN - 1, ColumnLimits.MODEL_YEAR_MIN)))
+                    .containsExactly("yearFrom");
             assertThat(invalidFields(new CreateModelRequestDTO(
-                    UUID.randomUUID(), "Corolla", ColumnLimits.MODEL_YEAR_MIN))).isEmpty();
+                    UUID.randomUUID(), "Corolla",
+                    ColumnLimits.MODEL_YEAR_MIN, ColumnLimits.MODEL_YEAR_MIN))).isEmpty();
+        }
+
+        /** Un intervalo sin extremos no es un modelo: los dos son obligatorios. */
+        @Test
+        void rejectsAMissingYearBound() {
+            assertThat(invalidFields(new CreateModelRequestDTO(
+                    UUID.randomUUID(), "Corolla", null, 2024)))
+                    .containsExactly("yearFrom");
+            assertThat(invalidFields(new CreateModelRequestDTO(
+                    UUID.randomUUID(), "Corolla", 2020, null)))
+                    .containsExactly("yearTo");
         }
     }
 
@@ -451,10 +465,37 @@ class ColumnLimitValidationTest {
         @Test
         void rejectsUnitsBeyondSmallint() {
             assertThat(invalidFields(new AddStockRequestDTO(
-                    ColumnLimits.SMALLINT_MAX + 1, null)))
+                    ColumnLimits.SMALLINT_MAX + 1, UUID.randomUUID(),
+                    AcquisitionType.NATIONAL, money("1.00"), null)))
                     .containsExactly("units");
             assertThat(invalidFields(new AddStockRequestDTO(
-                    ColumnLimits.SMALLINT_MAX, null))).isEmpty();
+                    ColumnLimits.SMALLINT_MAX, UUID.randomUUID(),
+                    AcquisitionType.NATIONAL, money("1.00"), null))).isEmpty();
+        }
+
+        /** El costo unitario respalda `NUMERIC(10,2)`, igual que el resto de importes. */
+        @Test
+        void rejectsAUnitCostOutsideTheMoneyColumn() {
+            assertThat(invalidFields(new AddStockRequestDTO(
+                    1, UUID.randomUUID(), AcquisitionType.NATIONAL,
+                    money("100000000.00"), null)))
+                    .containsExactly("unitCost");
+            assertThat(invalidFields(new AddStockRequestDTO(
+                    1, UUID.randomUUID(), AcquisitionType.NATIONAL,
+                    money("1.234"), null)))
+                    .containsExactly("unitCost");
+            assertThat(invalidFields(new AddStockRequestDTO(
+                    1, UUID.randomUUID(), AcquisitionType.NATIONAL,
+                    money("-0.01"), null)))
+                    .containsExactly("unitCost");
+        }
+
+        /** Costo cero es valido: una reposicion de garantia no cuesta nada. */
+        @Test
+        void keepsZeroAValidUnitCost() {
+            assertThat(invalidFields(new AddStockRequestDTO(
+                    1, UUID.randomUUID(), AcquisitionType.NATIONAL,
+                    BigDecimal.ZERO, null))).isEmpty();
         }
 
         /** Un precio de servicio en 0 es válido: no debe convertirse en error. */

@@ -11,6 +11,8 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Clock;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -32,6 +34,11 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtAut
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
+import com.cns.spring_house.acquisition.entity.AcquisitionOrigin;
+import com.cns.spring_house.acquisition.entity.InventoryAcquisition;
+import com.cns.spring_house.acquisition.repository.InventoryAcquisitionRepository;
+import com.cns.spring_house.acquisition.repository.SaleDetailCostAllocationRepository;
+import com.cns.spring_house.acquisition.service.InventoryLotService;
 import com.cns.spring_house.brand.entity.Brand;
 import com.cns.spring_house.family.entity.Attribute;
 import com.cns.spring_house.family.entity.AttributeDataType;
@@ -90,6 +97,12 @@ class SpecialTransformationOutputNameDatabaseTest {
 
     @Autowired
     private TestEntityManager entityManager;
+
+    @Autowired
+    private InventoryAcquisitionRepository acquisitionRepository;
+
+    @Autowired
+    private SaleDetailCostAllocationRepository allocationRepository;
 
     private SpecialTransformationHandler handler;
 
@@ -159,7 +172,14 @@ class SpecialTransformationOutputNameDatabaseTest {
                 inventoryRepository,
                 itemRepository,
                 workshopRepository,
-                new ObjectMapper());
+                new ObjectMapper(),
+                // Libro de lotes real: la pieza de entrada consume su lote y la
+                // resultante nace con uno de produccion. Es parte de lo que esta
+                // prueba comprueba contra PostgreSQL.
+                new InventoryLotService(
+                        acquisitionRepository,
+                        allocationRepository,
+                        Clock.systemDefaultZone()));
 
         workshop = entityManager.persistAndFlush(Workshop.builder()
                 .name("TALLER " + unique())
@@ -294,7 +314,8 @@ class SpecialTransformationOutputNameDatabaseTest {
         return entityManager.persistAndFlush(Model.builder()
                 .brand(brand)
                 .name("MODELO " + unique())
-                .year(2020)
+                .yearFrom(2020)
+                .yearTo(2020)
                 .build());
     }
 
@@ -331,6 +352,16 @@ class SpecialTransformationOutputNameDatabaseTest {
                 .status(InventoryItemStatus.AVAILABLE)
                 .build());
         inputInventory.addStock(1);
+        // Toda existencia necesita su lote: sin el, consumir la pieza de entrada
+        // se quedaria sin lote que descontar.
+        entityManager.persistAndFlush(InventoryAcquisition.builder()
+                .workshop(workshop)
+                .inventory(inputInventory)
+                .origin(AcquisitionOrigin.PRODUCTION)
+                .quantityReceived(1)
+                .quantityRemaining(1)
+                .acquiredAt(LocalDateTime.now())
+                .build());
         entityManager.flush();
         return item;
     }

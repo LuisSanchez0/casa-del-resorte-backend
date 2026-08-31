@@ -9,8 +9,10 @@ import com.cns.spring_house.model.entity.Model;
 
 public interface ModelRepository extends JpaRepository<Model, UUID>, JpaSpecificationExecutor<Model> { 
 
-    boolean existsByNameAndYearAndBrandId(String name, Integer year, UUID brand);
+    boolean existsByNameAndYearFromAndYearToAndBrandId(
+            String name, Integer yearFrom, Integer yearTo, UUID brand);
 
-    boolean existsByNameAndYearAndBrandIdAndIdNot(String name, Integer year, UUID brand, UUID id);
+    boolean existsByNameAndYearFromAndYearToAndBrandIdAndIdNot(
+            String name, Integer yearFrom, Integer yearTo, UUID brand, UUID id);
 
 }

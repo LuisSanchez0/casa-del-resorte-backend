@@ -1,5 +1,6 @@
 package com.cns.spring_house.product.service;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -21,6 +22,7 @@ import com.cns.spring_house.shared.exception.EntityNotFoundException;
 import com.cns.spring_house.shared.exception.ValidationException;
 import com.cns.spring_house.product.mapper.ProductMapper;
 import com.cns.spring_house.family.entity.Attribute;
+import com.cns.spring_house.family.entity.AttributeDataType;
 import com.cns.spring_house.family.entity.Family;
 import com.cns.spring_house.model.entity.Model;
 import com.cns.spring_house.product.entity.Product;
@@ -54,13 +56,19 @@ public class ProductServiceImpl implements ProductService {
     public List<ProductResponseDTO> getAll(SearchProductRequestDTO requestDTO) {
         List<Specification<Product>> specs = new ArrayList<>();
         specs.add(ProductSpecs.hasFamily(requestDTO.family()));
+        // Marca y modelo son criterios INDEPENDIENTES, no una secuencia: se
+        // puede buscar solo por marca (todas las piezas de sus modelos), solo
+        // por modelo, o por los dos a la vez. Cada uno se ignora solo cuando no
+        // viene, de modo que el orden en que la caja los ponga da igual.
+        specs.add(ProductSpecs.hasBrand(requestDTO.brand()));
         specs.add(ProductSpecs.hasModel(requestDTO.model()));
         specs.add(
                 Specification.anyOf(
                         ProductSpecs.skuContains(requestDTO.q()),
                         ProductSpecs.nameContains(requestDTO.q())));
         if (requestDTO.attributes() != null) {
-            specs.addAll(buildSpecsByAttribute(requestDTO.attributes()));
+            specs.addAll(buildSpecsByAttribute(
+                    requestDTO.attributes(), requestDTO.family()));
         }
         Specification<Product> finalSpec = Specification.allOf(specs);
         return repository.findAll(finalSpec)
@@ -172,11 +180,65 @@ public class ProductServiceImpl implements ProductService {
         }
     }
 
-    private List<Specification<Product>> buildSpecsByAttribute(Map<String, Object> attributes) {
+    /**
+     * Un filtro por caracteristica, comparado como lo que la familia dice que
+     * ES.
+     *
+     * El tipo importa porque el JSONB no serializa los numeros de forma
+     * uniforme: la misma medida esta guardada como `15.0` en unas piezas y como
+     * `200` en otras, segun por que camino se dieron de alta. Comparando texto,
+     * buscar largo=15 no encontraba la hoja de largo 15; comparando numeros,
+     * `15.0 = 15` es cierto y el filtro significa lo que aparenta.
+     *
+     * La conversion a numero se aplica UNICAMENTE a los atributos que la familia
+     * declara NUMBER, y ahi es segura porque {@link #validateAttributes} impide
+     * guardar otra cosa. Sin familia en la busqueda no hay nada que consultar
+     * sobre los tipos, asi que se compara como texto: es el comportamiento de
+     * siempre y no puede hacer fallar la consulta.
+     */
+    private List<Specification<Product>> buildSpecsByAttribute(
+            Map<String, Object> attributes, UUID familyId) {
+
+        Map<String, AttributeDataType> declared = declaredTypes(familyId);
+
         return attributes.entrySet()
                 .stream()
-                .map(entry -> ProductSpecs.hasAttribute(entry.getKey(), entry.getValue()))
+                .map(entry -> {
+                    BigDecimal number = declared.get(entry.getKey()) == AttributeDataType.NUMBER
+                            ? parseNumber(entry.getValue())
+                            : null;
+
+                    return number == null
+                            ? ProductSpecs.hasAttribute(entry.getKey(), entry.getValue())
+                            : ProductSpecs.hasNumericAttribute(entry.getKey(), number);
+                })
                 .toList();
+    }
+
+    /** Tipos declarados por la familia, o vacio cuando la busqueda no la acota. */
+    private Map<String, AttributeDataType> declaredTypes(UUID familyId) {
+        if (familyId == null) {
+            return Map.of();
+        }
+
+        return familyRepository.findById(familyId)
+                .map(Family::getAttributes)
+                .orElseGet(List::of)
+                .stream()
+                .collect(Collectors.toMap(
+                        Attribute::getName, Attribute::getDataType));
+    }
+
+    /** El valor como numero, o null si el texto recibido no lo es. */
+    private static BigDecimal parseNumber(Object value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return new BigDecimal(String.valueOf(value).trim());
+        } catch (NumberFormatException exception) {
+            return null;
+        }
     }
 
 }

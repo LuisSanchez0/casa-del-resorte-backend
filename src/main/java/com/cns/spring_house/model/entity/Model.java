@@ -39,6 +39,12 @@ public class Model extends Auditable {
     private Brand brand;
     @Column(length = ColumnLimits.MODEL_NAME)
     private String name;
-    private Integer year;
+    /**
+     * Intervalo cerrado de años a los que aplica el modelo. Un modelo de un
+     * solo año no es un caso aparte: es el intervalo con los dos extremos
+     * iguales, y la cadena "2020-2025" solo existe en la presentación.
+     */
+    private Integer yearFrom;
+    private Integer yearTo;
 
 }

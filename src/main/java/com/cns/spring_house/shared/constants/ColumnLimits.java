@@ -43,6 +43,13 @@ public final class ColumnLimits {
     public static final int CUSTOMER_NIT = 13;
     public static final int CUSTOMER_NAME = 75;
 
+    /**
+     * Nombre de proveedor. Mismo tope que {@link #PRODUCT_NAME}: es el otro
+     * nombre comercial largo del esquema, y una razon social cabe de sobra en
+     * cien caracteres.
+     */
+    public static final int SUPPLIER_NAME = 100;
+
     public static final int PLATE = 10;
 
     /**

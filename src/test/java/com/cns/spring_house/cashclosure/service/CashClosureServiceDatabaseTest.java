@@ -50,8 +50,9 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import com.cns.spring_house.cashclosure.dto.CashClosureResponseDTO;
-import com.cns.spring_house.cashclosure.dto.CashClosureSummaryResponseDTO;
-import com.cns.spring_house.cashclosure.dto.CreateCashClosureRequestDTO;
+import com.cns.spring_house.cashclosure.dto.CashClosureMonthStatus;
+import com.cns.spring_house.cashclosure.dto.CashClosureMonthlyResponseDTO;
+import com.cns.spring_house.cashclosure.dto.ClosurePaymentMethodDTO;
 import com.cns.spring_house.cashclosure.repository.CashClosureRepository;
 import com.cns.spring_house.customer.entity.Customer;
 import com.cns.spring_house.customer.repository.CustomerRepository;
@@ -72,6 +73,8 @@ import com.cns.spring_house.sale.dto.AddSaleDetailRequestDTO;
 import com.cns.spring_house.sale.dto.CompleteSaleRequestDTO;
 import com.cns.spring_house.sale.dto.CreateSaleRequestDTO;
 import com.cns.spring_house.sale.dto.RegisterPaymentRequestDTO;
+import com.cns.spring_house.sale.dto.RefundRequestDTO;
+import com.cns.spring_house.sale.dto.ReverseSaleRequestDTO;
 import com.cns.spring_house.sale.dto.SaleResponseDTO;
 import com.cns.spring_house.sale.entity.InvoiceType;
 import com.cns.spring_house.sale.entity.PaymentMethod;
@@ -117,6 +120,8 @@ class CashClosureServiceDatabaseTest {
     private static final LocalDate DAY_TWO = LocalDate.of(2026, 8, 2);
     private static final LocalDate DAY_THREE = LocalDate.of(2026, 8, 3);
     private static final LocalDate DAY_TEN = LocalDate.of(2026, 8, 10);
+    /** Septiembre: el mes SIGUIENTE, para las devoluciones a caballo de dos meses. */
+    private static final LocalDate NEXT_MONTH_DAY = LocalDate.of(2026, 9, 2);
 
     /**
      * Reloj que la prueba puede mover. Sustituye al del sistema para TODO el
@@ -371,274 +376,68 @@ class CashClosureServiceDatabaseTest {
         saleRepository.save(sale);
     }
 
-    private CreateCashClosureRequestDTO arqueo(String opening, String counted) {
-        return new CreateCashClosureRequestDTO(
-                new BigDecimal(opening), new BigDecimal(counted), null);
+    /** Lo cobrado en efectivo dentro de un cierre, leido del desglose. */
+    private static BigDecimal cashOf(CashClosureResponseDTO closure) {
+        return closure.collections().methods().stream()
+                .filter(method -> method.method() == PaymentMethod.CASH)
+                .findFirst()
+                .map(ClosurePaymentMethodDTO::amount)
+                .orElseThrow();
     }
 
-    private CashClosureResponseDTO closeOn(LocalDate day, String opening, String counted) {
+    /**
+     * Cierra la caja de un dia. No recibe cifras: el cierre las calcula todas
+     * contra la base, que es justo lo que hace imposible confirmarlo con
+     * numeros inventados.
+     */
+    /** Revierte la venta devolviendo dinero, con el motivo de siempre. */
+    private void refund(Sale sale, String amount, PaymentMethod method) {
+        saleService.reverse(sale.getId(), new ReverseSaleRequestDTO(
+                "Devolucion al cliente",
+                new RefundRequestDTO(new BigDecimal(amount), method)));
+    }
+
+    /** Lo devuelto por una forma concreta dentro de un mes. */
+    private static BigDecimal monthRefundOf(
+            CashClosureMonthlyResponseDTO month, PaymentMethod method) {
+        return month.refunds().methods().stream()
+                .filter(row -> row.method() == method)
+                .findFirst()
+                .map(com.cns.spring_house.cashclosure.dto.ClosureRefundMethodDTO::amount)
+                .orElseThrow();
+    }
+
+    /** Lo devuelto por una forma concreta dentro de un cierre. */
+    private static BigDecimal refundOf(
+            CashClosureResponseDTO closure, PaymentMethod method) {
+        return closure.refunds().methods().stream()
+                .filter(row -> row.method() == method)
+                .findFirst()
+                .map(com.cns.spring_house.cashclosure.dto.ClosureRefundMethodDTO::amount)
+                .orElseThrow();
+    }
+
+    private CashClosureResponseDTO closeOn(LocalDate day) {
         clock.moveTo(day);
-        return service.close(arqueo(opening, counted));
+        return service.close();
     }
 
     // ── Snapshot inmutable ───────────────────────────────────────
 
-    /**
-     * Lo que define al snapshot: despues de cerrar, los datos de origen pueden
-     * cambiar —se cobra una cambiaria, se emite otra factura— y el documento
-     * historico sigue diciendo exactamente lo que se confirmo.
-     */
-    @Test
-    void aConfirmedClosureKeepsItsFiguresWhenTheSourceSalesChangeAfterwards() {
-        Workshop workshop = authenticatedWorkshop();
-        clock.moveTo(DAY_ONE);
 
-        invoice(workshop, DAY_ONE, PaymentMethod.CASH, "1000.00");
-        Sale pending = pendingExchangeInvoice(workshop, DAY_ONE, "5000.00");
-
-        CashClosureResponseDTO closed = service.close(arqueo("500.00", "1500.00"));
-        UUID closureId = closed.id();
-
-        assertThat(closed.invoicing().totalInvoiced()).isEqualByComparingTo("6000.00");
-        assertThat(closed.collections().totalCollected()).isEqualByComparingTo("1000.00");
-        assertThat(closed.receivables().pendingAmount()).isEqualByComparingTo("5000.00");
-        assertThat(closed.cashReconciliation().difference()).isEqualByComparingTo("0.00");
-
-        // El mundo sigue: se cobra la cambiaria y se factura mas ese mismo dia.
-        collect(pending, DAY_ONE, PaymentMethod.TRANSFER);
-        invoice(workshop, DAY_ONE, PaymentMethod.CASH, "9999.00");
-
-        CashClosureResponseDTO reread = service.get(closureId);
-
-        assertThat(reread.invoicing().totalInvoiced()).isEqualByComparingTo("6000.00");
-        assertThat(reread.collections().totalCollected()).isEqualByComparingTo("1000.00");
-        assertThat(reread.receivables().pendingAmount()).isEqualByComparingTo("5000.00");
-        assertThat(reread.cashReconciliation().expectedCash()).isEqualByComparingTo("1500.00");
-        assertThat(reread.closedAt()).isNotNull();
-        assertThat(reread.closedBy()).isEqualTo("ANA LOPEZ");
-    }
-
-    @Test
-    void theSnapshotIsAlsoWhatByDateAndTheRangeReturn() {
-        Workshop workshop = authenticatedWorkshop();
-        clock.moveTo(DAY_ONE);
-        invoice(workshop, DAY_ONE, PaymentMethod.CASH, "1000.00");
-        UUID closureId = service.close(arqueo("0.00", "1000.00")).id();
-
-        invoice(workshop, DAY_ONE, PaymentMethod.CASH, "5000.00");
-
-        assertThat(service.getByDate(DAY_ONE).id()).isEqualTo(closureId);
-        assertThat(service.getByDate(DAY_ONE).invoicing().totalInvoiced())
-                .isEqualByComparingTo("1000.00");
-        assertThat(service.getRange(DAY_ONE, DAY_ONE))
-                .singleElement()
-                .satisfies(closure -> assertThat(closure.collections().totalCollected())
-                        .isEqualByComparingTo("1000.00"));
-    }
 
     // ── Un cierre por taller y dia ───────────────────────────────
 
-    @Test
-    void theSameWorkshopCannotCloseTheSameDayTwice() {
-        Workshop workshop = authenticatedWorkshop();
-        clock.moveTo(DAY_ONE);
-        invoice(workshop, DAY_ONE, PaymentMethod.CASH, "1000.00");
 
-        service.close(arqueo("0.00", "1000.00"));
 
-        assertThatThrownBy(() -> service.close(arqueo("0.00", "1000.00")))
-                .isInstanceOf(ValidationException.class)
-                .hasMessageContaining("ya fue cerrada");
-
-        assertThat(repository.findByWorkshopIdAndBusinessDateBetweenOrderByBusinessDateDescIdDesc(
-                workshop.getId(), DAY_ONE, DAY_ONE)).hasSize(1);
-    }
-
-    /**
-     * La comprobacion del servicio da un mensaje entendible, pero la garantia
-     * real es del esquema: insertando por debajo del servicio, la restriccion
-     * UNIQUE sigue impidiendo el segundo snapshot.
-     */
-    @Test
-    void theUniqueConstraintStopsASecondSnapshotEvenBypassingTheService() {
-        Workshop workshop = authenticatedWorkshop();
-        clock.moveTo(DAY_ONE);
-        service.close(arqueo("0.00", "0.00"));
-
-        var duplicate = com.cns.spring_house.cashclosure.entity.CashClosure.builder()
-                .workshop(workshop)
-                .closedBy(employee(workshop))
-                .businessDate(DAY_ONE)
-                .openingCash(BigDecimal.ZERO)
-                .invoiceCount(0).invoiceTotal(BigDecimal.ZERO)
-                .exchangeInvoiceCount(0).exchangeInvoiceTotal(BigDecimal.ZERO)
-                .totalInvoiced(BigDecimal.ZERO)
-                .cashPaymentCount(0).cashPayments(BigDecimal.ZERO)
-                .cardPaymentCount(0).cardPayments(BigDecimal.ZERO)
-                .transferPaymentCount(0).transferPayments(BigDecimal.ZERO)
-                .totalCollected(BigDecimal.ZERO)
-                .exchangeCollectedCount(0).exchangeCollectedAmount(BigDecimal.ZERO)
-                .previousExchangeCollectedAmount(BigDecimal.ZERO)
-                .pendingExchangeAmount(BigDecimal.ZERO)
-                .expectedCash(BigDecimal.ZERO).countedCash(BigDecimal.ZERO)
-                .difference(BigDecimal.ZERO)
-                .build();
-
-        assertThatThrownBy(() -> repository.saveAndFlush(duplicate))
-                .isInstanceOf(DataIntegrityViolationException.class);
-    }
-
-    @Test
-    void twoWorkshopsCanCloseTheSameDateIndependently() {
-        Workshop workshopA = authenticatedWorkshop();
-        clock.moveTo(DAY_ONE);
-        invoice(workshopA, DAY_ONE, PaymentMethod.CASH, "1000.00");
-        CashClosureResponseDTO closureA = service.close(arqueo("0.00", "1000.00"));
-
-        Workshop workshopB = authenticatedWorkshop();
-        invoice(workshopB, DAY_ONE, PaymentMethod.CASH, "2000.00");
-        CashClosureResponseDTO closureB = service.close(arqueo("0.00", "2000.00"));
-
-        assertThat(closureA.id()).isNotEqualTo(closureB.id());
-        assertThat(closureA.collections().cashAmount()).isEqualByComparingTo("1000.00");
-        assertThat(closureB.collections().cashAmount()).isEqualByComparingTo("2000.00");
-
-        // Y ninguno ve nada del otro.
-        authenticateAgainst(workshopA);
-        assertThat(service.getByDate(DAY_ONE).id()).isEqualTo(closureA.id());
-        assertThatThrownBy(() -> service.get(closureB.id()))
-                .isInstanceOf(com.cns.spring_house.shared.exception.EntityNotFoundException.class);
-    }
 
     // ── Rango ────────────────────────────────────────────────────
 
-    @Test
-    void theRangeIncludesExactlyTheClosuresBetweenBothEndsInclusive() {
-        Workshop workshop = authenticatedWorkshop();
-        closeOn(DAY_ONE, "0.00", "0.00");
-        closeOn(DAY_TWO, "0.00", "0.00");
-        closeOn(DAY_THREE, "0.00", "0.00");
-        closeOn(DAY_TEN, "0.00", "0.00");
 
-        List<CashClosureResponseDTO> range = service.getRange(DAY_ONE, DAY_THREE);
 
-        assertThat(range).hasSize(3);
-        assertThat(range).extracting(CashClosureResponseDTO::businessDate)
-                .containsExactly(DAY_THREE, DAY_TWO, DAY_ONE);
-        assertThat(service.getSummary(DAY_ONE, DAY_THREE).closureCount()).isEqualTo(3);
-        assertThat(workshop.getId()).isNotNull();
-    }
 
-    /**
-     * Un rango de 31 dias con 25 cierres reporta 25, no 31: los seis dias sin
-     * cerrar no se inventan como jornadas en cero, porque no consta que nadie
-     * cuadrara la caja.
-     */
-    @Test
-    void daysWithoutAClosureAreNotInventedAsZeroDays() {
-        authenticatedWorkshop();
-        closeOn(DAY_ONE, "0.00", "0.00");
-        closeOn(DAY_THREE, "0.00", "0.00");
 
-        CashClosureSummaryResponseDTO summary =
-                service.getSummary(DAY_ONE, LocalDate.of(2026, 8, 31));
 
-        assertThat(summary.closureCount()).isEqualTo(2);
-        assertThat(summary.days()).hasSize(2);
-        // El detalle del periodo se lee en orden cronologico, al reves que el
-        // listado de cierres.
-        assertThat(summary.days()).extracting(day -> day.businessDate())
-                .containsExactly(DAY_ONE, DAY_THREE);
-    }
-
-    /**
-     * El caso que hace falso cualquier resumen mal hecho: tres dias con Q20,000,
-     * Q18,000 y Q25,000 pendientes NO son Q63,000 de cartera. Es Q25,000, el
-     * saldo del ultimo cierre.
-     */
-    @Test
-    void theEndingPortfolioIsTheLastClosureBalanceAndNotTheSumOfTheDailyOnes() {
-        Workshop workshop = authenticatedWorkshop();
-
-        Sale big = pendingExchangeInvoice(workshop, DAY_ONE, "18000.00");
-        Sale small = pendingExchangeInvoice(workshop, DAY_ONE, "2000.00");
-        closeOn(DAY_ONE, "100.00", "100.00");
-
-        collect(small, DAY_TWO, PaymentMethod.CARD);
-        closeOn(DAY_TWO, "100.00", "80.00");
-
-        pendingExchangeInvoice(workshop, DAY_THREE, "7000.00");
-        closeOn(DAY_THREE, "100.00", "105.00");
-
-        assertThat(service.getByDate(DAY_ONE).receivables().pendingAmount())
-                .isEqualByComparingTo("20000.00");
-        assertThat(service.getByDate(DAY_TWO).receivables().pendingAmount())
-                .isEqualByComparingTo("18000.00");
-        assertThat(service.getByDate(DAY_THREE).receivables().pendingAmount())
-                .isEqualByComparingTo("25000.00");
-
-        CashClosureSummaryResponseDTO summary = service.getSummary(DAY_ONE, DAY_THREE);
-
-        assertThat(summary.receivables().endingPendingAmount())
-                .isEqualByComparingTo("25000.00");
-        assertThat(big.getId()).isNotNull();
-    }
-
-    /** Cuadres del rango: uno cuadrado, uno con faltante y uno con sobrante. */
-    @Test
-    void theRangeCountsBalancesAndAddsUpTheNetDifference() {
-        authenticatedWorkshop();
-        closeOn(DAY_ONE, "100.00", "100.00");
-        closeOn(DAY_TWO, "100.00", "80.00");
-        closeOn(DAY_THREE, "100.00", "105.00");
-
-        CashClosureSummaryResponseDTO summary = service.getSummary(DAY_ONE, DAY_THREE);
-
-        assertThat(summary.balance().balancedClosures()).isEqualTo(1);
-        assertThat(summary.balance().shortClosures()).isEqualTo(1);
-        assertThat(summary.balance().overClosures()).isEqualTo(1);
-        assertThat(summary.balance().netCashDifference()).isEqualByComparingTo("-15.00");
-    }
-
-    /** El resumen mensual es este mismo rango con los extremos del mes. */
-    @Test
-    void aMonthlySummaryIsJustARangeOverTheMonthEnds() {
-        Workshop workshop = authenticatedWorkshop();
-        clock.moveTo(DAY_ONE);
-        invoice(workshop, DAY_ONE, PaymentMethod.CASH, "1000.00");
-        service.close(arqueo("0.00", "1000.00"));
-
-        clock.moveTo(DAY_TEN);
-        invoice(workshop, DAY_TEN, PaymentMethod.CARD, "2000.00");
-        service.close(arqueo("0.00", "0.00"));
-
-        CashClosureSummaryResponseDTO month = service.getSummary(
-                LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 31));
-
-        assertThat(month.closureCount()).isEqualTo(2);
-        assertThat(month.invoicing().totalInvoiced()).isEqualByComparingTo("3000.00");
-        assertThat(month.collections().cashAmount()).isEqualByComparingTo("1000.00");
-        assertThat(month.collections().cardAmount()).isEqualByComparingTo("2000.00");
-        assertThat(month.collections().totalCollected()).isEqualByComparingTo("3000.00");
-    }
-
-    @Test
-    void theRangeSummaryOfOneWorkshopNeverIncludesAnother() {
-        Workshop workshopA = authenticatedWorkshop();
-        clock.moveTo(DAY_ONE);
-        invoice(workshopA, DAY_ONE, PaymentMethod.CASH, "1000.00");
-        service.close(arqueo("0.00", "1000.00"));
-
-        Workshop workshopB = authenticatedWorkshop();
-        invoice(workshopB, DAY_ONE, PaymentMethod.CASH, "8888.00");
-        service.close(arqueo("0.00", "8888.00"));
-
-        authenticateAgainst(workshopA);
-        CashClosureSummaryResponseDTO summary = service.getSummary(DAY_ONE, DAY_THREE);
-
-        assertThat(summary.closureCount()).isEqualTo(1);
-        assertThat(summary.collections().cashAmount()).isEqualByComparingTo("1000.00");
-    }
 
     // ── Bloqueo de ventas ────────────────────────────────────────
 
@@ -659,7 +458,7 @@ class CashClosureServiceDatabaseTest {
         Customer client = customer();
         long before = saleRepository.count();
 
-        service.close(arqueo("0.00", "0.00"));
+        service.close();
 
         assertThatThrownBy(() -> saleService.create(
                 new CreateSaleRequestDTO(client.getId(), null)))
@@ -675,7 +474,7 @@ class CashClosureServiceDatabaseTest {
     @Test
     void theClosureOfOneWorkshopDoesNotBlockSalesInAnother() {
         authenticatedWorkshop();
-        service.close(arqueo("0.00", "0.00"));
+        service.close();
 
         Workshop open = authenticatedWorkshop();
         Customer client = customer();
@@ -693,7 +492,7 @@ class CashClosureServiceDatabaseTest {
         Customer client = customer();
 
         clock.moveTo(DAY_ONE);
-        service.close(arqueo("0.00", "0.00"));
+        service.close();
 
         assertThatThrownBy(() -> saleService.create(
                 new CreateSaleRequestDTO(client.getId(), null)))
@@ -705,22 +504,6 @@ class CashClosureServiceDatabaseTest {
         assertThat(sale.id()).isNotNull();
     }
 
-    /** Ni la previsualizacion ni su PDF cierran ni bloquean nada. */
-    @Test
-    void previewingAndExportingTheDraftNeitherClosesTheRegisterNorBlocksSales() {
-        Workshop workshop = authenticatedWorkshop();
-        Customer client = customer();
-
-        service.getPreview();
-        service.preview(arqueo("500.00", "500.00"));
-        byte[] draft = service.previewDocument(arqueo("500.00", "500.00")).content();
-
-        assertThat(draft).isNotEmpty();
-        assertThat(repository.findByWorkshopIdAndBusinessDate(
-                workshop.getId(), LocalDate.now(clock))).isEmpty();
-        assertThat(saleService.create(new CreateSaleRequestDTO(client.getId(), null)).id())
-                .isNotNull();
-    }
 
 
     // ── Fixtures de venta facturable ─────────────────────────────
@@ -834,7 +617,7 @@ class CashClosureServiceDatabaseTest {
         Workshop workshop = authenticatedWorkshop();
         PendingSale pending = pendingSaleWithWork(workshop);
 
-        service.close(arqueo("0.00", "0.00"));
+        service.close();
 
         assertThatThrownBy(() -> saleService.completeSale(pending.id(), invoiceCash()))
                 .isInstanceOf(ValidationException.class)
@@ -885,7 +668,7 @@ class CashClosureServiceDatabaseTest {
         LocalDate today = LocalDate.now(clock);
         Sale exchange = pendingExchangeInvoice(workshop, today, "10000.00");
 
-        service.close(arqueo("0.00", "0.00"));
+        service.close();
 
         assertThatThrownBy(() -> saleService.registerPayment(
                 exchange.getId(), new RegisterPaymentRequestDTO(PaymentMethod.TRANSFER)))
@@ -920,7 +703,7 @@ class CashClosureServiceDatabaseTest {
     @Test
     void theClosureOfOneWorkshopBlocksNeitherInvoicingNorCollectingInAnother() {
         authenticatedWorkshop();
-        service.close(arqueo("0.00", "0.00"));
+        service.close();
 
         Workshop open = authenticatedWorkshop();
         PendingSale pending = pendingSaleWithWork(open);
@@ -944,7 +727,7 @@ class CashClosureServiceDatabaseTest {
         clock.moveTo(DAY_ONE);
         PendingSale pending = pendingSaleWithWork(workshop);
         Sale exchange = pendingExchangeInvoice(workshop, DAY_ONE, "800.00");
-        service.close(arqueo("0.00", "0.00"));
+        service.close();
 
         clock.moveTo(DAY_TWO);
         assertThat(saleService.create(new CreateSaleRequestDTO(client.getId(), null)).id())
@@ -969,7 +752,7 @@ class CashClosureServiceDatabaseTest {
         LocalDate nextDay = closedDay.plusDays(1);
 
         clock.moveTo(closedDay.atTime(23, 59, 59));
-        service.close(arqueo("0.00", "0.00"));
+        service.close();
         PendingSale pending = pendingSaleWithWork(workshop);
 
         // Ultimo segundo del dia cerrado: rechazado.
@@ -1008,7 +791,7 @@ class CashClosureServiceDatabaseTest {
 
         Throwable failure = raceAgainstHeldTransaction(
                 account, workshop,
-                () -> service.close(arqueo("0.00", "0.00")),
+                () -> service.close(),
                 () -> saleService.create(new CreateSaleRequestDTO(client.getId(), null)));
 
         assertThat(failure).isInstanceOf(ValidationException.class);
@@ -1099,7 +882,7 @@ class CashClosureServiceDatabaseTest {
 
         Throwable failure = raceAgainstHeldTransaction(
                 account, workshop,
-                () -> service.close(arqueo("0.00", "0.00")),
+                () -> service.close(),
                 () -> saleService.completeSale(pending.id(), invoiceCash()));
 
         assertThat(failure).isInstanceOf(ValidationException.class);
@@ -1127,7 +910,7 @@ class CashClosureServiceDatabaseTest {
         Throwable failure = raceAgainstHeldTransaction(
                 account, workshop,
                 () -> saleService.completeSale(pending.id(), invoiceCash()),
-                () -> service.close(arqueo("0.00", pending.total().toPlainString())));
+                () -> service.close());
 
         assertThat(failure).as("el cierre debe poder confirmarse").isNull();
         assertThat(reload(pending.id()).getStatus()).isEqualTo(SaleStatus.COMPLETED);
@@ -1135,12 +918,11 @@ class CashClosureServiceDatabaseTest {
         CashClosureResponseDTO snapshot = service.getByDate(LocalDate.now(clock));
         assertThat(snapshot.invoicing().totalInvoiced())
                 .isEqualByComparingTo(pending.total());
-        assertThat(snapshot.collections().cashAmount())
+        // Y el dinero aparece donde debe: en el desglose por forma de pago, que
+        // suma exactamente el total cobrado.
+        assertThat(cashOf(snapshot)).isEqualByComparingTo(pending.total());
+        assertThat(snapshot.collections().totalCollected())
                 .isEqualByComparingTo(pending.total());
-        assertThat(snapshot.cashReconciliation().expectedCash())
-                .isEqualByComparingTo(pending.total());
-        assertThat(snapshot.cashReconciliation().difference())
-                .isEqualByComparingTo("0.00");
     }
 
     // ── Carrera: cierre contra cobrar una cambiaria ──────────────
@@ -1156,7 +938,7 @@ class CashClosureServiceDatabaseTest {
 
         Throwable failure = raceAgainstHeldTransaction(
                 account, workshop,
-                () -> service.close(arqueo("0.00", "0.00")),
+                () -> service.close(),
                 () -> saleService.registerPayment(
                         exchange.getId(),
                         new RegisterPaymentRequestDTO(PaymentMethod.CASH)));
@@ -1170,17 +952,19 @@ class CashClosureServiceDatabaseTest {
 
         CashClosureResponseDTO snapshot = service.getByDate(LocalDate.now(clock));
         assertThat(snapshot.collections().totalCollected()).isEqualByComparingTo("0.00");
-        assertThat(snapshot.receivables().pendingAmount()).isEqualByComparingTo("10000.00");
+        // La cambiaria sigue emitida y sin cobrar dentro del propio periodo.
+        assertThat(snapshot.exchange().issuedPendingAmount())
+                .isEqualByComparingTo("10000.00");
     }
 
     /**
      * Gana el COBRO. Se cobra EN EFECTIVO a proposito: asi el snapshot no solo
-     * tiene que incluirlo en `totalCollected`, sino tambien en `cashPayments`,
-     * en `expectedCash` y por tanto en la diferencia del arqueo. Si el cierre no
-     * viera el cobro, la caja saldria con Q10,000 de sobrante.
+     * tiene que incluirlo en el total cobrado, sino tambien en la fila de
+     * efectivo del desglose. Si el cierre no viera el cobro, el dia quedaria
+     * archivado con Q10,000 menos de los que de verdad entraron.
      */
     @Test
-    void whenACashCollectionWinsTheLockItReachesTheArqueoOfTheSnapshot()
+    void whenACashCollectionWinsTheLockItReachesTheSnapshot()
             throws Exception {
         Workshop workshop = authenticatedWorkshop();
         UserAccount account = accounts.get(workshop.getId());
@@ -1192,20 +976,19 @@ class CashClosureServiceDatabaseTest {
                 () -> saleService.registerPayment(
                         exchange.getId(),
                         new RegisterPaymentRequestDTO(PaymentMethod.CASH)),
-                () -> service.close(arqueo("500.00", "10500.00")));
+                () -> service.close());
 
         assertThat(failure).as("el cierre debe poder confirmarse").isNull();
 
         CashClosureResponseDTO snapshot = service.getByDate(LocalDate.now(clock));
-        assertThat(snapshot.collections().cashAmount()).isEqualByComparingTo("10000.00");
         assertThat(snapshot.collections().totalCollected())
                 .isEqualByComparingTo("10000.00");
-        assertThat(snapshot.receivables().collectedAmount())
+        assertThat(cashOf(snapshot)).isEqualByComparingTo("10000.00");
+        // La cambiaria figura como cobrada en el periodo...
+        assertThat(snapshot.exchange().collectedAmount())
                 .isEqualByComparingTo("10000.00");
-        assertThat(snapshot.receivables().pendingAmount()).isEqualByComparingTo("0.00");
-        assertThat(snapshot.cashReconciliation().expectedCash())
-                .isEqualByComparingTo("10500.00");
-        assertThat(snapshot.cashReconciliation().difference())
+        // ...y ya no queda nada pendiente de lo emitido ese dia.
+        assertThat(snapshot.exchange().issuedPendingAmount())
                 .isEqualByComparingTo("0.00");
     }
 
@@ -1307,6 +1090,177 @@ class CashClosureServiceDatabaseTest {
         assertThat(stored.getPaidAt()).isEqualTo(winnerMoment);
     }
 
+    // ── Devolucion contra cierre: la carrera ─────────────────────
+    //
+    // Devolver dinero mueve la caja, asi que compite por el MISMO cerrojo de
+    // taller/fecha que cobrar y que cerrar. No se introduce un segundo orden de
+    // bloqueo: reutilizar el que ya existe es lo que garantiza que no haya
+    // interbloqueo entre cobrar, devolver y cerrar.
+
+    /**
+     * Si el cierre gana la carrera, la devolucion se rechaza ENTERA.
+     *
+     * Lo que importa no es solo que falle, sino que no deje rastro: la venta
+     * sigue COMPLETED y el stock sin restaurar. Una devolucion rechazada que
+     * hubiera revertido la venta seria el peor resultado posible.
+     */
+    @Test
+    void whenTheClosureWinsTheLockTheRefundIsRejectedAndNothingIsMutated()
+            throws Exception {
+        Workshop workshop = authenticatedWorkshop();
+        UserAccount account = accounts.get(workshop.getId());
+
+        // El cobro vive en un dia ya cerrado; hoy solo se devuelve.
+        Sale sale = invoice(workshop, DAY_ONE, PaymentMethod.CASH, "1000.00");
+        closeOn(DAY_ONE);
+        clock.moveTo(DAY_THREE);
+
+        Throwable failure = raceAgainstHeldTransaction(
+                account, workshop,
+                service::close,
+                () -> saleService.reverse(sale.getId(), new ReverseSaleRequestDTO(
+                        "Devolucion tardia",
+                        new RefundRequestDTO(new BigDecimal("1000.00"), PaymentMethod.CASH))));
+
+        assertThat(failure)
+                .as("la devolucion no puede entrar en un dia ya cerrado")
+                .isInstanceOf(ValidationException.class);
+
+        Sale stored = reload(sale.getId());
+        assertThat(stored.getStatus()).isEqualTo(SaleStatus.COMPLETED);
+
+        CashClosureResponseDTO snapshot = service.getByDate(DAY_THREE);
+        assertThat(snapshot.refunds().totalRefunded()).isEqualByComparingTo("0.00");
+        assertThat(snapshot.netPeriod())
+                .isEqualByComparingTo(snapshot.collections().totalCollected());
+    }
+
+    /**
+     * Si la devolucion gana, entra en el snapshot que se confirma despues.
+     *
+     * El invariante de las dos pruebas juntas: la devolucion esta DENTRO del
+     * cierre o no ocurrio. Nunca fuera de el.
+     */
+    @Test
+    void whenARefundWinsTheLockItReachesTheSnapshot() throws Exception {
+        Workshop workshop = authenticatedWorkshop();
+        UserAccount account = accounts.get(workshop.getId());
+
+        Sale sale = invoice(workshop, DAY_ONE, PaymentMethod.CASH, "1000.00");
+        closeOn(DAY_ONE);
+        clock.moveTo(DAY_THREE);
+
+        Throwable failure = raceAgainstHeldTransaction(
+                account, workshop,
+                () -> saleService.reverse(sale.getId(), new ReverseSaleRequestDTO(
+                        "Devolucion",
+                        new RefundRequestDTO(new BigDecimal("400.00"), PaymentMethod.CASH))),
+                () -> service.close());
+
+        assertThat(failure).as("el cierre posterior debe poder confirmarse").isNull();
+
+        CashClosureResponseDTO snapshot = service.getByDate(DAY_THREE);
+        assertThat(snapshot.refunds().totalRefunded()).isEqualByComparingTo("400.00");
+        assertThat(snapshot.netPeriod()).isEqualByComparingTo("-400.00");
+    }
+
+    /**
+     * Dos devoluciones simultaneas de la misma venta: una sola sobrevive.
+     *
+     * Es lo que impide devolver dos veces lo mismo por un doble clic o un
+     * reintento. La segunda, ya serializada por el cerrojo del dia, lee la
+     * venta REVERTIDA y responde un error de negocio legible en vez de chocar
+     * contra un indice unico.
+     */
+    @Test
+    void twoSimultaneousRefundsCannotReturnTheSameMoneyTwice() throws Exception {
+        Workshop workshop = authenticatedWorkshop();
+        UserAccount account = accounts.get(workshop.getId());
+
+        Sale sale = invoice(workshop, DAY_ONE, PaymentMethod.CASH, "1000.00");
+        closeOn(DAY_ONE);
+        clock.moveTo(DAY_THREE);
+
+        Throwable failure = raceAgainstHeldTransaction(
+                account, workshop,
+                () -> saleService.reverse(sale.getId(), new ReverseSaleRequestDTO(
+                        "Primera",
+                        new RefundRequestDTO(new BigDecimal("1000.00"), PaymentMethod.CASH))),
+                () -> saleService.reverse(sale.getId(), new ReverseSaleRequestDTO(
+                        "Segunda",
+                        new RefundRequestDTO(new BigDecimal("1000.00"), PaymentMethod.CASH))));
+
+        assertThat(failure)
+                .as("la segunda devolucion debe encontrar la venta ya revertida")
+                .isInstanceOf(ValidationException.class);
+
+        CashClosureResponseDTO today = closeOn(DAY_THREE);
+        assertThat(today.refunds().refundCount()).isEqualTo(1L);
+        assertThat(today.refunds().totalRefunded()).isEqualByComparingTo("1000.00");
+    }
+
+    /**
+     * La carrera del MISMO dia, que es la que el arreglo vuelve interesante.
+     *
+     * El cobro y la devolucion ocurren en el dia que se esta cerrando. Si la
+     * devolucion gana, el snapshot tiene que contener las dos mitades del
+     * movimiento —Q1,000 dentro y Q400 fuera— y no una sola.
+     */
+    @Test
+    void whenASameDayRefundWinsTheLockBothHalvesReachTheSnapshot() throws Exception {
+        Workshop workshop = authenticatedWorkshop();
+        UserAccount account = accounts.get(workshop.getId());
+        LocalDate today = LocalDate.now(clock);
+
+        Sale sale = invoice(workshop, today, PaymentMethod.CASH, "1000.00");
+
+        Throwable failure = raceAgainstHeldTransaction(
+                account, workshop,
+                () -> saleService.reverse(sale.getId(), new ReverseSaleRequestDTO(
+                        "Devolucion parcial",
+                        new RefundRequestDTO(new BigDecimal("400.00"), PaymentMethod.CASH))),
+                () -> service.close());
+
+        assertThat(failure).as("el cierre posterior debe confirmarse").isNull();
+
+        CashClosureResponseDTO snapshot = service.getByDate(today);
+        assertThat(snapshot.collections().totalCollected()).isEqualByComparingTo("1000.00");
+        assertThat(snapshot.refunds().totalRefunded()).isEqualByComparingTo("400.00");
+        assertThat(snapshot.netPeriod()).isEqualByComparingTo("600.00");
+    }
+
+    /**
+     * Y si gana el cierre, la devolucion del mismo dia se rechaza ENTERA.
+     *
+     * El cobro sigue dentro del snapshot —ocurrio antes— pero no hay ninguna
+     * salida, porque la devolucion no llego a existir. La venta tampoco quedo
+     * revertida: se valida antes de mutar.
+     */
+    @Test
+    void whenTheClosureWinsTheSameDayRefundIsRejectedButTheCollectionStays()
+            throws Exception {
+        Workshop workshop = authenticatedWorkshop();
+        UserAccount account = accounts.get(workshop.getId());
+        LocalDate today = LocalDate.now(clock);
+
+        Sale sale = invoice(workshop, today, PaymentMethod.CASH, "1000.00");
+
+        Throwable failure = raceAgainstHeldTransaction(
+                account, workshop,
+                service::close,
+                () -> saleService.reverse(sale.getId(), new ReverseSaleRequestDTO(
+                        "Tarde",
+                        new RefundRequestDTO(new BigDecimal("400.00"), PaymentMethod.CASH))));
+
+        assertThat(failure).isInstanceOf(ValidationException.class);
+        assertThat(reload(sale.getId()).getStatus()).isEqualTo(SaleStatus.COMPLETED);
+
+        CashClosureResponseDTO snapshot = service.getByDate(today);
+        assertThat(snapshot.collections().totalCollected()).isEqualByComparingTo("1000.00");
+        assertThat(snapshot.refunds().totalRefunded()).isEqualByComparingTo("0.00");
+        assertThat(snapshot.netPeriod()).isEqualByComparingTo("1000.00");
+    }
+
     /** Dos cierres simultaneos del mismo dia: uno gana, el otro falla. */
     @Test
     void twoSimultaneousClosuresOfTheSameDayProduceExactlyOneSnapshot() throws Exception {
@@ -1331,10 +1285,9 @@ class CashClosureServiceDatabaseTest {
             threads.shutdownNow();
         }
 
-        assertThat(repository
-                .findByWorkshopIdAndBusinessDateBetweenOrderByBusinessDateDescIdDesc(
-                        workshop.getId(), businessDate, businessDate))
-                .hasSize(1);
+        // Y en la base queda EXACTAMENTE un snapshot de ese dia.
+        assertThat(repository.findClosedDates(
+                workshop.getId(), businessDate, businessDate)).hasSize(1);
     }
 
     private Throwable attemptClose(
@@ -1344,7 +1297,7 @@ class CashClosureServiceDatabaseTest {
         ready.countDown();
         awaitQuietly(ready);
         try {
-            service.close(arqueo("0.00", "0.00"));
+            service.close();
             return null;
         } catch (Throwable failure) {
             return failure;
@@ -1377,7 +1330,7 @@ class CashClosureServiceDatabaseTest {
         Workshop workshop = authenticatedWorkshop();
         LocalDateTime before = LocalDateTime.now();
 
-        CashClosureResponseDTO closed = service.close(arqueo("0.00", "0.00"));
+        CashClosureResponseDTO closed = service.close();
 
         var stored = repository.findById(closed.id()).orElseThrow();
         // Se comparan truncados al milisegundo: PostgreSQL guarda TIMESTAMP con
@@ -1390,6 +1343,951 @@ class CashClosureServiceDatabaseTest {
         assertThat(stored.getCreatedAt()).isAfterOrEqualTo(before.minusMinutes(1));
         assertThat(stored.getWorkshop().getId()).isEqualTo(workshop.getId());
         assertThat(stored.getClosedBy()).isNotNull();
+    }
+
+
+    // ── Snapshot inmutable ───────────────────────────────────────
+
+    /**
+     * Lo que define al snapshot: despues de cerrar, los datos de origen pueden
+     * cambiar —se cobra una cambiaria pendiente, se emite otra factura— y el
+     * documento historico sigue diciendo exactamente lo que se confirmo.
+     *
+     * Es el ejemplo del lunes y el miercoles: la cambiaria del lunes queda
+     * registrada como PENDIENTE en el cierre del lunes, y cobrarla el miercoles
+     * no reescribe ese documento.
+     */
+    @Test
+    void aConfirmedClosureNeverChangesWhenAnOldExchangeIsCollectedLater() {
+        Workshop workshop = authenticatedWorkshop();
+
+        invoice(workshop, DAY_ONE, PaymentMethod.CASH, "5000.00");
+        Sale exchange = pendingExchangeInvoice(workshop, DAY_ONE, "2000.00");
+
+        CashClosureResponseDTO monday = closeOn(DAY_ONE);
+
+        assertThat(monday.collections().totalCollected()).isEqualByComparingTo("5000.00");
+        assertThat(monday.exchange().issuedPendingAmount()).isEqualByComparingTo("2000.00");
+        assertThat(monday.exchange().issued()).singleElement()
+                .satisfies(invoice -> assertThat(invoice.collected()).isFalse());
+
+        // Miercoles: se cobra la cambiaria del lunes.
+        clock.moveTo(DAY_THREE);
+        collect(exchange, DAY_THREE, PaymentMethod.TRANSFER);
+
+        // El cierre del lunes se relee y NO ha cambiado ni un quetzal.
+        CashClosureResponseDTO reread = service.getByDate(DAY_ONE);
+
+        assertThat(reread.collections().totalCollected()).isEqualByComparingTo("5000.00");
+        assertThat(reread.exchange().issuedPendingAmount()).isEqualByComparingTo("2000.00");
+        assertThat(reread.exchange().issued()).singleElement()
+                .satisfies(invoice -> {
+                    assertThat(invoice.collected()).isFalse();
+                    assertThat(invoice.paidAt()).isNull();
+                    assertThat(invoice.paymentMethod()).isNull();
+                });
+        assertThat(reread.itemsBilledAmount())
+                .isEqualByComparingTo(monday.itemsBilledAmount());
+    }
+
+    /** Y el dinero aparece en el dia en que de verdad se cobro. */
+    @Test
+    void theLaterCollectionBelongsToTheDayItWasActuallyCollected() {
+        Workshop workshop = authenticatedWorkshop();
+        Sale exchange = pendingExchangeInvoice(workshop, DAY_ONE, "1000.00");
+        closeOn(DAY_ONE);
+
+        clock.moveTo(DAY_THREE);
+        collect(exchange, DAY_THREE, PaymentMethod.TRANSFER);
+        CashClosureResponseDTO wednesday = closeOn(DAY_THREE);
+
+        assertThat(wednesday.collections().totalCollected())
+                .isEqualByComparingTo("1000.00");
+        assertThat(transferOf(wednesday)).isEqualByComparingTo("1000.00");
+        // Se cobro el miercoles pero NO se emitio el miercoles.
+        assertThat(wednesday.invoicing().totalInvoiced()).isEqualByComparingTo("0.00");
+        assertThat(wednesday.exchange().collectedAmount()).isEqualByComparingTo("1000.00");
+        assertThat(wednesday.exchange().previousCollectedAmount())
+                .isEqualByComparingTo("1000.00");
+        assertThat(wednesday.exchange().collected()).singleElement()
+                .satisfies(invoice -> assertThat(invoice.collected()).isTrue());
+    }
+
+    // ── Reversion despues del cierre ─────────────────────────────
+    //
+    // Revertir NO es reembolsar. `SaleServiceImpl.reverse` deshace lo que la
+    // venta reservo —existencias, lotes FIFO, WorkResult— y deja constancia en
+    // `SaleAction`, pero no toca `paymentStatus`, `paidAt` ni `paymentMethod`,
+    // y no existe en el dominio ninguna entidad de reembolso, nota de credito
+    // ni movimiento de caja negativo.
+    //
+    // Estas pruebas fijan esa frontera. La restauracion de existencias y de
+    // lotes ya esta cubierta en SaleServiceDatabaseTest e
+    // InventoryAcquisitionFifoDatabaseTest; aqui solo se prueba lo que NADIE
+    // cubria: que pasa con el dinero ya cerrado.
+
+    /**
+     * El caso del enunciado: se cobran Q1,000 el lunes, se cierra el lunes y el
+     * miercoles se revierte esa venta.
+     *
+     * El lunes SIGUE diciendo Q1,000. No porque nadie se atreva a tocarlo, sino
+     * porque es estructuralmente imposible: el calculador solo se ejecuta para
+     * la fecha operativa en curso —en `getPreview` y en `close`—, y un cierre
+     * confirmado se LEE de sus tablas hijas. Ninguna ruta lo recalcula.
+     */
+    @Test
+    void aReversalAfterTheCloseNeverRewritesTheConfirmedSnapshot() {
+        Workshop workshop = authenticatedWorkshop();
+
+        Sale sale = invoice(workshop, DAY_ONE, PaymentMethod.CASH, "1000.00");
+        CashClosureResponseDTO monday = closeOn(DAY_ONE);
+
+        assertThat(monday.collections().totalCollected()).isEqualByComparingTo("1000.00");
+        assertThat(cashOf(monday)).isEqualByComparingTo("1000.00");
+
+        // Miercoles: se revierte la venta del lunes. El cierre NO lo impide:
+        // `reverse` no consulta el guardia de caja, a diferencia de crear,
+        // facturar y cobrar. Se documenta el comportamiento real.
+        clock.moveTo(DAY_THREE);
+        saleService.reverse(sale.getId(), new ReverseSaleRequestDTO("Devolucion del cliente"));
+
+        assertThat(saleRepository.findById(sale.getId()).orElseThrow().getStatus())
+                .isEqualTo(SaleStatus.REVERSED);
+
+        CashClosureResponseDTO reread = service.getByDate(DAY_ONE);
+
+        assertThat(reread.collections().totalCollected()).isEqualByComparingTo("1000.00");
+        assertThat(cashOf(reread)).isEqualByComparingTo("1000.00");
+        assertThat(reread.invoicing().totalInvoiced())
+                .isEqualByComparingTo(monday.invoicing().totalInvoiced());
+        assertThat(reread.itemsBilledAmount())
+                .isEqualByComparingTo(monday.itemsBilledAmount());
+    }
+
+    /**
+     * Y el estado de cobro de la venta revertida queda INTACTO.
+     *
+     * Es la prueba de que este sistema no modela la salida de dinero: si
+     * revertir reembolsara, lo minimo seria devolver la venta a PENDING y
+     * limpiar `paidAt`. No lo hace, y esta prueba lo fija para que nadie lo
+     * cambie creyendo que corrige un olvido.
+     */
+    @Test
+    void reversingAfterTheCloseLeavesThePaymentStateUntouched() {
+        Workshop workshop = authenticatedWorkshop();
+
+        Sale sale = invoice(workshop, DAY_ONE, PaymentMethod.CASH, "1000.00");
+        closeOn(DAY_ONE);
+
+        clock.moveTo(DAY_THREE);
+        saleService.reverse(sale.getId(), new ReverseSaleRequestDTO("Devolucion del cliente"));
+
+        Sale reversed = saleRepository.findById(sale.getId()).orElseThrow();
+
+        assertThat(reversed.getStatus()).isEqualTo(SaleStatus.REVERSED);
+        assertThat(reversed.getPaymentStatus()).isEqualTo(PaymentStatus.PAID);
+        assertThat(reversed.getPaymentMethod()).isEqualTo(PaymentMethod.CASH);
+        assertThat(reversed.getPaidAt()).isEqualTo(DAY_ONE.atTime(10, 0));
+        assertThat(reversed.getCompletedAt()).isEqualTo(DAY_ONE.atTime(10, 0));
+    }
+
+    /**
+     * Y en el periodo en que se revierte NO aparece nada.
+     *
+     * Ni un cobro negativo ni una devolucion: el miercoles cierra en cero y el
+     * mes sigue sumando los Q1,000 del lunes. Inventar aqui un -Q1,000 seria
+     * fabricar un movimiento de caja que nunca ocurrio; lo correcto es que el
+     * hueco se vea, y este es el test que impide taparlo.
+     */
+    @Test
+    void aReversedSaleProducesNoNegativeMovementInAnyLaterPeriod() {
+        Workshop workshop = authenticatedWorkshop();
+
+        Sale sale = invoice(workshop, DAY_ONE, PaymentMethod.CASH, "1000.00");
+        closeOn(DAY_ONE);
+
+        clock.moveTo(DAY_THREE);
+        saleService.reverse(sale.getId(), new ReverseSaleRequestDTO("Devolucion del cliente"));
+
+        CashClosureResponseDTO wednesday = closeOn(DAY_THREE);
+
+        assertThat(wednesday.collections().totalCollected()).isEqualByComparingTo("0.00");
+        assertThat(wednesday.invoicing().totalInvoiced()).isEqualByComparingTo("0.00");
+        assertThat(wednesday.items()).isEmpty();
+        assertThat(wednesday.collections().methods())
+                .allSatisfy(method ->
+                        assertThat(method.amount()).isGreaterThanOrEqualTo(BigDecimal.ZERO));
+
+        CashClosureMonthlyResponseDTO month = service.getMonthly(2026, 8);
+
+        // El mes conserva el lunes: la reversion no reescribe el pasado ni
+        // resta en el presente. El dinero cobrado sigue contado UNA vez.
+        assertThat(month.collections().totalCollected()).isEqualByComparingTo("1000.00");
+        assertThat(cashOf(month.collections())).isEqualByComparingTo("1000.00");
+    }
+
+    // ── Devoluciones: el dinero que sale ─────────────────────────
+    //
+    // Revertir y devolver son cosas distintas y el sistema las registra por
+    // separado. Estas pruebas fijan las tres cifras que el taller lee —cuanto
+    // entro, cuanto salio y con cuanto se queda— y la regla que las ordena:
+    // la devolucion pertenece al dia en que EL DINERO salio.
+
+    /** Lo cobrado sigue siendo lo cobrado; lo devuelto se cuenta aparte. */
+    @Test
+    void theDayReportsCollectedRefundedAndNetSeparately() {
+        Workshop workshop = authenticatedWorkshop();
+
+        // Ayer se cobro una venta que hoy se devuelve.
+        Sale old = invoice(workshop, DAY_ONE, PaymentMethod.CASH, "1500.00");
+        closeOn(DAY_ONE);
+
+        // Hoy: Q5,000 en facturas normales y Q1,000 de una cambiaria antigua.
+        clock.moveTo(DAY_THREE);
+        invoice(workshop, DAY_THREE, PaymentMethod.CASH, "5000.00");
+        Sale exchange = pendingExchangeInvoice(workshop, DAY_TWO, "1000.00");
+        collect(exchange, DAY_THREE, PaymentMethod.CASH);
+
+        // Y se devuelven Q1,500 en efectivo por la venta de anteayer.
+        refund(old, "1500.00", PaymentMethod.CASH);
+
+        CashClosureResponseDTO today = closeOn(DAY_THREE);
+
+        assertThat(today.collections().totalCollected()).isEqualByComparingTo("6000.00");
+        assertThat(today.refunds().totalRefunded()).isEqualByComparingTo("1500.00");
+        assertThat(today.netPeriod()).isEqualByComparingTo("4500.00");
+        assertThat(today.refunds().refundCount()).isEqualTo(1L);
+
+        // Y lo emitido a credito y sin cobrar no toca ninguna de las dos.
+        assertThat(today.exchange().issuedPendingAmount()).isEqualByComparingTo("0.00");
+    }
+
+    /** El desglose por forma de devolucion suma EXACTAMENTE lo devuelto. */
+    @Test
+    void refundMethodsReconcileToTheRefundedTotal() {
+        Workshop workshop = authenticatedWorkshop();
+
+        Sale one = invoice(workshop, DAY_ONE, PaymentMethod.CASH, "500.00");
+        Sale two = invoice(workshop, DAY_ONE, PaymentMethod.CARD, "300.00");
+        Sale three = invoice(workshop, DAY_ONE, PaymentMethod.TRANSFER, "200.00");
+        closeOn(DAY_ONE);
+
+        clock.moveTo(DAY_THREE);
+        refund(one, "500.00", PaymentMethod.CASH);
+        refund(two, "300.00", PaymentMethod.CARD);
+        refund(three, "200.00", PaymentMethod.TRANSFER);
+
+        CashClosureResponseDTO today = closeOn(DAY_THREE);
+
+        assertThat(refundOf(today, PaymentMethod.CASH)).isEqualByComparingTo("500.00");
+        assertThat(refundOf(today, PaymentMethod.CARD)).isEqualByComparingTo("300.00");
+        assertThat(refundOf(today, PaymentMethod.TRANSFER)).isEqualByComparingTo("200.00");
+        assertThat(today.refunds().totalRefunded()).isEqualByComparingTo("1000.00");
+
+        // Sin cobros hoy, el dia cierra en NEGATIVO. Es informacion, no un error.
+        assertThat(today.collections().totalCollected()).isEqualByComparingTo("0.00");
+        assertThat(today.netPeriod()).isEqualByComparingTo("-1000.00");
+    }
+
+    /**
+     * El caso completo del enunciado: el lunes no cambia, el miercoles registra
+     * la salida.
+     */
+    @Test
+    void theOriginalDayKeepsItsMoneyAndTheRefundBelongsToTheDayItLeft() {
+        Workshop workshop = authenticatedWorkshop();
+
+        Sale sale = invoice(workshop, DAY_ONE, PaymentMethod.CASH, "1000.00");
+        CashClosureResponseDTO monday = closeOn(DAY_ONE);
+
+        assertThat(monday.collections().totalCollected()).isEqualByComparingTo("1000.00");
+        assertThat(monday.refunds().totalRefunded()).isEqualByComparingTo("0.00");
+        assertThat(monday.netPeriod()).isEqualByComparingTo("1000.00");
+
+        clock.moveTo(DAY_THREE);
+        refund(sale, "1000.00", PaymentMethod.CASH);
+
+        // El lunes se relee y NO ha cambiado: sigue diciendo que entraron Q1,000.
+        CashClosureResponseDTO reread = service.getByDate(DAY_ONE);
+        assertThat(reread.collections().totalCollected()).isEqualByComparingTo("1000.00");
+        assertThat(reread.refunds().totalRefunded()).isEqualByComparingTo("0.00");
+        assertThat(reread.netPeriod()).isEqualByComparingTo("1000.00");
+
+        // Y el miercoles registra la salida, con su detalle legible.
+        CashClosureResponseDTO wednesday = closeOn(DAY_THREE);
+        assertThat(wednesday.collections().totalCollected()).isEqualByComparingTo("0.00");
+        assertThat(wednesday.refunds().totalRefunded()).isEqualByComparingTo("1000.00");
+        assertThat(wednesday.netPeriod()).isEqualByComparingTo("-1000.00");
+        assertThat(wednesday.refunds().refunds()).singleElement().satisfies(row -> {
+            assertThat(row.amount()).isEqualByComparingTo("1000.00");
+            assertThat(row.paymentMethod()).isEqualTo(PaymentMethod.CASH);
+            assertThat(row.documentCode()).isNotBlank();
+            assertThat(row.performedByName()).isNotBlank();
+            assertThat(row.reason()).isEqualTo("Devolucion al cliente");
+        });
+    }
+
+    /** Una venta sin cobrar no tiene dinero que devolver. */
+    @Test
+    void anUncollectedExchangeInvoiceCannotBeRefunded() {
+        Workshop workshop = authenticatedWorkshop();
+        Sale exchange = pendingExchangeInvoice(workshop, DAY_ONE, "2000.00");
+
+        clock.moveTo(DAY_ONE);
+
+        assertThatThrownBy(() -> saleService.reverse(exchange.getId(),
+                new ReverseSaleRequestDTO("Documento mal emitido",
+                        new RefundRequestDTO(new BigDecimal("2000.00"), PaymentMethod.CASH))))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("no fue cobrada");
+
+        // Y la venta NO quedo revertida: la peticion se rechazo entera.
+        assertThat(saleRepository.findById(exchange.getId()).orElseThrow().getStatus())
+                .isEqualTo(SaleStatus.COMPLETED);
+    }
+
+    /** No se puede devolver mas de lo que entro. */
+    @Test
+    void aRefundCannotExceedWhatTheSaleCollected() {
+        Workshop workshop = authenticatedWorkshop();
+        Sale sale = invoice(workshop, DAY_ONE, PaymentMethod.CASH, "1000.00");
+
+        clock.moveTo(DAY_ONE);
+
+        assertThatThrownBy(() -> saleService.reverse(sale.getId(),
+                new ReverseSaleRequestDTO("Devolucion",
+                        new RefundRequestDTO(new BigDecimal("1200.00"), PaymentMethod.CASH))))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("no puede superar");
+
+        assertThat(saleRepository.findById(sale.getId()).orElseThrow().getStatus())
+                .isEqualTo(SaleStatus.COMPLETED);
+    }
+
+    /** Una devolucion parcial es legitima: se devuelve menos de lo cobrado. */
+    @Test
+    void aPartialRefundIsAccepted() {
+        Workshop workshop = authenticatedWorkshop();
+        Sale sale = invoice(workshop, DAY_ONE, PaymentMethod.CASH, "1000.00");
+        closeOn(DAY_ONE);
+
+        clock.moveTo(DAY_THREE);
+        refund(sale, "400.00", PaymentMethod.TRANSFER);
+
+        CashClosureResponseDTO wednesday = closeOn(DAY_THREE);
+        assertThat(wednesday.refunds().totalRefunded()).isEqualByComparingTo("400.00");
+        assertThat(refundOf(wednesday, PaymentMethod.TRANSFER))
+                .isEqualByComparingTo("400.00");
+    }
+
+    /**
+     * La forma de devolucion NO se copia de la venta.
+     *
+     * Se cobro con tarjeta y se devolvio por transferencia porque asi ocurrio.
+     * Suponer la forma original habria imputado Q1,000 a una tarjeta por la que
+     * no paso nada.
+     */
+    @Test
+    void theRefundChannelIsTheOneUsedToReturnTheMoney() {
+        Workshop workshop = authenticatedWorkshop();
+        Sale sale = invoice(workshop, DAY_ONE, PaymentMethod.CARD, "1000.00");
+        closeOn(DAY_ONE);
+
+        clock.moveTo(DAY_THREE);
+        refund(sale, "1000.00", PaymentMethod.TRANSFER);
+        CashClosureResponseDTO wednesday = closeOn(DAY_THREE);
+
+        assertThat(refundOf(wednesday, PaymentMethod.TRANSFER))
+                .isEqualByComparingTo("1000.00");
+        assertThat(refundOf(wednesday, PaymentMethod.CARD)).isEqualByComparingTo("0.00");
+    }
+
+    /** Revertir sin devolver no crea ninguna devolucion. */
+    @Test
+    void reversingWithoutARefundRecordsNoMoneyOut() {
+        Workshop workshop = authenticatedWorkshop();
+        Sale sale = invoice(workshop, DAY_ONE, PaymentMethod.CASH, "1000.00");
+        closeOn(DAY_ONE);
+
+        clock.moveTo(DAY_THREE);
+        saleService.reverse(sale.getId(), new ReverseSaleRequestDTO("Sin devolucion"));
+
+        CashClosureResponseDTO wednesday = closeOn(DAY_THREE);
+        assertThat(wednesday.refunds().totalRefunded()).isEqualByComparingTo("0.00");
+        assertThat(wednesday.refunds().refunds()).isEmpty();
+        assertThat(wednesday.netPeriod()).isEqualByComparingTo("0.00");
+    }
+
+    /** Una devolucion no entra en un periodo ya cerrado. */
+    @Test
+    void aRefundCannotBePostedIntoAnAlreadyClosedDay() {
+        Workshop workshop = authenticatedWorkshop();
+        Sale sale = invoice(workshop, DAY_ONE, PaymentMethod.CASH, "1000.00");
+        closeOn(DAY_ONE);
+
+        // Se intenta devolver EL MISMO dia que ya se cerro.
+        assertThatThrownBy(() -> saleService.reverse(sale.getId(),
+                new ReverseSaleRequestDTO("Tarde",
+                        new RefundRequestDTO(new BigDecimal("1000.00"), PaymentMethod.CASH))))
+                .isInstanceOf(ValidationException.class);
+
+        // Y NADA se movio: ni la venta se revirtio ni el stock volvio. Es la
+        // razon de validar antes de mutar.
+        assertThat(saleRepository.findById(sale.getId()).orElseThrow().getStatus())
+                .isEqualTo(SaleStatus.COMPLETED);
+
+        CashClosureResponseDTO monday = service.getByDate(DAY_ONE);
+        assertThat(monday.refunds().totalRefunded()).isEqualByComparingTo("0.00");
+    }
+
+    /** Revertir SIN devolucion sigue permitido aunque el dia este cerrado. */
+    @Test
+    void reversingWithoutRefundIsStillAllowedAfterTheClose() {
+        Workshop workshop = authenticatedWorkshop();
+        Sale sale = invoice(workshop, DAY_ONE, PaymentMethod.CASH, "1000.00");
+        closeOn(DAY_ONE);
+
+        saleService.reverse(sale.getId(), new ReverseSaleRequestDTO("Correccion de stock"));
+
+        assertThat(saleRepository.findById(sale.getId()).orElseThrow().getStatus())
+                .isEqualTo(SaleStatus.REVERSED);
+    }
+
+    /** El cierre de un taller nunca ve las devoluciones de otro. */
+    @Test
+    void refundsNeverCrossBetweenWorkshops() {
+        Workshop mine = authenticatedWorkshop();
+        Sale sale = invoice(mine, DAY_ONE, PaymentMethod.CASH, "1000.00");
+        closeOn(DAY_ONE);
+
+        clock.moveTo(DAY_THREE);
+        refund(sale, "1000.00", PaymentMethod.CASH);
+
+        Workshop other = authenticatedWorkshop();
+        CashClosureResponseDTO theirs = closeOn(DAY_THREE);
+
+        assertThat(theirs.refunds().totalRefunded()).isEqualByComparingTo("0.00");
+        assertThat(theirs.refunds().refunds()).isEmpty();
+        assertThat(other).isNotNull();
+    }
+
+    // ── Cobro y devolucion el MISMO dia ──────────────────────────
+    //
+    // El caso que antes se prohibia. Un cobro no se borra porque la venta se
+    // revierta despues: el dinero entro a las 10:00 y, si se devolvio, salio a
+    // las 15:00. El dia tiene que decir las dos cosas, no ninguna.
+
+    /**
+     * Devolucion TOTAL el mismo dia: entraron Q1,000, salieron Q1,000, neto Q0.
+     *
+     * Lo que NO puede pasar es que el dia diga "Q0 cobrado / Q0 devuelto"
+     * —como si nada hubiera ocurrido— ni "Q0 cobrado / Q1,000 devuelto", que
+     * cerraria en negativo sin faltar un quetzal en el cajon.
+     */
+    @Test
+    void aFullSameDayRefundKeepsTheCollectionAndTheRefundVisible() {
+        Workshop workshop = authenticatedWorkshop();
+        clock.moveTo(DAY_ONE);
+
+        Sale sale = invoice(workshop, DAY_ONE, PaymentMethod.CASH, "1000.00");
+        refund(sale, "1000.00", PaymentMethod.CASH);
+
+        CashClosureResponseDTO today = closeOn(DAY_ONE);
+
+        assertThat(today.collections().totalCollected()).isEqualByComparingTo("1000.00");
+        assertThat(cashOf(today)).isEqualByComparingTo("1000.00");
+        assertThat(today.refunds().totalRefunded()).isEqualByComparingTo("1000.00");
+        assertThat(refundOf(today, PaymentMethod.CASH)).isEqualByComparingTo("1000.00");
+        assertThat(today.netPeriod()).isEqualByComparingTo("0.00");
+    }
+
+    /** Devolucion PARCIAL el mismo dia: Q1,000 dentro, Q400 fuera, quedan Q600. */
+    @Test
+    void aPartialSameDayRefundLeavesTheDifferenceAsNet() {
+        Workshop workshop = authenticatedWorkshop();
+        clock.moveTo(DAY_ONE);
+
+        Sale sale = invoice(workshop, DAY_ONE, PaymentMethod.CASH, "1000.00");
+        refund(sale, "400.00", PaymentMethod.CASH);
+
+        CashClosureResponseDTO today = closeOn(DAY_ONE);
+
+        assertThat(today.collections().totalCollected()).isEqualByComparingTo("1000.00");
+        assertThat(today.refunds().totalRefunded()).isEqualByComparingTo("400.00");
+        assertThat(today.netPeriod()).isEqualByComparingTo("600.00");
+    }
+
+    /**
+     * Reversion el mismo dia SIN devolucion: el dinero entro y no ha salido.
+     *
+     * La venta deja de contar como facturada —eso no cambia— pero el ingreso
+     * sigue ahi, porque nadie devolvio nada.
+     */
+    @Test
+    void aSameDayReversalWithoutRefundStillKeepsTheMoneyIn() {
+        Workshop workshop = authenticatedWorkshop();
+        clock.moveTo(DAY_ONE);
+
+        Sale sale = invoice(workshop, DAY_ONE, PaymentMethod.CASH, "1000.00");
+        saleService.reverse(sale.getId(), new ReverseSaleRequestDTO("Sin devolucion"));
+
+        CashClosureResponseDTO today = closeOn(DAY_ONE);
+
+        assertThat(today.collections().totalCollected()).isEqualByComparingTo("1000.00");
+        assertThat(today.refunds().totalRefunded()).isEqualByComparingTo("0.00");
+        assertThat(today.netPeriod()).isEqualByComparingTo("1000.00");
+    }
+
+    /**
+     * El canal de entrada y el de salida se cuadran por separado.
+     *
+     * Se cobro con TARJETA y se devolvio por TRANSFERENCIA. Cada uno aparece en
+     * su desglose y en el suyo solamente: imputar la devolucion a la tarjeta
+     * habria cuadrado el total y falseado los dos canales.
+     */
+    @Test
+    void theCollectionAndTheRefundReconcileOnTheirOwnChannels() {
+        Workshop workshop = authenticatedWorkshop();
+        clock.moveTo(DAY_ONE);
+
+        Sale sale = invoice(workshop, DAY_ONE, PaymentMethod.CARD, "1000.00");
+        refund(sale, "400.00", PaymentMethod.TRANSFER);
+
+        CashClosureResponseDTO today = closeOn(DAY_ONE);
+
+        assertThat(cardOf(today.collections())).isEqualByComparingTo("1000.00");
+        assertThat(cashOf(today)).isEqualByComparingTo("0.00");
+        assertThat(refundOf(today, PaymentMethod.TRANSFER))
+                .isEqualByComparingTo("400.00");
+        assertThat(refundOf(today, PaymentMethod.CARD)).isEqualByComparingTo("0.00");
+        assertThat(today.netPeriod()).isEqualByComparingTo("600.00");
+    }
+
+    /**
+     * La distincion que este arreglo NO toca: lo FACTURADO sigue sus propias
+     * reglas.
+     *
+     * Una venta revertida deja de estar facturada —desaparece de los articulos
+     * y de la facturacion emitida— y a la vez conserva su cobro. No es una
+     * incoherencia: son dos preguntas distintas. "Que vendi hoy" mira el estado
+     * de la venta; "cuanto dinero movi hoy" mira los pagos que de verdad
+     * ocurrieron.
+     */
+    @Test
+    void aSameDayReversalLeavesBillingButKeepsTheCashMovement() {
+        Workshop workshop = authenticatedWorkshop();
+        clock.moveTo(DAY_ONE);
+
+        Sale sale = invoice(workshop, DAY_ONE, PaymentMethod.CASH, "1000.00");
+        refund(sale, "1000.00", PaymentMethod.CASH);
+
+        CashClosureResponseDTO today = closeOn(DAY_ONE);
+
+        assertThat(today.invoicing().totalInvoiced()).isEqualByComparingTo("0.00");
+        assertThat(today.items()).isEmpty();
+        assertThat(today.collections().totalCollected()).isEqualByComparingTo("1000.00");
+        assertThat(today.refunds().totalRefunded()).isEqualByComparingTo("1000.00");
+    }
+
+    /** Una venta anulada nunca inventa un cobro: nunca estuvo pagada. */
+    @Test
+    void aCancelledSaleNeverProducesACollection() {
+        Workshop workshop = authenticatedWorkshop();
+        clock.moveTo(DAY_ONE);
+
+        Sale draft = saleRepository.save(Sale.builder()
+                .workshop(workshop)
+                .employee(employee(workshop))
+                .status(SaleStatus.CANCELLED)
+                .invoiceType(InvoiceType.INVOICE)
+                .paymentStatus(PaymentStatus.PENDING)
+                .completedAt(DAY_ONE.atTime(9, 0))
+                .total(new BigDecimal("500.00"))
+                .build());
+
+        CashClosureResponseDTO today = closeOn(DAY_ONE);
+
+        assertThat(today.collections().totalCollected()).isEqualByComparingTo("0.00");
+        assertThat(today.netPeriod()).isEqualByComparingTo("0.00");
+        assertThat(draft.getId()).isNotNull();
+    }
+
+    /**
+     * Y el snapshot congela las cifras corregidas: lo que la previsualizacion
+     * mostraba es lo que el documento confirmado dice.
+     */
+    @Test
+    void theConfirmedSnapshotKeepsTheSameDayCollectionAndRefund() {
+        Workshop workshop = authenticatedWorkshop();
+        clock.moveTo(DAY_ONE);
+
+        Sale sale = invoice(workshop, DAY_ONE, PaymentMethod.CASH, "1000.00");
+        refund(sale, "400.00", PaymentMethod.CASH);
+
+        CashClosureResponseDTO preview = service.getPreview();
+        assertThat(preview.collections().totalCollected()).isEqualByComparingTo("1000.00");
+        assertThat(preview.refunds().totalRefunded()).isEqualByComparingTo("400.00");
+        assertThat(preview.netPeriod()).isEqualByComparingTo("600.00");
+
+        closeOn(DAY_ONE);
+        CashClosureResponseDTO snapshot = service.getByDate(DAY_ONE);
+
+        assertThat(snapshot.collections().totalCollected()).isEqualByComparingTo("1000.00");
+        assertThat(snapshot.refunds().totalRefunded()).isEqualByComparingTo("400.00");
+        assertThat(snapshot.netPeriod()).isEqualByComparingTo("600.00");
+    }
+
+    /** Y el mes hereda las cifras corregidas sin ningun apaño propio. */
+    @Test
+    void theMonthInheritsTheCorrectedSameDayFigures() {
+        Workshop workshop = authenticatedWorkshop();
+        clock.moveTo(DAY_ONE);
+
+        Sale sale = invoice(workshop, DAY_ONE, PaymentMethod.CASH, "1000.00");
+        refund(sale, "400.00", PaymentMethod.CASH);
+        closeOn(DAY_ONE);
+
+        CashClosureMonthlyResponseDTO month = service.getMonthly(2026, 8);
+
+        assertThat(month.collections().totalCollected()).isEqualByComparingTo("1000.00");
+        assertThat(month.refunds().totalRefunded()).isEqualByComparingTo("400.00");
+        assertThat(month.netPeriod()).isEqualByComparingTo("600.00");
+    }
+
+    // ── Devoluciones en el cierre mensual ────────────────────────
+
+    /** El mes agrega las devoluciones de sus dias cerrados y da su neto. */
+    @Test
+    void theMonthlyClosureAggregatesRefundsAndNet() {
+        Workshop workshop = authenticatedWorkshop();
+
+        Sale one = invoice(workshop, DAY_ONE, PaymentMethod.CASH, "1000.00");
+        Sale two = invoice(workshop, DAY_ONE, PaymentMethod.CARD, "500.00");
+        closeOn(DAY_ONE);
+
+        clock.moveTo(DAY_TWO);
+        invoice(workshop, DAY_TWO, PaymentMethod.CASH, "2000.00");
+        refund(one, "1000.00", PaymentMethod.CASH);
+        closeOn(DAY_TWO);
+
+        clock.moveTo(DAY_THREE);
+        refund(two, "500.00", PaymentMethod.CARD);
+        closeOn(DAY_THREE);
+
+        CashClosureMonthlyResponseDTO month = service.getMonthly(2026, 8);
+
+        assertThat(month.collections().totalCollected()).isEqualByComparingTo("3500.00");
+        assertThat(month.refunds().totalRefunded()).isEqualByComparingTo("1500.00");
+        assertThat(month.refunds().refundCount()).isEqualTo(2L);
+        assertThat(month.netPeriod()).isEqualByComparingTo("2000.00");
+
+        assertThat(monthRefundOf(month, PaymentMethod.CASH))
+                .isEqualByComparingTo("1000.00");
+        assertThat(monthRefundOf(month, PaymentMethod.CARD))
+                .isEqualByComparingTo("500.00");
+        assertThat(monthRefundOf(month, PaymentMethod.TRANSFER))
+                .isEqualByComparingTo("0.00");
+
+        // Y el detalle del mes lista las dos, no solo sus totales.
+        assertThat(month.refunds().refunds()).hasSize(2);
+    }
+
+    /**
+     * El caso a caballo de dos meses, que es la razon de que la devolucion
+     * tenga fecha propia.
+     *
+     * Agosto cobro Q1,000 y septiembre los devolvio. Agosto sigue diciendo
+     * Q1,000 cobrados y CERO devueltos; septiembre dice cero cobrados y
+     * Q1,000 devueltos, y cierra en negativo. Reescribir agosto habria sido
+     * mas simple y habria falseado un mes ya cerrado.
+     */
+    @Test
+    void aRefundBelongsToTheMonthTheMoneyLeftAndNotToTheSaleMonth() {
+        Workshop workshop = authenticatedWorkshop();
+
+        Sale sale = invoice(workshop, DAY_ONE, PaymentMethod.CASH, "1000.00");
+        closeOn(DAY_ONE);
+
+        clock.moveTo(NEXT_MONTH_DAY);
+        refund(sale, "1000.00", PaymentMethod.CASH);
+        closeOn(NEXT_MONTH_DAY);
+
+        CashClosureMonthlyResponseDTO august = service.getMonthly(2026, 8);
+        assertThat(august.collections().totalCollected()).isEqualByComparingTo("1000.00");
+        assertThat(august.refunds().totalRefunded()).isEqualByComparingTo("0.00");
+        assertThat(august.refunds().refunds()).isEmpty();
+        assertThat(august.netPeriod()).isEqualByComparingTo("1000.00");
+
+        CashClosureMonthlyResponseDTO september = service.getMonthly(2026, 9);
+        assertThat(september.collections().totalCollected()).isEqualByComparingTo("0.00");
+        assertThat(september.refunds().totalRefunded()).isEqualByComparingTo("1000.00");
+        assertThat(september.netPeriod()).isEqualByComparingTo("-1000.00");
+        assertThat(september.refunds().refunds()).singleElement()
+                .satisfies(row -> assertThat(row.amount()).isEqualByComparingTo("1000.00"));
+    }
+
+    /** El mes de un taller nunca incluye las devoluciones de otro. */
+    @Test
+    void theMonthlyRefundsOfOneWorkshopNeverIncludeAnother() {
+        Workshop mine = authenticatedWorkshop();
+        Sale sale = invoice(mine, DAY_ONE, PaymentMethod.CASH, "1000.00");
+        closeOn(DAY_ONE);
+        clock.moveTo(DAY_TWO);
+        refund(sale, "1000.00", PaymentMethod.CASH);
+        closeOn(DAY_TWO);
+
+        authenticatedWorkshop();
+        CashClosureMonthlyResponseDTO theirs = service.getMonthly(2026, 8);
+
+        assertThat(theirs.refunds().totalRefunded()).isEqualByComparingTo("0.00");
+        assertThat(theirs.refunds().refunds()).isEmpty();
+    }
+
+    /**
+     * El mes se lee de los SNAPSHOTS, no de las devoluciones vivas.
+     *
+     * Una devolucion registrada hoy no puede aparecer en un mes cuyos dias ya
+     * estaban cerrados: si el mensual releyera `sale_refund`, el pasado
+     * cambiaria cada vez que alguien devuelve algo.
+     */
+    @Test
+    void theMonthlyRefundsComeFromTheConfirmedSnapshots() {
+        Workshop workshop = authenticatedWorkshop();
+
+        Sale sale = invoice(workshop, DAY_ONE, PaymentMethod.CASH, "1000.00");
+        closeOn(DAY_ONE);
+
+        // Se devuelve el dia DOS pero ese dia NO se cierra.
+        clock.moveTo(DAY_TWO);
+        refund(sale, "1000.00", PaymentMethod.CASH);
+
+        CashClosureMonthlyResponseDTO month = service.getMonthly(2026, 8);
+
+        // El mes solo cuenta el dia uno, que es el unico confirmado: la
+        // devolucion del dia dos todavia no pertenece a ningun cierre.
+        assertThat(month.closedDays()).isEqualTo(1L);
+        assertThat(month.refunds().totalRefunded()).isEqualByComparingTo("0.00");
+        assertThat(month.status()).isEqualTo(CashClosureMonthStatus.PARTIAL);
+    }
+
+    /** Un cierre confirmado no se puede repetir. */
+    @Test
+    void theSameWorkshopCannotCloseTheSameDayTwice() {
+        Workshop workshop = authenticatedWorkshop();
+        invoice(workshop, DAY_ONE, PaymentMethod.CASH, "100.00");
+        closeOn(DAY_ONE);
+
+        assertThatThrownBy(() -> service.close())
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("ya fue cerrada");
+    }
+
+    /** Dos talleres cierran el mismo dia sin estorbarse. */
+    @Test
+    void twoWorkshopsCanCloseTheSameDateIndependently() {
+        Workshop first = authenticatedWorkshop();
+        invoice(first, DAY_ONE, PaymentMethod.CASH, "100.00");
+        closeOn(DAY_ONE);
+
+        Workshop second = authenticatedWorkshop();
+        invoice(second, DAY_ONE, PaymentMethod.CARD, "900.00");
+        CashClosureResponseDTO other = closeOn(DAY_ONE);
+
+        assertThat(other.collections().totalCollected()).isEqualByComparingTo("900.00");
+        // Y cada uno ve solo lo suyo.
+        authenticateAgainst(first);
+        assertThat(service.getByDate(DAY_ONE).collections().totalCollected())
+                .isEqualByComparingTo("100.00");
+    }
+
+    // ── Cierre mensual ───────────────────────────────────────────
+
+    /**
+     * El mes agrega los cierres diarios CONFIRMADOS, con la misma estructura
+     * contable que un dia.
+     */
+    @Test
+    void theMonthlyClosureAggregatesTheConfirmedDays() {
+        Workshop workshop = authenticatedWorkshop();
+
+        invoice(workshop, DAY_ONE, PaymentMethod.CASH, "1000.00");
+        closeOn(DAY_ONE);
+
+        invoice(workshop, DAY_TWO, PaymentMethod.CARD, "2000.00");
+        closeOn(DAY_TWO);
+
+        clock.moveTo(DAY_THREE);
+        CashClosureMonthlyResponseDTO month = service.getMonthly(2026, 8);
+
+        assertThat(month.year()).isEqualTo(2026);
+        assertThat(month.month()).isEqualTo(8);
+        assertThat(month.closedDays()).isEqualTo(2L);
+        assertThat(month.invoicing().totalInvoiced()).isEqualByComparingTo("3000.00");
+        assertThat(month.collections().totalCollected()).isEqualByComparingTo("3000.00");
+        assertThat(cashOf(month.collections())).isEqualByComparingTo("1000.00");
+        assertThat(cardOf(month.collections())).isEqualByComparingTo("2000.00");
+    }
+
+    /** Los articulos del mes se reagregan por producto sobre el detalle diario. */
+    @Test
+    void theMonthlyClosureReaggregatesItemsAcrossDays() {
+        Workshop workshop = authenticatedWorkshop();
+        Product resorte = product("RESORTE DELANTERO");
+
+        line(invoice(workshop, DAY_ONE, PaymentMethod.CASH, "300.00"), resorte, 2, "300.00");
+        closeOn(DAY_ONE);
+        line(invoice(workshop, DAY_TWO, PaymentMethod.CASH, "450.00"), resorte, 3, "450.00");
+        closeOn(DAY_TWO);
+
+        clock.moveTo(DAY_THREE);
+        CashClosureMonthlyResponseDTO month = service.getMonthly(2026, 8);
+
+        // Dos filas de detalle diario vuelven como UNA del mes.
+        assertThat(month.items()).hasSize(1);
+        assertThat(month.items().get(0).productId()).isEqualTo(resorte.getId());
+        assertThat(month.items().get(0).quantity()).isEqualTo(5L);
+        assertThat(month.items().get(0).billedAmount()).isEqualByComparingTo("750.00");
+        assertThat(month.itemsBilledAmount()).isEqualByComparingTo("750.00");
+    }
+
+    /**
+     * Cobrar en el mes una cambiaria emitida el mes ANTERIOR cuenta en los
+     * cobros del mes y no en sus emisiones.
+     */
+    @Test
+    void aPriorMonthExchangeCollectedThisMonthCountsInThisMonthsCollections() {
+        Workshop workshop = authenticatedWorkshop();
+        LocalDate lastMonth = DAY_ONE.minusMonths(1);
+
+        Sale exchange = pendingExchangeInvoice(workshop, lastMonth, "4000.00");
+
+        clock.moveTo(DAY_ONE);
+        collect(exchange, DAY_ONE, PaymentMethod.TRANSFER);
+        closeOn(DAY_ONE);
+
+        clock.moveTo(DAY_TWO);
+        CashClosureMonthlyResponseDTO month = service.getMonthly(2026, 8);
+
+        assertThat(month.collections().totalCollected()).isEqualByComparingTo("4000.00");
+        assertThat(month.exchange().collectedAmount()).isEqualByComparingTo("4000.00");
+        assertThat(month.exchange().previousCollectedAmount())
+                .isEqualByComparingTo("4000.00");
+        // No se emitio nada en agosto.
+        assertThat(month.invoicing().totalInvoiced()).isEqualByComparingTo("0.00");
+    }
+
+    // ── Completitud del mes ──────────────────────────────────────
+
+    /** Con dias sin cerrar, el mes es PARCIAL y lo declara. */
+    @Test
+    void aMonthWithMissingClosuresIsPartial() {
+        Workshop workshop = authenticatedWorkshop();
+        invoice(workshop, DAY_ONE, PaymentMethod.CASH, "100.00");
+        closeOn(DAY_ONE);
+
+        // Estamos a dia 3 y solo se cerro el 1: faltan el 2 y el 3.
+        clock.moveTo(DAY_THREE);
+        CashClosureMonthlyResponseDTO month = service.getMonthly(2026, 8);
+
+        assertThat(month.status()).isEqualTo(CashClosureMonthStatus.PARTIAL);
+        assertThat(month.closedDays()).isEqualTo(1L);
+        assertThat(month.pendingDays()).isEqualTo(2L);
+    }
+
+    /**
+     * Con todos los dias transcurridos cerrados, el mes es COMPLETO. El limite
+     * es el ultimo dia que YA OCURRIO: contar como pendientes los dias que aun
+     * no han llegado presentaria como incompleto un mes que va al dia.
+     */
+    @Test
+    void aMonthWithEveryElapsedDayClosedIsComplete() {
+        Workshop workshop = authenticatedWorkshop();
+
+        invoice(workshop, DAY_ONE, PaymentMethod.CASH, "100.00");
+        closeOn(DAY_ONE);
+        invoice(workshop, DAY_TWO, PaymentMethod.CASH, "200.00");
+        closeOn(DAY_TWO);
+        invoice(workshop, DAY_THREE, PaymentMethod.CASH, "300.00");
+        closeOn(DAY_THREE);
+
+        // Seguimos en el dia 3: los tres dias transcurridos estan cerrados.
+        CashClosureMonthlyResponseDTO month = service.getMonthly(2026, 8);
+
+        assertThat(month.status()).isEqualTo(CashClosureMonthStatus.COMPLETE);
+        assertThat(month.closedDays()).isEqualTo(3L);
+        assertThat(month.pendingDays()).isZero();
+        assertThat(month.to()).isEqualTo(DAY_THREE);
+    }
+
+    /** El mes de otro taller nunca se cuela. */
+    @Test
+    void theMonthlyClosureOfOneWorkshopNeverIncludesAnother() {
+        Workshop mine = authenticatedWorkshop();
+        invoice(mine, DAY_ONE, PaymentMethod.CASH, "100.00");
+        closeOn(DAY_ONE);
+
+        Workshop other = authenticatedWorkshop();
+        invoice(other, DAY_ONE, PaymentMethod.CASH, "9999.00");
+        closeOn(DAY_ONE);
+
+        authenticateAgainst(mine);
+        clock.moveTo(DAY_TWO);
+        CashClosureMonthlyResponseDTO month = service.getMonthly(2026, 8);
+
+        assertThat(month.collections().totalCollected()).isEqualByComparingTo("100.00");
+    }
+
+    // ── Apoyo del mes ────────────────────────────────────────────
+
+    private static BigDecimal cashOf(
+            com.cns.spring_house.cashclosure.dto.CashClosureCollectionsDTO collections) {
+        return methodAmount(collections, PaymentMethod.CASH);
+    }
+
+    private static BigDecimal cardOf(
+            com.cns.spring_house.cashclosure.dto.CashClosureCollectionsDTO collections) {
+        return methodAmount(collections, PaymentMethod.CARD);
+    }
+
+    private static BigDecimal transferOf(CashClosureResponseDTO closure) {
+        return methodAmount(closure.collections(), PaymentMethod.TRANSFER);
+    }
+
+    private static BigDecimal methodAmount(
+            com.cns.spring_house.cashclosure.dto.CashClosureCollectionsDTO collections,
+            PaymentMethod method) {
+        return collections.methods().stream()
+                .filter(row -> row.method() == method)
+                .findFirst()
+                .map(ClosurePaymentMethodDTO::amount)
+                .orElseThrow();
+    }
+
+    private int catalogSequence;
+
+    private Product product(String name) {
+        catalogSequence++;
+        Family family = familyRepository.save(Family.builder()
+                .code("CC" + catalogSequence + unique())
+                .name("FAM " + catalogSequence + " " + unique())
+                .requiresModel(false)
+                .category(FamilyCategory.NORMAL)
+                .build());
+        return productRepository.save(Product.builder()
+                .family(family)
+                .name(name)
+                .attributes(new HashMap<>())
+                .build());
+    }
+
+    private void line(Sale sale, Product product, int quantity, String subTotal) {
+        saleDetailRepository.save(SaleDetail.builder()
+                .sale(sale)
+                .product(product)
+                .quantity(quantity)
+                .price(new BigDecimal(subTotal).divide(BigDecimal.valueOf(quantity)))
+                .subTotal(new BigDecimal(subTotal))
+                .build());
     }
 
 }

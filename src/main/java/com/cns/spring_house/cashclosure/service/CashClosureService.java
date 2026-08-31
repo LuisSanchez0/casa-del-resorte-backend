@@ -1,62 +1,58 @@
 package com.cns.spring_house.cashclosure.service;
 
 import java.time.LocalDate;
-import java.util.List;
 import java.util.UUID;
 
-import com.cns.spring_house.cashclosure.dto.CashClosureBasePreviewResponseDTO;
 import com.cns.spring_house.cashclosure.dto.CashClosureDocumentDTO;
+import com.cns.spring_house.cashclosure.dto.CashClosureMonthlyResponseDTO;
 import com.cns.spring_house.cashclosure.dto.CashClosureResponseDTO;
-import com.cns.spring_house.cashclosure.dto.CashClosureSummaryResponseDTO;
-import com.cns.spring_house.cashclosure.dto.CreateCashClosureRequestDTO;
 
 /**
- * Cierre de caja diario.
+ * Cierre de caja diario y mensual.
  *
- * El taller nunca es un parametro: sale del token en cada una de estas
- * operaciones, incluidas las de exportacion.
+ * El taller nunca es un parametro: sale del token en cada operacion, incluida la
+ * exportacion.
  *
- * Hay una frontera dura entre las tres primeras operaciones y el resto:
- * `getPreview`, `preview` y `previewDocument` calculan contra `sale` y NO
- * persisten ni bloquean nada; `close` persiste el snapshot, y a partir de ahi
- * `get`, `getByDate`, `getRange`, `getSummary` y los PDF historicos leen solo
- * ese snapshot.
+ * Hay una frontera dura entre {@link #getPreview()} y el resto: la
+ * previsualizacion calcula contra `sale` y NO persiste ni bloquea nada; {@link
+ * #close()} persiste el snapshot, y a partir de ahi {@link #get}, {@link
+ * #getByDate}, {@link #getMonthly} y el PDF historico leen SOLO ese snapshot.
+ *
+ * Ya no hay arqueo. Ninguna de estas operaciones acepta fondo inicial, efectivo
+ * contado ni observaciones: el cierre describe lo que se facturo y lo que se
+ * cobro, no un recuento manual del cajon.
  */
 public interface CashClosureService {
 
-    /** Cifras del dia tal y como estan ahora, sin arqueo. No persiste nada. */
-    CashClosureBasePreviewResponseDTO getPreview();
+    /**
+     * El dia en curso tal y como esta AHORA: articulos vendidos, documentos
+     * emitidos, cambiarias y cobros. No persiste nada y no bloquea ventas.
+     *
+     * Cuando el dia ya fue cerrado responde igual, con {@code alreadyClosed} en
+     * true y el id del cierre, para que la pantalla ofrezca el snapshot.
+     */
+    CashClosureResponseDTO getPreview();
 
     /**
-     * Previsualizacion final: recalcula el dia y le aplica el arqueo declarado.
-     * Devuelve exactamente el documento que se persistiria, sin persistirlo.
+     * Confirma el cierre del dia y persiste el snapshot.
+     *
+     * No recibe nada: TODO lo que compone el cierre lo calcula el servidor
+     * contra la base de datos. Aceptar cualquier cifra del cliente permitiria
+     * cerrar una caja con los numeros que uno quisiera.
      */
-    CashClosureResponseDTO preview(CreateCashClosureRequestDTO requestDTO);
-
-    /** La previsualizacion final en PDF. Tampoco persiste ni bloquea ventas. */
-    CashClosureDocumentDTO previewDocument(CreateCashClosureRequestDTO requestDTO);
-
-    /**
-     * Confirma el cierre del dia. RECALCULA todo desde cero: la previsualizacion
-     * no es la fuente de verdad, porque entre verla y confirmar pudo cobrarse
-     * una cambiaria o emitirse otra factura.
-     */
-    CashClosureResponseDTO close(CreateCashClosureRequestDTO requestDTO);
+    CashClosureResponseDTO close();
 
     CashClosureResponseDTO get(UUID id);
 
     CashClosureResponseDTO getByDate(LocalDate date);
 
-    /** Cierres del rango, de mas reciente a mas antiguo. */
-    List<CashClosureResponseDTO> getRange(LocalDate from, LocalDate to);
-
-    /** Agregado del rango sobre los snapshots. Sirve igual para un mes. */
-    CashClosureSummaryResponseDTO getSummary(LocalDate from, LocalDate to);
+    /**
+     * Cierre MENSUAL: la misma estructura contable que un dia, agregada sobre
+     * los cierres diarios confirmados del mes.
+     */
+    CashClosureMonthlyResponseDTO getMonthly(int year, int month);
 
     /** PDF de un cierre confirmado, generado desde el snapshot. */
     CashClosureDocumentDTO document(UUID id);
-
-    /** PDF del resumen del rango, generado desde los snapshots. */
-    CashClosureDocumentDTO summaryDocument(LocalDate from, LocalDate to);
 
 }

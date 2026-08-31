@@ -23,7 +23,9 @@ import com.cns.spring_house.inventory.entity.Inventory;
 import com.cns.spring_house.inventory.entity.InventoryItem;
 import com.cns.spring_house.inventory.entity.InventoryItemStatus;
 import com.cns.spring_house.inventory.repository.InventoryItemRepository;
+import com.cns.spring_house.acquisition.service.InventoryLotService;
 import com.cns.spring_house.inventory.repository.InventoryRepository;
+import com.cns.spring_house.sale.repository.SaleDetailRepository;
 import com.cns.spring_house.job.entity.Job;
 import com.cns.spring_house.job.repository.JobRepository;
 import com.cns.spring_house.product.entity.Product;
@@ -51,6 +53,18 @@ class SaleDetailHandlerPriceTest {
 
     @Mock
     private JobRepository jobRepository;
+
+    /**
+     * El libro de lotes es una dependencia nueva de los handlers de producto.
+     * Aqui se simula porque lo que esta prueba mide es el PRECIO —el piso contra
+     * el costo de referencia y el ajuste manual—, no el consumo FIFO, que tiene
+     * sus propias pruebas contra PostgreSQL real.
+     */
+    @Mock
+    private InventoryLotService lotService;
+
+    @Mock
+    private SaleDetailRepository saleDetailRepository;
 
     @InjectMocks
     private NormalSaleDetailHandler normalHandler;
@@ -122,7 +136,7 @@ class SaleDetailHandlerPriceTest {
     // ---------------------------------------------------------------- NORMAL
 
     private SaleDetail addNormal(BigDecimal price) {
-        when(inventoryRepository.findByProductIdAndWorkshopId(
+        when(inventoryRepository.findByProductIdAndWorkshopIdForUpdate(
                 product.getId(), workshopId))
                 .thenReturn(Optional.of(inventory(CATALOG_PRICE, COST)));
         return normalHandler.addDetail(sale(), request(price, null));
@@ -160,7 +174,7 @@ class SaleDetailHandlerPriceTest {
 
     @Test
     void normalAllowsZeroOnlyWhenTheCostIsAlsoZero() {
-        when(inventoryRepository.findByProductIdAndWorkshopId(
+        when(inventoryRepository.findByProductIdAndWorkshopIdForUpdate(
                 product.getId(), workshopId))
                 .thenReturn(Optional.of(inventory(CATALOG_PRICE, BigDecimal.ZERO)));
 
@@ -172,7 +186,7 @@ class SaleDetailHandlerPriceTest {
 
     @Test
     void theSubTotalIsThePriceTimesTheQuantity() {
-        when(inventoryRepository.findByProductIdAndWorkshopId(
+        when(inventoryRepository.findByProductIdAndWorkshopIdForUpdate(
                 product.getId(), workshopId))
                 .thenReturn(Optional.of(inventory(CATALOG_PRICE, COST)));
 
@@ -185,7 +199,7 @@ class SaleDetailHandlerPriceTest {
 
     @Test
     void theAlternativeInvoiceDescriptionTravelsToTheDetail() {
-        when(inventoryRepository.findByProductIdAndWorkshopId(
+        when(inventoryRepository.findByProductIdAndWorkshopIdForUpdate(
                 product.getId(), workshopId))
                 .thenReturn(Optional.of(inventory(CATALOG_PRICE, COST)));
 
@@ -202,10 +216,15 @@ class SaleDetailHandlerPriceTest {
     // --------------------------------------------------------------- SPECIAL
 
     private SaleDetail addSpecial(BigDecimal price) {
-        InventoryItem item = item(inventory(CATALOG_PRICE, COST));
+        Inventory owner = inventory(CATALOG_PRICE, COST);
+        InventoryItem item = item(owner);
         when(inventoryItemRepository.findByIdAndInventoryWorkshopId(
                 item.getId(), workshopId))
                 .thenReturn(Optional.of(item));
+        // El handler resuelve el inventario POR EL ITEM para poder bloquearlo en
+        // la misma consulta que lo carga.
+        when(inventoryRepository.findByItemIdForUpdate(item.getId()))
+                .thenReturn(Optional.of(owner));
         return specialHandler.addDetail(sale(), request(price, item.getId()));
     }
 
@@ -246,10 +265,15 @@ class SaleDetailHandlerPriceTest {
     // ------------------------------------------------------------- CONTAINER
 
     private SaleDetail addContainer(BigDecimal price) {
-        InventoryItem item = item(inventory(CATALOG_PRICE, COST));
+        Inventory owner = inventory(CATALOG_PRICE, COST);
+        InventoryItem item = item(owner);
         when(inventoryItemRepository.findByIdAndInventoryWorkshopId(
                 item.getId(), workshopId))
                 .thenReturn(Optional.of(item));
+        // Igual que SPECIAL: el inventario se resuelve por el item para
+        // bloquearlo en la misma consulta.
+        when(inventoryRepository.findByItemIdForUpdate(item.getId()))
+                .thenReturn(Optional.of(owner));
         return containerHandler.addDetail(sale(), request(price, item.getId()));
     }
 
@@ -288,7 +312,7 @@ class SaleDetailHandlerPriceTest {
                 .product(product)
                 .price(CATALOG_PRICE)
                 .build();
-        when(jobRepository.findByProductIdAndWorkshopId(
+        when(jobRepository.findByProductIdAndWorkshopIdForUpdate(
                 product.getId(), workshopId))
                 .thenReturn(Optional.of(job));
         return jobHandler.addDetail(sale(), request(price, null));
@@ -332,7 +356,7 @@ class SaleDetailHandlerPriceTest {
                 .price(CATALOG_PRICE)
                 .build();
         assertThat(jobId).isNotEqualTo(product.getId());
-        when(jobRepository.findByProductIdAndWorkshopId(
+        when(jobRepository.findByProductIdAndWorkshopIdForUpdate(
                 product.getId(), workshopId))
                 .thenReturn(Optional.of(job));
 
@@ -345,7 +369,7 @@ class SaleDetailHandlerPriceTest {
 
     @Test
     void jobCannotUseAServiceOfAnotherWorkshop() {
-        when(jobRepository.findByProductIdAndWorkshopId(
+        when(jobRepository.findByProductIdAndWorkshopIdForUpdate(
                 product.getId(), workshopId))
                 .thenReturn(Optional.empty());
 

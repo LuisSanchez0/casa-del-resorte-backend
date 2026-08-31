@@ -3,17 +3,16 @@ package com.cns.spring_house.cashclosure.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -26,28 +25,28 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.domain.Pageable;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 
-import com.cns.spring_house.cashclosure.dto.CashClosureBasePreviewResponseDTO;
 import com.cns.spring_house.cashclosure.dto.CashClosureCollectionsDTO;
-import com.cns.spring_house.cashclosure.dto.CashClosureDocumentDTO;
+import com.cns.spring_house.cashclosure.dto.CashClosureExchangeDTO;
 import com.cns.spring_house.cashclosure.dto.CashClosureInvoicingDTO;
-import com.cns.spring_house.cashclosure.dto.CashClosureReceivablesDTO;
 import com.cns.spring_house.cashclosure.dto.CashClosureResponseDTO;
-import com.cns.spring_house.cashclosure.dto.CashClosureSummaryResponseDTO;
-import com.cns.spring_house.cashclosure.dto.CreateCashClosureRequestDTO;
-import com.cns.spring_house.cashclosure.entity.CashBalanceStatus;
+import com.cns.spring_house.cashclosure.dto.ClosureExchangeInvoiceDTO;
+import com.cns.spring_house.cashclosure.dto.ClosurePaymentMethodDTO;
+import com.cns.spring_house.cashclosure.dto.ClosureSoldItemDTO;
+import com.cns.spring_house.cashclosure.dto.CashClosureRefundsDTO;
+import com.cns.spring_house.cashclosure.dto.ClosureRefundMethodDTO;
 import com.cns.spring_house.cashclosure.entity.CashClosure;
+import com.cns.spring_house.cashclosure.entity.ExchangeInvoiceScope;
 import com.cns.spring_house.cashclosure.mapper.CashClosureMapper;
 import com.cns.spring_house.cashclosure.report.CashClosureReportService;
 import com.cns.spring_house.cashclosure.repository.CashClosureRepository;
-import com.cns.spring_house.cashclosure.repository.projection.CashClosureSummaryProjection;
 import com.cns.spring_house.employee.entity.Employee;
+import com.cns.spring_house.family.entity.FamilyCategory;
+import com.cns.spring_house.sale.entity.PaymentMethod;
 import com.cns.spring_house.shared.config.time.TimeConfig;
-import com.cns.spring_house.shared.exception.EntityNotFoundException;
 import com.cns.spring_house.shared.exception.ValidationException;
 import com.cns.spring_house.shared.security.CurrentUserService;
 import com.cns.spring_house.workshop.entity.Workshop;
@@ -59,8 +58,8 @@ import com.cns.spring_house.workshop.repository.WorkshopRepository;
  *
  * El reloj es fijo porque la fecha operativa decide la ventana del dia y una
  * prueba ejecutada a las 23:59 seria intermitente. El mapper es el de verdad y
- * no un mock: la formula del arqueo vive en el, y sustituirlo por un doble
- * dejaria sin comprobar justo lo que importa.
+ * no un mock: el volcado de las cifras al snapshot vive en el, y sustituirlo por
+ * un doble dejaria sin comprobar justo lo que importa.
  */
 @ExtendWith(MockitoExtension.class)
 class CashClosureServiceImplTest {
@@ -130,24 +129,55 @@ class CashClosureServiceImplTest {
                 .build();
     }
 
-    /** El dia del ejemplo del enunciado: Q20,000 facturados y Q18,000 cobrados. */
-    private DailyCashFigures figures() {
-        return new DailyCashFigures(
-                TODAY,
-                new CashClosureInvoicingDTO(15, new BigDecimal("12000.00"),
-                        3, new BigDecimal("8000.00"), new BigDecimal("20000.00")),
-                new CashClosureCollectionsDTO(
-                        10, new BigDecimal("7000.00"),
-                        6, new BigDecimal("6000.00"),
-                        4, new BigDecimal("5000.00"),
-                        new BigDecimal("18000.00")),
-                new CashClosureReceivablesDTO(2, new BigDecimal("3000.00"),
-                        new BigDecimal("1000.00"), new BigDecimal("25000.00")));
-    }
+    private final UUID productId = UUID.randomUUID();
+    private final UUID pendingExchangeId = UUID.randomUUID();
 
-    private CreateCashClosureRequestDTO request() {
-        return new CreateCashClosureRequestDTO(
-                new BigDecimal("500.00"), new BigDecimal("7480.00"), "Sin novedad");
+    /**
+     * El ejemplo del enunciado: Q5,000 en facturas normales, Q2,000 emitidos a
+     * credito y sin cobrar, y Q1,000 de una cambiaria antigua cobrada hoy. El
+     * total cobrado es Q6,000.
+     */
+    private PeriodCashFigures figures() {
+        return new PeriodCashFigures(
+                TODAY,
+                List.of(new ClosureSoldItemDTO(
+                        productId, "RESORTE DELANTERO", FamilyCategory.NORMAL,
+                        4L, new BigDecimal("7000.00"))),
+                new BigDecimal("7000.00"),
+                new CashClosureInvoicingDTO(
+                        1L, new BigDecimal("5000.00"),
+                        1L, new BigDecimal("2000.00"),
+                        new BigDecimal("7000.00")),
+                new CashClosureExchangeDTO(
+                        1L, new BigDecimal("2000.00"), new BigDecimal("2000.00"),
+                        1L, new BigDecimal("1000.00"), new BigDecimal("1000.00"),
+                        List.of(new ClosureExchangeInvoiceDTO(
+                                pendingExchangeId, "AAAAAAAA", "TRANSPORTES",
+                                TODAY.atTime(11, 0), new BigDecimal("2000.00"),
+                                false, null, null)),
+                        List.of(new ClosureExchangeInvoiceDTO(
+                                UUID.randomUUID(), "BBBBBBBB", "FERRETERIA",
+                                TODAY.minusDays(1).atTime(11, 0),
+                                new BigDecimal("1000.00"), true,
+                                TODAY.atTime(15, 0), PaymentMethod.CASH))),
+                new CashClosureCollectionsDTO(
+                        List.of(
+                                new ClosurePaymentMethodDTO(
+                                        PaymentMethod.CASH, 2L, new BigDecimal("6000.00")),
+                                new ClosurePaymentMethodDTO(
+                                        PaymentMethod.CARD, 0L, new BigDecimal("0.00")),
+                                new ClosurePaymentMethodDTO(
+                                        PaymentMethod.TRANSFER, 0L, new BigDecimal("0.00"))),
+                        new BigDecimal("6000.00")),
+                new CashClosureRefundsDTO(
+                        List.of(
+                                new ClosureRefundMethodDTO(
+                                        PaymentMethod.CASH, 0L, new BigDecimal("0.00")),
+                                new ClosureRefundMethodDTO(
+                                        PaymentMethod.CARD, 0L, new BigDecimal("0.00")),
+                                new ClosureRefundMethodDTO(
+                                        PaymentMethod.TRANSFER, 0L, new BigDecimal("0.00"))),
+                        0L, new BigDecimal("0.00"), List.of()));
     }
 
     private void withFigures() {
@@ -164,28 +194,26 @@ class CashClosureServiceImplTest {
                 .thenReturn(Optional.of(workshop()));
     }
 
-    // ── GET preview ──────────────────────────────────────────────
+    // ── Previsualizacion ─────────────────────────────────────────
 
     @Test
-    void theBasePreviewUsesTheWorkshopFromTheTokenAndTheBusinessDateFromTheClock() {
+    void thePreviewUsesTheWorkshopFromTheTokenAndTheDateFromTheClock() {
         withFigures();
         when(repository.findByWorkshopIdAndBusinessDate(workshopId, TODAY))
                 .thenReturn(Optional.empty());
 
-        CashClosureBasePreviewResponseDTO preview = service.getPreview();
+        CashClosureResponseDTO preview = service.getPreview();
 
         assertThat(preview.businessDate()).isEqualTo(TODAY);
-        assertThat(preview.invoicing().totalInvoiced()).isEqualByComparingTo("20000.00");
-        assertThat(preview.collections().totalCollected()).isEqualByComparingTo("18000.00");
-        assertThat(preview.receivables().pendingAmount()).isEqualByComparingTo("25000.00");
         assertThat(preview.alreadyClosed()).isFalse();
-        assertThat(preview.closureId()).isNull();
+        assertThat(preview.id()).isNull();
+        assertThat(preview.collections().totalCollected()).isEqualByComparingTo("6000.00");
         verify(calculator).calculate(workshopId, TODAY);
     }
 
-    /** Consultar la previsualizacion no escribe nada, pase lo que pase. */
+    /** Consultar la previsualizacion no cierra la caja ni escribe una fila. */
     @Test
-    void theBasePreviewNeverPersistsAnything() {
+    void thePreviewNeverPersistsAnything() {
         withFigures();
         when(repository.findByWorkshopIdAndBusinessDate(workshopId, TODAY))
                 .thenReturn(Optional.empty());
@@ -194,106 +222,36 @@ class CashClosureServiceImplTest {
 
         verify(repository, never()).save(any());
         verify(repository, never()).saveAndFlush(any());
+        verifyNoInteractions(workshopRepository);
     }
 
     @Test
-    void theBasePreviewReportsAnExistingClosureSoTheScreenCanOfferTheSnapshot() {
-        UUID closureId = UUID.randomUUID();
-        CashClosure existing = CashClosure.builder().businessDate(TODAY).build();
-        existing.setId(closureId);
-
+    void thePreviewReportsAnExistingClosureSoTheScreenCanOfferTheSnapshot() {
         withFigures();
+        CashClosure existing = CashClosure.builder()
+                .workshop(workshop())
+                .closedBy(employee())
+                .businessDate(TODAY)
+                .build();
+        existing.setId(UUID.randomUUID());
         when(repository.findByWorkshopIdAndBusinessDate(workshopId, TODAY))
                 .thenReturn(Optional.of(existing));
 
-        CashClosureBasePreviewResponseDTO preview = service.getPreview();
+        CashClosureResponseDTO preview = service.getPreview();
 
         assertThat(preview.alreadyClosed()).isTrue();
-        assertThat(preview.closureId()).isEqualTo(closureId);
-    }
-
-    // ── POST preview ─────────────────────────────────────────────
-
-    /**
-     * El caso del enunciado: fondo Q500, efectivo cobrado Q7,000, esperado
-     * Q7,500, contado Q7,480, diferencia -Q20 y FALTANTE.
-     */
-    @Test
-    void theFinalPreviewComputesExpectedCashAndDifferenceFromCashOnly() {
-        withFigures();
-        when(repository.existsByWorkshopIdAndBusinessDate(workshopId, TODAY))
-                .thenReturn(false);
-
-        CashClosureResponseDTO preview = service.preview(request());
-
-        assertThat(preview.cashReconciliation().openingCash())
-                .isEqualByComparingTo("500.00");
-        assertThat(preview.cashReconciliation().expectedCash())
-                .isEqualByComparingTo("7500.00");
-        assertThat(preview.cashReconciliation().countedCash())
-                .isEqualByComparingTo("7480.00");
-        assertThat(preview.cashReconciliation().difference())
-                .isEqualByComparingTo("-20.00");
-        assertThat(preview.cashReconciliation().status())
-                .isEqualTo(CashBalanceStatus.SHORT);
-    }
-
-    /** Es una previsualizacion: no tiene identidad, ni firma, ni fecha de cierre. */
-    @Test
-    void theFinalPreviewHasNoIdentityAndPersistsNothing() {
-        withFigures();
-        when(repository.existsByWorkshopIdAndBusinessDate(workshopId, TODAY))
-                .thenReturn(false);
-
-        CashClosureResponseDTO preview = service.preview(request());
-
-        assertThat(preview.id()).isNull();
-        assertThat(preview.closedAt()).isNull();
-        assertThat(preview.closedBy()).isNull();
-        assertThat(preview.alreadyClosed()).isFalse();
-
-        verify(repository, never()).save(any());
-        verify(repository, never()).saveAndFlush(any());
-        verify(workshopRepository, never()).lockById(any());
-    }
-
-    @Test
-    void generatingThePreviewPdfNeitherClosesTheRegisterNorPersistsTheClosure() {
-        withFigures();
-        when(repository.existsByWorkshopIdAndBusinessDate(workshopId, TODAY))
-                .thenReturn(false);
-        when(currentUserService.getCurrentEmployee()).thenReturn(employee());
-        when(reportService.renderDaily(any(), any(), eq(true), any()))
-                .thenReturn(new byte[] { 1, 2, 3 });
-
-        CashClosureDocumentDTO document = service.previewDocument(request());
-
-        assertThat(document.fileName())
-                .isEqualTo("previsualizacion-cierre-caja-2026-08-20.pdf");
-        assertThat(document.content()).isNotEmpty();
-        verify(repository, never()).save(any());
-        verify(repository, never()).saveAndFlush(any());
-    }
-
-    /** El PDF de borrador se pide SIEMPRE marcado como previsualizacion. */
-    @Test
-    void thePreviewPdfIsRenderedAsADraftAndSignedByWhoeverAskedForIt() {
-        withFigures();
-        when(repository.existsByWorkshopIdAndBusinessDate(workshopId, TODAY))
-                .thenReturn(false);
-        when(currentUserService.getCurrentEmployee()).thenReturn(employee());
-        when(reportService.renderDaily(any(), any(), eq(true), any()))
-                .thenReturn(new byte[] { 1 });
-
-        service.previewDocument(request());
-
-        verify(reportService).renderDaily(any(), any(), eq(true), eq("ANA LOPEZ"));
+        assertThat(preview.id()).isEqualTo(existing.getId());
     }
 
     // ── Cierre ───────────────────────────────────────────────────
 
+    /**
+     * El cierre vuelca TODO el detalle en el snapshot: articulos, documentos
+     * cambiarios en sus dos papeles y formas de pago. Sin ese detalle, el
+     * historico no podria reconstruir el dia sin volver a consultar `sale`.
+     */
     @Test
-    void closingRecalculatesTheDayAndPersistsTheSnapshot() {
+    void closingPersistsTheWholeSnapshot() {
         withAuthenticatedEmployee();
         withLockableWorkshop();
         withFigures();
@@ -302,35 +260,66 @@ class CashClosureServiceImplTest {
         when(repository.saveAndFlush(any(CashClosure.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
-        service.close(request());
+        service.close();
 
         ArgumentCaptor<CashClosure> captor = ArgumentCaptor.forClass(CashClosure.class);
         verify(repository).saveAndFlush(captor.capture());
         CashClosure saved = captor.getValue();
 
         assertThat(saved.getBusinessDate()).isEqualTo(TODAY);
-        assertThat(saved.getInvoiceCount()).isEqualTo(15);
-        assertThat(saved.getInvoiceTotal()).isEqualByComparingTo("12000.00");
-        assertThat(saved.getExchangeInvoiceTotal()).isEqualByComparingTo("8000.00");
-        assertThat(saved.getTotalInvoiced()).isEqualByComparingTo("20000.00");
-        assertThat(saved.getCashPayments()).isEqualByComparingTo("7000.00");
-        assertThat(saved.getCardPayments()).isEqualByComparingTo("6000.00");
-        assertThat(saved.getTransferPayments()).isEqualByComparingTo("5000.00");
-        assertThat(saved.getTotalCollected()).isEqualByComparingTo("18000.00");
-        assertThat(saved.getExchangeCollectedAmount()).isEqualByComparingTo("3000.00");
-        assertThat(saved.getPreviousExchangeCollectedAmount())
-                .isEqualByComparingTo("1000.00");
-        assertThat(saved.getPendingExchangeAmount()).isEqualByComparingTo("25000.00");
-        assertThat(saved.getOpeningCash()).isEqualByComparingTo("500.00");
-        assertThat(saved.getExpectedCash()).isEqualByComparingTo("7500.00");
-        assertThat(saved.getCountedCash()).isEqualByComparingTo("7480.00");
-        assertThat(saved.getDifference()).isEqualByComparingTo("-20.00");
-        assertThat(saved.getNotes()).isEqualTo("Sin novedad");
+        assertThat(saved.getTotalInvoiced()).isEqualByComparingTo("7000.00");
+        assertThat(saved.getTotalCollected()).isEqualByComparingTo("6000.00");
+        assertThat(saved.getItemsBilledAmount()).isEqualByComparingTo("7000.00");
+        // Lo emitido a credito y aun sin cobrar queda registrado como tal.
+        assertThat(saved.getIssuedExchangePendingAmount()).isEqualByComparingTo("2000.00");
+
+        assertThat(saved.getItems()).hasSize(1);
+        assertThat(saved.getItems().get(0).getProductId()).isEqualTo(productId);
+        assertThat(saved.getItems().get(0).getQuantity()).isEqualTo(4L);
+
+        // Un documento por papel: emitido y cobrado son conjuntos distintos.
+        assertThat(saved.getExchangeInvoices()).hasSize(2);
+        assertThat(saved.getExchangeInvoices())
+                .extracting(invoice -> invoice.getScope())
+                .containsExactlyInAnyOrder(
+                        ExchangeInvoiceScope.ISSUED, ExchangeInvoiceScope.COLLECTED);
+
+        assertThat(saved.getPaymentMethods()).hasSize(PaymentMethod.values().length);
     }
 
     /**
-     * El cerrojo se toma ANTES de comprobar si ya existe cierre. Al reves, dos
-     * peticiones simultaneas comprobarian las dos con la caja abierta.
+     * El estado de cada cambiaria se CONGELA. La emitida hoy queda registrada
+     * como pendiente: cobrarla manana no puede reescribir el cierre de hoy.
+     */
+    @Test
+    void closingFreezesTheStatusOfEachExchangeInvoice() {
+        withAuthenticatedEmployee();
+        withLockableWorkshop();
+        withFigures();
+        when(repository.existsByWorkshopIdAndBusinessDate(workshopId, TODAY))
+                .thenReturn(false);
+        when(repository.saveAndFlush(any(CashClosure.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.close();
+
+        ArgumentCaptor<CashClosure> captor = ArgumentCaptor.forClass(CashClosure.class);
+        verify(repository).saveAndFlush(captor.capture());
+
+        assertThat(captor.getValue().getExchangeInvoices())
+                .filteredOn(invoice -> invoice.getScope() == ExchangeInvoiceScope.ISSUED)
+                .singleElement()
+                .satisfies(invoice -> {
+                    assertThat(invoice.isCollected()).isFalse();
+                    assertThat(invoice.getPaidAt()).isNull();
+                    assertThat(invoice.getPaymentMethod()).isNull();
+                    assertThat(invoice.getSaleId()).isEqualTo(pendingExchangeId);
+                });
+    }
+
+    /**
+     * El cerrojo del taller se toma ANTES de comprobar si el dia ya esta
+     * cerrado. Al reves, dos cierres simultaneos leerian los dos "no cerrado".
      */
     @Test
     void closingLocksTheWorkshopBeforeCheckingWhetherTheDayIsAlreadyClosed() {
@@ -342,12 +331,11 @@ class CashClosureServiceImplTest {
         when(repository.saveAndFlush(any(CashClosure.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
-        service.close(request());
+        service.close();
 
         InOrder order = inOrder(workshopRepository, repository);
         order.verify(workshopRepository).lockById(workshopId);
         order.verify(repository).existsByWorkshopIdAndBusinessDate(workshopId, TODAY);
-        order.verify(repository).saveAndFlush(any(CashClosure.class));
     }
 
     @Test
@@ -357,40 +345,18 @@ class CashClosureServiceImplTest {
         when(repository.existsByWorkshopIdAndBusinessDate(workshopId, TODAY))
                 .thenReturn(true);
 
-        assertThatThrownBy(() -> service.close(request()))
+        assertThatThrownBy(() -> service.close())
                 .isInstanceOf(ValidationException.class)
                 .hasMessageContaining("ya fue cerrada");
 
         verify(repository, never()).saveAndFlush(any());
-        verify(calculator, never()).calculate(any(), any());
+        verifyNoInteractions(calculator);
     }
 
-    /** Del cliente solo se aceptan fondo, contado y nota; el resto lo calcula el servidor. */
-    @Test
-    void closingIgnoresAnyFigureTheClientCouldTryToSuggest() {
-        withAuthenticatedEmployee();
-        withLockableWorkshop();
-        withFigures();
-        when(repository.existsByWorkshopIdAndBusinessDate(workshopId, TODAY))
-                .thenReturn(false);
-        when(repository.saveAndFlush(any(CashClosure.class)))
-                .thenAnswer(invocation -> invocation.getArgument(0));
-
-        CashClosureResponseDTO closed = service.close(new CreateCashClosureRequestDTO(
-                new BigDecimal("500.00"), new BigDecimal("7500.00"), null));
-
-        // Las cifras salen del calculador, no de la peticion.
-        assertThat(closed.collections().totalCollected()).isEqualByComparingTo("18000.00");
-        assertThat(closed.cashReconciliation().difference()).isEqualByComparingTo("0.00");
-        assertThat(closed.cashReconciliation().status())
-                .isEqualTo(CashBalanceStatus.BALANCED);
-        assertThat(closed.notes()).isNull();
-    }
-
-    // ── Bloqueo de ventas ────────────────────────────────────────
+    // ── Bloqueo de ventas y cobros ───────────────────────────────
 
     @Test
-    void theGuardLetsSalesThroughWhileTheRegisterIsOpen() {
+    void theGuardLetsActivityThroughWhileTheRegisterIsOpen() {
         withLockableWorkshop();
         when(repository.existsByWorkshopIdAndBusinessDate(workshopId, TODAY))
                 .thenReturn(false);
@@ -400,310 +366,88 @@ class CashClosureServiceImplTest {
         verify(workshopRepository).lockById(workshopId);
     }
 
+    /**
+     * Cubre ventas Y cobros: una vez cerrada la caja del dia, ni se emite un
+     * documento nuevo ni se cobra uno antiguo con fecha de hoy.
+     */
     @Test
-    void theGuardRejectsSalesOnceTheDayIsClosed() {
+    void theGuardRejectsActivityOnceTheDayIsClosed() {
         withLockableWorkshop();
         when(repository.existsByWorkshopIdAndBusinessDate(workshopId, TODAY))
                 .thenReturn(true);
 
         assertThatThrownBy(() -> service.ensureCashRegisterIsOpen(workshopId))
                 .isInstanceOf(ValidationException.class)
-                .hasMessage("La caja del dia ya fue cerrada. "
-                        + "No se pueden registrar nuevas ventas ni cobros");
+                .hasMessageContaining("ventas ni cobros");
     }
 
-    /** El bloqueo mira la fecha operativa del reloj, no una que envie nadie. */
-    @Test
-    void theGuardAsksForTheBusinessDateResolvedByTheClock() {
-        withLockableWorkshop();
-        when(repository.existsByWorkshopIdAndBusinessDate(workshopId, TODAY))
-                .thenReturn(false);
+    // ── Lecturas historicas ──────────────────────────────────────
 
-        service.ensureCashRegisterIsOpen(workshopId);
-
-        verify(repository).existsByWorkshopIdAndBusinessDate(workshopId, TODAY);
-    }
-
-    // ── Historico ────────────────────────────────────────────────
-
+    /** Un cierre se busca SIEMPRE con su taller: el UUID solo no basta. */
     @Test
     void aHistoricalClosureIsAlwaysLookedUpTogetherWithItsWorkshop() {
-        UUID closureId = UUID.randomUUID();
-        when(repository.findByIdAndWorkshopId(closureId, workshopId))
-                .thenReturn(Optional.empty());
-
-        assertThatThrownBy(() -> service.get(closureId))
-                .isInstanceOf(EntityNotFoundException.class);
-
-        verify(repository).findByIdAndWorkshopId(closureId, workshopId);
-    }
-
-    /** El historico se lee del snapshot: el calculador no participa. */
-    @Test
-    void readingAHistoricalClosureNeverRecalculatesItAgainstSales() {
-        UUID closureId = UUID.randomUUID();
-        CashClosure closure = snapshot(new BigDecimal("-20.00"));
-        closure.setId(closureId);
-        when(repository.findByIdAndWorkshopId(closureId, workshopId))
+        UUID id = UUID.randomUUID();
+        CashClosure closure = snapshot(id);
+        when(repository.findByIdAndWorkshopId(id, workshopId))
                 .thenReturn(Optional.of(closure));
 
-        CashClosureResponseDTO response = service.get(closureId);
+        service.get(id);
 
-        assertThat(response.invoicing().totalInvoiced()).isEqualByComparingTo("20000.00");
-        assertThat(response.cashReconciliation().difference()).isEqualByComparingTo("-20.00");
-        assertThat(response.alreadyClosed()).isTrue();
-        verify(calculator, never()).calculate(any(), any());
-    }
-
-    private CashClosure snapshot(BigDecimal difference) {
-        return CashClosure.builder()
-                .workshop(workshop())
-                .closedBy(employee())
-                .businessDate(TODAY)
-                .openingCash(new BigDecimal("500.00"))
-                .invoiceCount(15).invoiceTotal(new BigDecimal("12000.00"))
-                .exchangeInvoiceCount(3).exchangeInvoiceTotal(new BigDecimal("8000.00"))
-                .totalInvoiced(new BigDecimal("20000.00"))
-                .cashPaymentCount(10).cashPayments(new BigDecimal("7000.00"))
-                .cardPaymentCount(6).cardPayments(new BigDecimal("6000.00"))
-                .transferPaymentCount(4).transferPayments(new BigDecimal("5000.00"))
-                .totalCollected(new BigDecimal("18000.00"))
-                .exchangeCollectedCount(2)
-                .exchangeCollectedAmount(new BigDecimal("3000.00"))
-                .previousExchangeCollectedAmount(new BigDecimal("1000.00"))
-                .pendingExchangeAmount(new BigDecimal("25000.00"))
-                .expectedCash(new BigDecimal("7500.00"))
-                .countedCash(new BigDecimal("7480.00"))
-                .difference(difference)
-                .build();
-    }
-
-    // ── Rango ────────────────────────────────────────────────────
-
-    @Test
-    void anInvertedOrOversizedRangeIsRejectedBeforeTouchingTheDatabase() {
-        assertThatThrownBy(() -> service.getSummary(
-                LocalDate.of(2026, 8, 31), LocalDate.of(2026, 8, 1)))
-                .isInstanceOf(ValidationException.class)
-                .hasMessageContaining("posterior");
-
-        assertThatThrownBy(() -> service.getSummary(
-                LocalDate.of(2020, 1, 1), LocalDate.of(2026, 8, 1)))
-                .isInstanceOf(ValidationException.class)
-                .hasMessageContaining("366");
-
-        assertThatThrownBy(() -> service.getRange(null, LocalDate.of(2026, 8, 1)))
-                .isInstanceOf(ValidationException.class);
+        verify(repository).findByIdAndWorkshopId(id, workshopId);
+        verify(repository, never()).findById(any());
     }
 
     /**
-     * La cartera final del rango es el saldo del ULTIMO cierre, no la suma de
-     * los saldos diarios: cada uno es una foto del total pendiente.
+     * Leer un cierre confirmado NUNCA lo recalcula. Es lo que hace inmutable el
+     * historico: el calculador no llega a intervenir.
      */
     @Test
-    void theRangeTakesTheEndingPortfolioFromTheMostRecentClosure() {
-        LocalDate from = LocalDate.of(2026, 8, 1);
-        LocalDate to = LocalDate.of(2026, 8, 3);
+    void readingAHistoricalClosureNeverRecalculatesItAgainstSales() {
+        UUID id = UUID.randomUUID();
+        when(repository.findByIdAndWorkshopId(id, workshopId))
+                .thenReturn(Optional.of(snapshot(id)));
 
-        when(repository.summarizeRange(workshopId, from, to)).thenReturn(summaryRow());
-        when(repository.findDaySummaries(workshopId, from, to)).thenReturn(List.of());
-        when(repository.findPendingExchangeAmounts(
-                eq(workshopId), eq(from), eq(to), any(Pageable.class)))
-                .thenReturn(List.of(new BigDecimal("25000.00")));
+        CashClosureResponseDTO response = service.get(id);
 
-        CashClosureSummaryResponseDTO summary = service.getSummary(from, to);
-
-        assertThat(summary.receivables().endingPendingAmount())
-                .isEqualByComparingTo("25000.00");
-        assertThat(summary.closureCount()).isEqualTo(3);
-        assertThat(summary.balance().netCashDifference()).isEqualByComparingTo("-15.00");
-        assertThat(summary.balance().balancedClosures()).isEqualTo(1);
-        assertThat(summary.balance().shortClosures()).isEqualTo(1);
-        assertThat(summary.balance().overClosures()).isEqualTo(1);
+        assertThat(response.collections().totalCollected()).isEqualByComparingTo("6000.00");
+        verifyNoInteractions(calculator);
     }
+
+    /** Un cierre confirmado siempre se declara como tal. */
+    @Test
+    void aSnapshotAlwaysReportsItselfAsClosed() {
+        UUID id = UUID.randomUUID();
+        when(repository.findByIdAndWorkshopId(id, workshopId))
+                .thenReturn(Optional.of(snapshot(id)));
+
+        assertThat(service.get(id).alreadyClosed()).isTrue();
+    }
+
+    // ── Cierre mensual ───────────────────────────────────────────
 
     @Test
-    void aRangeWithoutClosuresReportsZeroPendingInsteadOfFailing() {
-        LocalDate from = LocalDate.of(2026, 1, 1);
-        LocalDate to = LocalDate.of(2026, 1, 5);
+    void anInvalidMonthIsRejectedBeforeTouchingTheDatabase() {
+        assertThatThrownBy(() -> service.getMonthly(2026, 0))
+                .isInstanceOf(ValidationException.class);
+        assertThatThrownBy(() -> service.getMonthly(2026, 13))
+                .isInstanceOf(ValidationException.class);
+        assertThatThrownBy(() -> service.getMonthly(1990, 5))
+                .isInstanceOf(ValidationException.class);
 
-        when(repository.summarizeRange(workshopId, from, to)).thenReturn(emptySummaryRow());
-        when(repository.findDaySummaries(workshopId, from, to)).thenReturn(List.of());
-        when(repository.findPendingExchangeAmounts(
-                eq(workshopId), eq(from), eq(to), any(Pageable.class)))
-                .thenReturn(List.of());
-
-        CashClosureSummaryResponseDTO summary = service.getSummary(from, to);
-
-        assertThat(summary.closureCount()).isZero();
-        assertThat(summary.receivables().endingPendingAmount()).isEqualByComparingTo("0.00");
-        assertThat(summary.days()).isEmpty();
+        verifyNoInteractions(repository);
     }
 
-    private CashClosureSummaryProjection summaryRow() {
-        return projection(3, new BigDecimal("-15.00"), 1, 1, 1);
-    }
-
-    private CashClosureSummaryProjection emptySummaryRow() {
-        return projection(0, BigDecimal.ZERO, 0, 0, 0);
-    }
-
-    private CashClosureSummaryProjection projection(
-            long closures, BigDecimal net, long balanced, long shortOnes, long over) {
-        return new CashClosureSummaryProjection() {
-            @Override
-            public long getClosureCount() {
-                return closures;
-            }
-
-            @Override
-            public long getInvoiceCount() {
-                return 0;
-            }
-
-            @Override
-            public BigDecimal getInvoiceTotal() {
-                return BigDecimal.ZERO;
-            }
-
-            @Override
-            public long getExchangeInvoiceCount() {
-                return 0;
-            }
-
-            @Override
-            public BigDecimal getExchangeInvoiceTotal() {
-                return BigDecimal.ZERO;
-            }
-
-            @Override
-            public BigDecimal getTotalInvoiced() {
-                return BigDecimal.ZERO;
-            }
-
-            @Override
-            public long getCashPaymentCount() {
-                return 0;
-            }
-
-            @Override
-            public BigDecimal getCashPayments() {
-                return BigDecimal.ZERO;
-            }
-
-            @Override
-            public long getCardPaymentCount() {
-                return 0;
-            }
-
-            @Override
-            public BigDecimal getCardPayments() {
-                return BigDecimal.ZERO;
-            }
-
-            @Override
-            public long getTransferPaymentCount() {
-                return 0;
-            }
-
-            @Override
-            public BigDecimal getTransferPayments() {
-                return BigDecimal.ZERO;
-            }
-
-            @Override
-            public BigDecimal getTotalCollected() {
-                return BigDecimal.ZERO;
-            }
-
-            @Override
-            public long getExchangeCollectedCount() {
-                return 0;
-            }
-
-            @Override
-            public BigDecimal getExchangeCollectedAmount() {
-                return BigDecimal.ZERO;
-            }
-
-            @Override
-            public long getBalancedClosures() {
-                return balanced;
-            }
-
-            @Override
-            public long getShortClosures() {
-                return shortOnes;
-            }
-
-            @Override
-            public long getOverClosures() {
-                return over;
-            }
-
-            @Override
-            public BigDecimal getNetCashDifference() {
-                return net;
-            }
-        };
-    }
-
-    // ── Arqueo derivado ──────────────────────────────────────────
-
-    @Test
-    void theBalanceStatusIsDerivedFromTheSignOfTheDifference() {
-        assertThat(CashBalanceStatus.of(new BigDecimal("0.00")))
-                .isEqualTo(CashBalanceStatus.BALANCED);
-        assertThat(CashBalanceStatus.of(new BigDecimal("-0.01")))
-                .isEqualTo(CashBalanceStatus.SHORT);
-        assertThat(CashBalanceStatus.of(new BigDecimal("5.00")))
-                .isEqualTo(CashBalanceStatus.OVER);
-    }
-
-    @Test
-    void aClosureFileIsNamedAfterItsBusinessDate() {
-        UUID closureId = UUID.randomUUID();
-        CashClosure closure = snapshot(BigDecimal.ZERO);
-        closure.setId(closureId);
+    /** Un snapshot minimo con las cifras del ejemplo ya volcadas. */
+    private CashClosure snapshot(UUID id) {
+        CashClosure closure = CashClosure.builder()
+                .workshop(workshop())
+                .closedBy(employee())
+                .businessDate(TODAY)
+                .build();
+        closure.setId(id);
         closure.setCreatedAt(LocalDateTime.of(2026, 8, 20, 19, 0));
-        when(repository.findByIdAndWorkshopId(closureId, workshopId))
-                .thenReturn(Optional.of(closure));
-        when(reportService.renderDaily(any(), any(), eq(false), any()))
-                .thenReturn(new byte[] { 1 });
-
-        CashClosureDocumentDTO document = service.document(closureId);
-
-        assertThat(document.fileName()).isEqualTo("cierre-caja-2026-08-20.pdf");
-        verify(reportService).renderDaily(any(), any(), eq(false), eq("ANA LOPEZ"));
-    }
-
-    @Test
-    void theRangeReportIsNamedAfterBothEnds() {
-        LocalDate from = LocalDate.of(2026, 8, 1);
-        LocalDate to = LocalDate.of(2026, 8, 31);
-
-        when(repository.summarizeRange(workshopId, from, to)).thenReturn(emptySummaryRow());
-        when(repository.findDaySummaries(workshopId, from, to)).thenReturn(List.of());
-        when(repository.findPendingExchangeAmounts(
-                eq(workshopId), eq(from), eq(to), any(Pageable.class)))
-                .thenReturn(List.of());
-        when(currentUserService.getCurrentWorkshop()).thenReturn(workshop());
-        when(reportService.renderSummary(any(), any())).thenReturn(new byte[] { 1 });
-
-        CashClosureDocumentDTO document = service.summaryDocument(from, to);
-
-        assertThat(document.fileName())
-                .isEqualTo("resumen-caja-2026-08-01-a-2026-08-31.pdf");
-    }
-
-    /** Zona de negocio: a las 18:45 de Guatemala la fecha operativa sigue siendo hoy. */
-    @Test
-    void theBusinessDateFollowsTheWorkshopTimeZoneAndNotTheServerDefault() {
-        withFigures();
-        when(repository.findByWorkshopIdAndBusinessDate(workshopId, TODAY))
-                .thenReturn(Optional.empty());
-        assertThat(ZoneId.of("America/Guatemala")).isEqualTo(TimeConfig.BUSINESS_ZONE);
-        assertThat(service.getPreview().businessDate()).isEqualTo(TODAY);
+        new CashClosureMapper().applyFigures(closure, figures());
+        return closure;
     }
 
 }

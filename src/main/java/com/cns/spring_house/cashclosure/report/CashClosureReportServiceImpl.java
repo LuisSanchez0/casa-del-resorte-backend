@@ -5,17 +5,19 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.LocalDateTime;
+import java.util.List;
 
 import org.springframework.stereotype.Service;
 
 import com.cns.spring_house.cashclosure.dto.CashClosureCollectionsDTO;
-import com.cns.spring_house.cashclosure.dto.CashClosureDaySummaryDTO;
+import com.cns.spring_house.cashclosure.dto.CashClosureExchangeDTO;
 import com.cns.spring_house.cashclosure.dto.CashClosureInvoicingDTO;
-import com.cns.spring_house.cashclosure.dto.CashClosureReceivablesDTO;
+import com.cns.spring_house.cashclosure.dto.CashClosureRefundsDTO;
+import com.cns.spring_house.cashclosure.dto.ClosureRefundMethodDTO;
 import com.cns.spring_house.cashclosure.dto.CashClosureResponseDTO;
-import com.cns.spring_house.cashclosure.dto.CashClosureSummaryResponseDTO;
-import com.cns.spring_house.cashclosure.dto.CashReconciliationDTO;
-import com.cns.spring_house.cashclosure.entity.CashBalanceStatus;
+import com.cns.spring_house.cashclosure.dto.ClosureExchangeInvoiceDTO;
+import com.cns.spring_house.cashclosure.dto.ClosurePaymentMethodDTO;
+import com.cns.spring_house.cashclosure.dto.ClosureSoldItemDTO;
 import com.cns.spring_house.shared.exception.FileProcessingException;
 
 import lombok.RequiredArgsConstructor;
@@ -60,12 +62,15 @@ public class CashClosureReportServiceImpl implements CashClosureReportService {
             statusBadge(canvas, draft);
             metadata(canvas, closure, draft, responsible, generatedAt);
 
+            // El orden es el de las preguntas que el cierre responde: que se
+            // vendio, cuanto se emitio, que quedo a credito y como entro el
+            // dinero. El total cobrado cierra el documento porque es la cifra
+            // que la persona busca.
+            soldItemsSection(canvas, closure);
             invoicingSection(canvas, closure.invoicing());
+            exchangeSection(canvas, closure.exchange());
             collectionsSection(canvas, closure.collections());
-            receivablesSection(canvas, closure.receivables());
-            reconciliationSection(canvas, closure.cashReconciliation(),
-                    closure.collections().cashAmount());
-            notesSection(canvas, closure.notes());
+            refundsSection(canvas, closure);
 
             String footerRight = closure.id() == null
                     ? "Documento sin valor de cierre"
@@ -75,38 +80,6 @@ public class CashClosureReportServiceImpl implements CashClosureReportService {
         } catch (IOException exception) {
             throw new FileProcessingException(
                     "No se pudo generar el PDF del cierre de caja");
-        }
-    }
-
-    @Override
-    public byte[] renderSummary(
-            CashClosureSummaryResponseDTO summary, ReportHeaderDTO header) {
-
-        LocalDateTime generatedAt = LocalDateTime.now(clock);
-        try (PdfCanvas canvas = new PdfCanvas()) {
-            documentHeader(canvas, header, "RESUMEN DE CAJA",
-                    ReportFormats.date(summary.from())
-                            + "  a  " + ReportFormats.date(summary.to()));
-
-            canvas.moveDown(6f);
-            metadataRow(canvas, "Cierres realizados",
-                    ReportFormats.count(summary.closureCount()));
-            metadataRow(canvas, "Generado",
-                    ReportFormats.dateTime(generatedAt));
-            canvas.moveDown(8f);
-
-            summaryInvoicing(canvas, summary.invoicing());
-            summaryCollections(canvas, summary.collections());
-            summaryReceivables(canvas, summary.receivables());
-            summaryBalance(canvas, summary);
-            dailyTable(canvas, summary);
-
-            return canvas.finish(
-                    "Generado el " + ReportFormats.dateTime(generatedAt),
-                    "Resumen de caja");
-        } catch (IOException exception) {
-            throw new FileProcessingException(
-                    "No se pudo generar el PDF del resumen de caja");
         }
     }
 
@@ -213,204 +186,28 @@ public class CashClosureReportServiceImpl implements CashClosureReportService {
 
     // ── Secciones del reporte diario ─────────────────────────────
 
-    private void invoicingSection(PdfCanvas canvas, CashClosureInvoicingDTO invoicing)
-            throws IOException {
-        sectionTitle(canvas, "FACTURACION");
-        amountRow(canvas, "Facturas",
-                invoicing.invoiceCount(), invoicing.invoiceTotal(), false);
-        amountRow(canvas, "Facturas cambiarias",
-                invoicing.exchangeInvoiceCount(), invoicing.exchangeInvoiceTotal(), true);
-        totalRow(canvas, "TOTAL FACTURADO", invoicing.totalInvoiced());
-    }
-
-    private void collectionsSection(
-            PdfCanvas canvas, CashClosureCollectionsDTO collections) throws IOException {
-        sectionTitle(canvas, "COBROS");
-        amountRow(canvas, "Efectivo",
-                collections.cashCount(), collections.cashAmount(), false);
-        amountRow(canvas, "Tarjeta",
-                collections.cardCount(), collections.cardAmount(), true);
-        amountRow(canvas, "Transferencia / Deposito",
-                collections.transferCount(), collections.transferAmount(), false);
-        totalRow(canvas, "TOTAL COBRADO", collections.totalCollected());
-    }
-
-    private void receivablesSection(
-            PdfCanvas canvas, CashClosureReceivablesDTO receivables) throws IOException {
-        sectionTitle(canvas, "CARTERA CAMBIARIA");
-        amountRow(canvas, "Cambiarias cobradas hoy",
-                receivables.collectedCount(), receivables.collectedAmount(), false);
-        labelledAmountRow(canvas, "   de cartera de dias anteriores",
-                receivables.previousCollectedAmount(), true, ReportPalette.TEXT_MUTED);
-        labelledAmountRow(canvas, "Cartera pendiente total",
-                receivables.pendingAmount(), false, ReportPalette.TEXT);
-        // Esta seccion no termina en un total, que es lo que en las demas deja
-        // aire antes del siguiente titulo. Sin este respiro, la ultima fila
-        // quedaba pegada a la cabecera de ARQUEO y parecian el mismo bloque.
-        canvas.moveDown(12f);
-    }
-
     /**
-     * El arqueo repite el efectivo cobrado aunque ya aparezca en COBROS: es el
-     * sumando que explica el efectivo esperado, y sin el la resta final parece
-     * salir de la nada.
+     * Que se vendio. Va primero porque es la pregunta con la que el taller
+     * empieza a leer el cierre.
+     *
+     * Es actividad FACTURADA: una cambiaria emitida y aun sin cobrar aporta sus
+     * articulos aqui, aunque su dinero no aparezca en el total cobrado.
      */
-    private void reconciliationSection(
-            PdfCanvas canvas,
-            CashReconciliationDTO reconciliation,
-            BigDecimal cashCollected) throws IOException {
-
-        sectionTitle(canvas, "ARQUEO DE EFECTIVO");
-        labelledAmountRow(canvas, "Fondo inicial",
-                reconciliation.openingCash(), false, ReportPalette.TEXT);
-        labelledAmountRow(canvas, "Cobrado en efectivo",
-                cashCollected, true, ReportPalette.TEXT);
-        totalRow(canvas, "EFECTIVO ESPERADO", reconciliation.expectedCash());
-        labelledAmountRow(canvas, "Efectivo contado",
-                reconciliation.countedCash(), false, ReportPalette.TEXT);
-
-        differenceRow(canvas, reconciliation);
-    }
-
-    /**
-     * La diferencia y su lectura van juntas y en color: en un cierre impreso, el
-     * dato que se busca primero es si la caja cuadro.
-     */
-    private void differenceRow(PdfCanvas canvas, CashReconciliationDTO reconciliation)
+    private void soldItemsSection(PdfCanvas canvas, CashClosureResponseDTO closure)
             throws IOException {
-        canvas.ensureSpace(TOTAL_ROW_HEIGHT + 4f);
-        CashBalanceStatus status = reconciliation.status();
-        Color color = switch (status) {
-            case SHORT -> ReportPalette.DANGER;
-            case OVER, BALANCED -> ReportPalette.SUCCESS;
-        };
-        String label = switch (status) {
-            case SHORT -> "FALTANTE";
-            case OVER -> "SOBRANTE";
-            case BALANCED -> "CUADRADA";
-        };
+        sectionTitle(canvas, "ARTICULOS VENDIDOS");
 
-        float top = canvas.cursor();
-        float height = TOTAL_ROW_HEIGHT;
-        canvas.line(canvas.left(), top, canvas.right(), top, ReportPalette.BORDER, 0.7f);
-
-        float baseline = top - height + 6f;
-        canvas.text("DIFERENCIA", canvas.left(), baseline,
-                PdfCanvas.BOLD, 9.5f, ReportPalette.TEXT);
-        canvas.textRight(ReportFormats.signedMoney(reconciliation.difference()),
-                canvas.right(), baseline, PdfCanvas.BOLD, 11f, color);
-        canvas.moveDown(height);
-
-        canvas.ensureSpace(18f);
-        float badgeTop = canvas.cursor();
-        float badgeWidth = canvas.widthOf(label, PdfCanvas.BOLD, 9f) + 16f;
-        canvas.fillRect(canvas.left(), badgeTop - 16f, badgeWidth, 16f, color);
-        canvas.text(label, canvas.left() + 8f, badgeTop - 16f + 5f,
-                PdfCanvas.BOLD, 9f, Color.WHITE);
-        canvas.moveDown(16f + 14f);
-    }
-
-    private void notesSection(PdfCanvas canvas, String notes) throws IOException {
-        // Sin observaciones no se imprime un apartado vacio: un titulo con nada
-        // debajo hace dudar de si falto algo.
-        if (notes == null || notes.isBlank()) {
-            return;
-        }
-        sectionTitle(canvas, "OBSERVACIONES");
-        for (String line : wrap(canvas, notes, canvas.contentWidth() - 8f)) {
-            canvas.ensureSpace(ROW_HEIGHT);
-            canvas.text(line, canvas.left() + 4f, canvas.cursor() - 9f,
-                    PdfCanvas.REGULAR, 9f, ReportPalette.TEXT);
-            canvas.moveDown(12f);
-        }
-        canvas.moveDown(6f);
-    }
-
-    // ── Secciones del resumen por rango ──────────────────────────
-
-    private void summaryInvoicing(PdfCanvas canvas, CashClosureInvoicingDTO invoicing)
-            throws IOException {
-        sectionTitle(canvas, "FACTURACION DEL PERIODO");
-        amountRow(canvas, "Facturas",
-                invoicing.invoiceCount(), invoicing.invoiceTotal(), false);
-        amountRow(canvas, "Facturas cambiarias",
-                invoicing.exchangeInvoiceCount(), invoicing.exchangeInvoiceTotal(), true);
-        totalRow(canvas, "TOTAL FACTURADO", invoicing.totalInvoiced());
-    }
-
-    private void summaryCollections(
-            PdfCanvas canvas, CashClosureCollectionsDTO collections) throws IOException {
-        sectionTitle(canvas, "COBROS DEL PERIODO");
-        amountRow(canvas, "Efectivo",
-                collections.cashCount(), collections.cashAmount(), false);
-        amountRow(canvas, "Tarjeta",
-                collections.cardCount(), collections.cardAmount(), true);
-        amountRow(canvas, "Transferencia / Deposito",
-                collections.transferCount(), collections.transferAmount(), false);
-        totalRow(canvas, "TOTAL COBRADO", collections.totalCollected());
-    }
-
-    private void summaryReceivables(
-            PdfCanvas canvas,
-            com.cns.spring_house.cashclosure.dto.CashClosureRangeReceivablesDTO receivables)
-            throws IOException {
-        sectionTitle(canvas, "CARTERA CAMBIARIA");
-        amountRow(canvas, "Cambiarias cobradas en el periodo",
-                receivables.collectedCount(), receivables.collectedAmount(), false);
-        labelledAmountRow(canvas, "Cartera pendiente al ultimo cierre del periodo",
-                receivables.endingPendingAmount(), true, ReportPalette.TEXT);
-        canvas.moveDown(12f);
-    }
-
-    private void summaryBalance(PdfCanvas canvas, CashClosureSummaryResponseDTO summary)
-            throws IOException {
-        sectionTitle(canvas, "CUADRES DE CAJA");
-        countRow(canvas, "Cajas cuadradas", summary.balance().balancedClosures(), false);
-        countRow(canvas, "Cajas con faltante", summary.balance().shortClosures(), true);
-        countRow(canvas, "Cajas con sobrante", summary.balance().overClosures(), false);
-
-        canvas.ensureSpace(TOTAL_ROW_HEIGHT);
-        float top = canvas.cursor();
-        canvas.fillRect(canvas.left(), top - TOTAL_ROW_HEIGHT, canvas.contentWidth(),
-                TOTAL_ROW_HEIGHT, ReportPalette.SURFACE_MUTED);
-        canvas.fillRect(canvas.left(), top - TOTAL_ROW_HEIGHT, 3f,
-                TOTAL_ROW_HEIGHT, ReportPalette.PRIMARY);
-        float baseline = top - TOTAL_ROW_HEIGHT + 6.5f;
-        canvas.text("DIFERENCIA NETA", canvas.left() + 10f, baseline,
-                PdfCanvas.BOLD, 9.5f, ReportPalette.TEXT);
-        BigDecimal net = summary.balance().netCashDifference();
-        canvas.textRight(ReportFormats.signedMoney(net), canvas.right() - 6f, baseline,
-                PdfCanvas.BOLD, 10.5f,
-                net.signum() < 0 ? ReportPalette.DANGER : ReportPalette.SUCCESS);
-        canvas.moveDown(TOTAL_ROW_HEIGHT + 14f);
-    }
-
-    /**
-     * Tabla dia a dia. Solo hay fila para los dias con cierre: un dia sin cerrar
-     * no aparece como una linea de ceros, porque no consta que se cuadrara.
-     */
-    private void dailyTable(PdfCanvas canvas, CashClosureSummaryResponseDTO summary)
-            throws IOException {
-
-        sectionTitle(canvas, "DETALLE POR DIA");
-
-        if (summary.days().isEmpty()) {
-            canvas.ensureSpace(ROW_HEIGHT);
-            canvas.text("No existen cierres de caja en el periodo consultado.",
-                    canvas.left() + 4f, canvas.cursor() - 9f,
-                    PdfCanvas.REGULAR, 9f, ReportPalette.TEXT_MUTED);
-            canvas.moveDown(14f);
+        if (closure.items().isEmpty()) {
+            emptyRow(canvas, "No se facturaron articulos en el periodo.");
             return;
         }
 
-        float[] widths = { 66f, 80f, 80f, 74f, 70f, 74f, 76f };
-        String[] titles = { "Fecha", "Facturado", "Cobrado", "Efectivo",
-                "Tarjeta", "Transferencia", "Diferencia" };
-
+        float[] widths = { 210f, 78f, 88f, 96f };
+        String[] titles = { "Articulo", "Tipo", "Cantidad", "Facturado" };
         tableHeader(canvas, widths, titles);
 
         boolean shaded = false;
-        for (CashClosureDaySummaryDTO day : summary.days()) {
+        for (ClosureSoldItemDTO item : closure.items()) {
             if (canvas.ensureSpace(ROW_HEIGHT)) {
                 tableHeader(canvas, widths, titles);
             }
@@ -423,60 +220,180 @@ public class CashClosureReportServiceImpl implements CashClosureReportService {
 
             float baseline = top - ROW_HEIGHT + 4.5f;
             float x = canvas.left();
-            canvas.text(ReportFormats.date(day.businessDate()), x + 4f, baseline,
+            canvas.text(canvas.fit(item.name(), PdfCanvas.REGULAR, 8f, widths[0] - 8f),
+                    x + 4f, baseline,
                     PdfCanvas.REGULAR, 8f, ReportPalette.TEXT);
             x += widths[0];
-
-            x = money(canvas, day.totalInvoiced(), x, widths[1], baseline, ReportPalette.TEXT);
-            x = money(canvas, day.totalCollected(), x, widths[2], baseline, ReportPalette.TEXT);
-            x = money(canvas, day.cashPayments(), x, widths[3], baseline, ReportPalette.TEXT);
-            x = money(canvas, day.cardPayments(), x, widths[4], baseline, ReportPalette.TEXT);
-            x = money(canvas, day.transferPayments(), x, widths[5], baseline,
+            canvas.text(ReportFormats.itemType(item.type()), x + 4f, baseline,
+                    PdfCanvas.REGULAR, 8f, ReportPalette.TEXT_MUTED);
+            x += widths[1];
+            canvas.textRight(ReportFormats.count(item.quantity()),
+                    x + widths[2] - 4f, baseline, PdfCanvas.REGULAR, 8f,
                     ReportPalette.TEXT);
-
-            Color color = day.difference().signum() < 0
-                    ? ReportPalette.DANGER
-                    : day.difference().signum() > 0
-                            ? ReportPalette.SUCCESS
-                            : ReportPalette.TEXT_MUTED;
-            canvas.textRight(ReportFormats.signedMoney(day.difference()),
-                    x + widths[6] - 4f, baseline, PdfCanvas.BOLD, 8f, color);
+            x += widths[2];
+            canvas.textRight(ReportFormats.money(item.billedAmount()),
+                    x + widths[3] - 4f, baseline, PdfCanvas.BOLD, 8f, ReportPalette.TEXT);
 
             canvas.moveDown(ROW_HEIGHT);
         }
+
+        canvas.line(canvas.left(), canvas.cursor(), canvas.right(), canvas.cursor(),
+                ReportPalette.BORDER, 0.6f);
+        totalRow(canvas, "TOTAL FACTURADO EN ARTICULOS", closure.itemsBilledAmount());
+    }
+
+    private void invoicingSection(PdfCanvas canvas, CashClosureInvoicingDTO invoicing)
+            throws IOException {
+        sectionTitle(canvas, "FACTURACION EMITIDA");
+        amountRow(canvas, "Facturas normales",
+                invoicing.invoiceCount(), invoicing.invoiceTotal(), false);
+        amountRow(canvas, "Facturas cambiarias",
+                invoicing.exchangeInvoiceCount(), invoicing.exchangeInvoiceTotal(), true);
+        totalRow(canvas, "TOTAL FACTURADO", invoicing.totalInvoiced());
+    }
+
+    /**
+     * Las cambiarias en sus DOS papeles: las emitidas en el periodo, con su
+     * estado al cerrar, y las cobradas en el periodo, se emitieran cuando se
+     * emitieran.
+     *
+     * Que un documento salga en las dos listas no lo cuenta dos veces: el total
+     * cobrado no se suma de aqui, sino del desglose por forma de pago.
+     */
+    private void exchangeSection(PdfCanvas canvas, CashClosureExchangeDTO exchange)
+            throws IOException {
+        sectionTitle(canvas, "FACTURAS CAMBIARIAS");
+
+        amountRow(canvas, "Emitidas en el periodo",
+                exchange.issuedCount(), exchange.issuedAmount(), false);
+        labelledAmountRow(canvas, "   pendientes de cobro al cerrar",
+                exchange.issuedPendingAmount(), true, ReportPalette.TEXT_MUTED);
+        amountRow(canvas, "Cobradas en el periodo",
+                exchange.collectedCount(), exchange.collectedAmount(), false);
+        labelledAmountRow(canvas, "   emitidas en periodos anteriores",
+                exchange.previousCollectedAmount(), true, ReportPalette.TEXT_MUTED);
+
+        canvas.moveDown(8f);
+        exchangeTable(canvas, "Emitidas en el periodo", exchange.issued());
+        exchangeTable(canvas, "Cobradas en el periodo", exchange.collected());
+    }
+
+    private void exchangeTable(
+            PdfCanvas canvas, String caption, List<ClosureExchangeInvoiceDTO> invoices)
+            throws IOException {
+
+        canvas.ensureSpace(ROW_HEIGHT * 2f);
+        canvas.text(caption, canvas.left(), canvas.cursor() - 9f,
+                PdfCanvas.BOLD, 8.5f, ReportPalette.TEXT_MUTED);
+        canvas.moveDown(13f);
+
+        if (invoices.isEmpty()) {
+            emptyRow(canvas, "Sin documentos.");
+            return;
+        }
+
+        float[] widths = { 74f, 150f, 84f, 82f, 82f };
+        String[] titles = { "Documento", "Cliente", "Emitida", "Monto", "Estado" };
+        tableHeader(canvas, widths, titles);
+
+        boolean shaded = false;
+        for (ClosureExchangeInvoiceDTO invoice : invoices) {
+            if (canvas.ensureSpace(ROW_HEIGHT)) {
+                tableHeader(canvas, widths, titles);
+            }
+            float top = canvas.cursor();
+            if (shaded) {
+                canvas.fillRect(canvas.left(), top - ROW_HEIGHT, canvas.contentWidth(),
+                        ROW_HEIGHT, ReportPalette.SURFACE_MUTED);
+            }
+            shaded = !shaded;
+
+            float baseline = top - ROW_HEIGHT + 4.5f;
+            float x = canvas.left();
+            canvas.text(invoice.documentCode(), x + 4f, baseline,
+                    PdfCanvas.BOLD, 8f, ReportPalette.TEXT);
+            x += widths[0];
+            canvas.text(
+                    canvas.fit(
+                            invoice.customerName() == null
+                                    ? "Mostrador" : invoice.customerName(),
+                            PdfCanvas.REGULAR, 8f, widths[1] - 8f),
+                    x + 4f, baseline, PdfCanvas.REGULAR, 8f, ReportPalette.TEXT);
+            x += widths[1];
+            canvas.text(ReportFormats.date(invoice.issuedAt().toLocalDate()),
+                    x + 4f, baseline, PdfCanvas.REGULAR, 8f, ReportPalette.TEXT_MUTED);
+            x += widths[2];
+            canvas.textRight(ReportFormats.money(invoice.amount()),
+                    x + widths[3] - 4f, baseline, PdfCanvas.REGULAR, 8f,
+                    ReportPalette.TEXT);
+            x += widths[3];
+            // El estado NO se distingue solo por color: lleva su palabra, que es
+            // lo unico que sobrevive a una impresion en blanco y negro.
+            canvas.text(invoice.collected() ? "Cobrada" : "Pendiente",
+                    x + 4f, baseline, PdfCanvas.BOLD, 8f,
+                    invoice.collected() ? ReportPalette.SUCCESS : ReportPalette.TEXT_MUTED);
+
+            canvas.moveDown(ROW_HEIGHT);
+        }
+
         canvas.line(canvas.left(), canvas.cursor(), canvas.right(), canvas.cursor(),
                 ReportPalette.BORDER, 0.6f);
         canvas.moveDown(10f);
     }
 
-    private float money(
-            PdfCanvas canvas, BigDecimal amount, float x, float width,
-            float baseline, Color color) throws IOException {
-        canvas.textRight(ReportFormats.money(amount), x + width - 4f, baseline,
-                PdfCanvas.REGULAR, 8f, color);
-        return x + width;
+    /**
+     * Como entro el dinero. La suma de las formas de pago ES el total cobrado, y
+     * por eso el total se imprime justo debajo: si no cuadrara, se veria.
+     */
+    private void collectionsSection(
+            PdfCanvas canvas, CashClosureCollectionsDTO collections) throws IOException {
+        sectionTitle(canvas, "COBROS POR FORMA DE PAGO");
+
+        boolean alternate = false;
+        for (ClosurePaymentMethodDTO method : collections.methods()) {
+            amountRow(canvas, ReportFormats.paymentMethod(method.method()),
+                    method.count(), method.amount(), alternate);
+            alternate = !alternate;
+        }
+        totalRow(canvas, "TOTAL COBRADO", collections.totalCollected());
     }
 
-    private void tableHeader(PdfCanvas canvas, float[] widths, String[] titles)
+    /**
+     * El dinero que SALIO, y el neto.
+     *
+     * Va despues de los cobros y nunca mezclado con ellos: el papel diria
+     * "TOTAL COBRADO Q6,000" y quien lo lee tiene derecho a ver, en la misma
+     * hoja, que se devolvieron Q1,500 y que el dia cerro en Q4,500. Un PDF que
+     * enseñara solo el primer numero seria exacto y enganoso a la vez.
+     */
+    private void refundsSection(PdfCanvas canvas, CashClosureResponseDTO closure)
             throws IOException {
-        canvas.ensureSpace(ROW_HEIGHT + 2f);
-        float top = canvas.cursor();
-        canvas.fillRect(canvas.left(), top - ROW_HEIGHT, canvas.contentWidth(),
-                ROW_HEIGHT, ReportPalette.PRIMARY);
+        CashClosureRefundsDTO refunds = closure.refunds();
+        sectionTitle(canvas, "DEVOLUCIONES DEL PERIODO");
 
-        float baseline = top - ROW_HEIGHT + 4.5f;
-        float x = canvas.left();
-        for (int index = 0; index < titles.length; index++) {
-            if (index == 0) {
-                canvas.text(titles[index], x + 4f, baseline,
-                        PdfCanvas.BOLD, 8f, ReportPalette.PRIMARY_TEXT);
-            } else {
-                canvas.textRight(titles[index], x + widths[index] - 4f, baseline,
-                        PdfCanvas.BOLD, 8f, ReportPalette.PRIMARY_TEXT);
-            }
-            x += widths[index];
+        boolean alternate = false;
+        for (ClosureRefundMethodDTO method : refunds.methods()) {
+            amountRow(canvas, ReportFormats.paymentMethod(method.method()),
+                    method.count(), method.amount(), alternate);
+            alternate = !alternate;
         }
-        canvas.moveDown(ROW_HEIGHT);
+        totalRow(canvas, "TOTAL DEVUELTO", refunds.totalRefunded());
+
+        // El neto cierra el documento porque es la unica cifra que responde
+        // "con cuanto me quedo": ni lo cobrado ni lo devuelto lo hacen solos.
+        sectionTitle(canvas, "NETO DEL PERIODO");
+        labelledAmountRow(canvas, "Total cobrado",
+                closure.collections().totalCollected(), false, ReportPalette.TEXT);
+        labelledAmountRow(canvas, "Total devuelto",
+                refunds.totalRefunded(), true, ReportPalette.TEXT_MUTED);
+        totalRow(canvas, "NETO DEL PERIODO", closure.netPeriod());
+    }
+
+    private void emptyRow(PdfCanvas canvas, String message) throws IOException {
+        canvas.ensureSpace(ROW_HEIGHT);
+        canvas.text(message, canvas.left() + 4f, canvas.cursor() - 9f,
+                PdfCanvas.REGULAR, 9f, ReportPalette.TEXT_MUTED);
+        canvas.moveDown(16f);
     }
 
     // ── Primitivas de seccion ────────────────────────────────────
@@ -579,6 +496,34 @@ public class CashClosureReportServiceImpl implements CashClosureReportService {
             lines.add(current.toString());
         }
         return lines;
+    }
+
+
+    /**
+     * Cabecera de tabla en color de marca. La primera columna alinea a la
+     * izquierda y el resto a la derecha, que es donde caen cantidades e
+     * importes.
+     */
+    private void tableHeader(PdfCanvas canvas, float[] widths, String[] titles)
+            throws IOException {
+        canvas.ensureSpace(ROW_HEIGHT + 2f);
+        float top = canvas.cursor();
+        canvas.fillRect(canvas.left(), top - ROW_HEIGHT, canvas.contentWidth(),
+                ROW_HEIGHT, ReportPalette.PRIMARY);
+
+        float baseline = top - ROW_HEIGHT + 4.5f;
+        float x = canvas.left();
+        for (int index = 0; index < titles.length; index++) {
+            if (index == 0 || index == 1) {
+                canvas.text(titles[index], x + 4f, baseline,
+                        PdfCanvas.BOLD, 8f, ReportPalette.PRIMARY_TEXT);
+            } else {
+                canvas.textRight(titles[index], x + widths[index] - 4f, baseline,
+                        PdfCanvas.BOLD, 8f, ReportPalette.PRIMARY_TEXT);
+            }
+            x += widths[index];
+        }
+        canvas.moveDown(ROW_HEIGHT);
     }
 
 }

@@ -40,6 +40,57 @@ public interface InventoryRepository
             @Param("inventoryId") UUID inventoryId,
             @Param("workshopId") UUID workshopId);
 
+    /**
+     * El inventario de un producto, BLOQUEADO para escritura.
+     *
+     * Es la version con cerrojo de {@link #findByProductIdAndWorkshopId} y
+     * existe porque descontar existencias es un leer-decidir-guardar: sin
+     * bloquear la fila, dos ventas simultaneas del mismo producto leen el mismo
+     * stock y la segunda pisa el descuento de la primera. Medido contra
+     * PostgreSQL con dos ventas de 4 y 6 sobre 10 unidades: las dos prosperaban
+     * y el stock final quedaba en 4 en vez de en 0, mientras los lotes —esos si
+     * bloqueados— habian quedado correctamente a cero. El inventario decia tener
+     * cuatro unidades que ningun lote respaldaba.
+     *
+     * Tiene que ser la PRIMERA lectura de esa fila en la transaccion. Bloquear
+     * despues de haberla leido no sirve: la copia en memoria ya seria la vieja,
+     * y Hibernate no la relee por el hecho de tomar un cerrojo.
+     *
+     * Se toma SIEMPRE antes que el de los lotes, de modo que todas las
+     * transacciones piden los cerrojos en el mismo orden y no pueden quedarse
+     * esperandose en circulo.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+        SELECT inventory
+        FROM Inventory inventory
+        WHERE inventory.product.id = :productId
+          AND inventory.workshop.id = :workshopId
+    """)
+    Optional<Inventory> findByProductIdAndWorkshopIdForUpdate(
+            @Param("productId") UUID productId,
+            @Param("workshopId") UUID workshopId);
+
+    /**
+     * El inventario al que pertenece una unidad fisica, BLOQUEADO para
+     * escritura.
+     *
+     * La necesitan las categorias que venden por unidad (SPECIAL y CONTAINER):
+     * resuelven primero el item y solo entonces saben que inventario tocan, pero
+     * el cerrojo tiene que tomarse ANTES de leer sus existencias. Hacerlo en una
+     * sola consulta por el item evita tener que inicializar el proxy perezoso
+     * del inventario —que seria justo la lectura sin bloquear que se quiere
+     * impedir—.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+        SELECT inventory
+        FROM InventoryItem item
+        JOIN item.inventory inventory
+        WHERE item.id = :itemId
+    """)
+    Optional<Inventory> findByItemIdForUpdate(@Param("itemId") UUID itemId);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     List<Inventory> findAllByProductIdInAndWorkshopId(
             Iterable<UUID> productIds,

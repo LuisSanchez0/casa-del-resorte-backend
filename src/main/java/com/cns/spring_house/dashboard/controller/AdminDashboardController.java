@@ -8,7 +8,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.cns.spring_house.acquisition.entity.AcquisitionType;
+import com.cns.spring_house.dashboard.dto.AcquisitionTrendResponseDTO;
 import com.cns.spring_house.dashboard.dto.AdminDashboardOverviewResponseDTO;
+import com.cns.spring_house.dashboard.dto.SalesCostProfitTrendResponseDTO;
+import com.cns.spring_house.dashboard.dto.TopSuppliersResponseDTO;
 import com.cns.spring_house.dashboard.dto.SalesGranularity;
 import com.cns.spring_house.dashboard.dto.SalesTrendResponseDTO;
 import com.cns.spring_house.dashboard.dto.VehicleOccupancyResponseDTO;
@@ -81,6 +85,65 @@ public class AdminDashboardController {
         return ResponseEntity
                 .status(HttpStatus.OK)
                 .body(service.getSalesTrend(granularity, period));
+    }
+
+    /**
+     * Serie de GASTO EN COMPRAS.
+     *
+     * Es dinero que SALIO hacia proveedores, fechado por la adquisicion, y esta
+     * deliberadamente separada de `sales-trend`: restar una de otra por periodo
+     * no da ganancia, porque lo que se compra en un mes puede venderse en otro.
+     * De ahi que sean dos rutas y no dos campos de la misma.
+     *
+     * `granularity` y `period` siguen exactamente el mismo contrato que
+     * `sales-trend`, de modo que las dos graficas se manejan igual.
+     *
+     * `acquisitionType` es opcional y es un enum: un valor no contemplado lo
+     * rechaza Spring al convertir y nunca llega a la consulta. Omitirlo devuelve
+     * nacional e importacion juntas.
+     */
+    @GetMapping("/acquisition-trend")
+    public ResponseEntity<AcquisitionTrendResponseDTO> getAcquisitionTrend(
+            @RequestParam(defaultValue = "DAY") SalesGranularity granularity,
+            @RequestParam(required = false) String period,
+            @RequestParam(required = false) AcquisitionType acquisitionType) {
+        return ResponseEntity
+                .status(HttpStatus.OK)
+                .body(service.getAcquisitionTrend(granularity, period, acquisitionType));
+    }
+
+    /**
+     * Serie de COSTO DE LO VENDIDO y GANANCIA BRUTA.
+     *
+     * Mide el rendimiento de lo despachado —cada linea contra el costo de SU
+     * mercaderia— y se fecha por la emision de la venta, el mismo universo que
+     * `sales-trend`. No es caja y no es gasto en compras: son tres preguntas
+     * distintas y cada una tiene su ruta.
+     */
+    @GetMapping("/sales-profitability")
+    public ResponseEntity<SalesCostProfitTrendResponseDTO> getSalesProfitability(
+            @RequestParam(defaultValue = "DAY") SalesGranularity granularity,
+            @RequestParam(required = false) String period) {
+        return ResponseEntity
+                .status(HttpStatus.OK)
+                .body(service.getSalesCostProfitTrend(granularity, period));
+    }
+
+    /**
+     * Los cinco proveedores a los que mas se compro EN EL PERIODO.
+     *
+     * Acepta el mismo periodo que las graficas y devuelve el rango que midio,
+     * para que la tarjeta se rotule con el. A diferencia de los rankings de
+     * `/overview`, que son historicos y por eso viven alli sin selector, este
+     * acompaña a la grafica de compras y tiene que hablar de su mismo tiempo.
+     */
+    @GetMapping("/top-suppliers")
+    public ResponseEntity<TopSuppliersResponseDTO> getTopSuppliers(
+            @RequestParam(defaultValue = "DAY") SalesGranularity granularity,
+            @RequestParam(required = false) String period) {
+        return ResponseEntity
+                .status(HttpStatus.OK)
+                .body(service.getTopSuppliers(granularity, period));
     }
 
     /**
