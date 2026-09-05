@@ -16,6 +16,7 @@ import com.cns.spring_house.family.entity.AttributeDataType;
 import com.cns.spring_house.acquisition.service.InventoryLotService;
 import com.cns.spring_house.family.entity.Family;
 import com.cns.spring_house.family.entity.FamilyCategory;
+import com.cns.spring_house.family.service.HoleMeasurementValidator;
 import com.cns.spring_house.inventory.entity.Inventory;
 import com.cns.spring_house.inventory.entity.InventoryItem;
 import com.cns.spring_house.inventory.entity.InventoryItemStatus;
@@ -91,6 +92,11 @@ public class SpecialTransformationHandler implements TransformationHandler {
         }
         Map<String, Object> outputAttributes =
                 resolveOutputAttributes(inputProduct, selectedProduct, requestDTO);
+        // Regla de medidas con orificio sobre la pieza EFECTIVA: el largo total
+        // contra el que se compara es el que tendra el resultado (el de la
+        // entrada, o el que pise el PATCH). Se comprueba antes de materializar
+        // nada, asi que un incumplimiento no deja productos ni unidades a medias.
+        HoleMeasurementValidator.validate(inputProduct.getFamily(), outputAttributes);
         Optional<Double> remainderLength =
                 resolveRemainderLength(inputProduct, outputAttributes);
         validateRemainderCurlCount(

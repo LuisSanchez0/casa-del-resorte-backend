@@ -24,6 +24,7 @@ import com.cns.spring_house.product.mapper.ProductMapper;
 import com.cns.spring_house.family.entity.Attribute;
 import com.cns.spring_house.family.entity.AttributeDataType;
 import com.cns.spring_house.family.entity.Family;
+import com.cns.spring_house.family.service.HoleMeasurementValidator;
 import com.cns.spring_house.model.entity.Model;
 import com.cns.spring_house.product.entity.Product;
 import com.cns.spring_house.family.repository.FamilyRepository;
@@ -168,7 +169,8 @@ public class ProductServiceImpl implements ProductService {
         allowed.forEach((key, attr) -> {
             Object value = attributes.get(key);
             if (value == null) {
-                if (attr.getIsRequired()) {
+                if (attr.getIsRequired()
+                        && !HoleMeasurementValidator.ownsRequiredness(family, key)) {
                     errors.put(key, "Es obligatorio");
                 }
             } else if (!attr.getDataType().isValid(value)) {
@@ -178,6 +180,9 @@ public class ProductServiceImpl implements ProductService {
         if (!errors.isEmpty()) {
             throw new ValidationException("Error de validación", errors);
         }
+        // Regla de medidas con orificio: solo actua si la familia declara el
+        // conjunto completo largo + tieneOrificio + largoIzquierdo + largoDerecho.
+        HoleMeasurementValidator.validate(family, attributes);
     }
 
     /**
