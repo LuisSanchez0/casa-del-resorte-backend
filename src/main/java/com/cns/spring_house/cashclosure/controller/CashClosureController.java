@@ -113,6 +113,22 @@ public class CashClosureController {
     }
 
     /**
+     * SEGUNDO PDF del mismo cierre: la mercaderia vendida agrupada por familia,
+     * marca y modelo.
+     *
+     * Ruta aparte y no un parametro de la anterior: son dos documentos que se
+     * archivan por separado y se llaman distinto, y un `?formato=` dejaria dos
+     * papeles compartiendo nombre de archivo.
+     *
+     * Mismas reglas de acceso que el resto del cierre —autenticado y acotado al
+     * taller del token—, y se nutre del mismo snapshot. No amplia nada.
+     */
+    @GetMapping("/{id}/products-pdf")
+    public ResponseEntity<byte[]> getProductSummaryDocument(@PathVariable UUID id) {
+        return download(service.productSummaryDocument(id));
+    }
+
+    /**
      * `attachment` y no `inline`: estos documentos se archivan y se imprimen, y
      * el nombre del archivo forma parte de esa trazabilidad. El nombre lo decide
      * el servicio, que es quien conoce la fecha operativa.

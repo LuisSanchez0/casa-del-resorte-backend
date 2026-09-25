@@ -2,6 +2,7 @@ package com.cns.spring_house.cashclosure.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -18,6 +19,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -49,9 +51,12 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import com.cns.spring_house.cashclosure.dto.CashClosureResponseDTO;
+import com.cns.spring_house.brand.entity.Brand;
 import com.cns.spring_house.cashclosure.dto.CashClosureMonthStatus;
 import com.cns.spring_house.cashclosure.dto.CashClosureMonthlyResponseDTO;
+import com.cns.spring_house.cashclosure.dto.CashClosureProductGroupDTO;
+import com.cns.spring_house.cashclosure.dto.CashClosureProductSummaryDTO;
+import com.cns.spring_house.cashclosure.dto.CashClosureResponseDTO;
 import com.cns.spring_house.cashclosure.dto.ClosurePaymentMethodDTO;
 import com.cns.spring_house.cashclosure.repository.CashClosureRepository;
 import com.cns.spring_house.customer.entity.Customer;
@@ -65,6 +70,7 @@ import com.cns.spring_house.job.entity.Job;
 import com.cns.spring_house.job.entity.JobLog;
 import com.cns.spring_house.job.repository.JobLogRepository;
 import com.cns.spring_house.job.repository.JobRepository;
+import com.cns.spring_house.model.entity.Model;
 import com.cns.spring_house.product.entity.Product;
 import com.cns.spring_house.product.repository.ProductRepository;
 import com.cns.spring_house.role.entity.Role;
@@ -72,26 +78,29 @@ import com.cns.spring_house.role.repository.RoleRepository;
 import com.cns.spring_house.sale.dto.AddSaleDetailRequestDTO;
 import com.cns.spring_house.sale.dto.CompleteSaleRequestDTO;
 import com.cns.spring_house.sale.dto.CreateSaleRequestDTO;
-import com.cns.spring_house.sale.dto.RegisterPaymentRequestDTO;
 import com.cns.spring_house.sale.dto.RefundRequestDTO;
+import com.cns.spring_house.sale.dto.RegisterPaymentRequestDTO;
 import com.cns.spring_house.sale.dto.ReverseSaleRequestDTO;
 import com.cns.spring_house.sale.dto.SaleResponseDTO;
 import com.cns.spring_house.sale.entity.InvoiceType;
 import com.cns.spring_house.sale.entity.PaymentMethod;
-import com.cns.spring_house.sale.entity.SaleDetail;
 import com.cns.spring_house.sale.entity.PaymentStatus;
 import com.cns.spring_house.sale.entity.Sale;
+import com.cns.spring_house.sale.entity.TaxMode;
+import com.cns.spring_house.sale.entity.SaleDetail;
 import com.cns.spring_house.sale.entity.SaleStatus;
 import com.cns.spring_house.sale.repository.SaleRepository;
 import com.cns.spring_house.sale.service.SaleService;
 import com.cns.spring_house.shared.config.time.TimeConfig;
+import com.cns.spring_house.shared.exception.EntityNotFoundException;
 import com.cns.spring_house.shared.exception.ValidationException;
+import com.cns.spring_house.testsupport.TestDatabases;
 import com.cns.spring_house.useraccount.entity.UserAccount;
 import com.cns.spring_house.useraccount.repository.UserAccountRepository;
-import com.cns.spring_house.workshop.entity.Workshop;
 import com.cns.spring_house.workresult.entity.WorkResult;
 import com.cns.spring_house.workresult.entity.WorkResultStatus;
 import com.cns.spring_house.workresult.repository.WorkResultRepository;
+import com.cns.spring_house.workshop.entity.Workshop;
 import com.cns.spring_house.workshop.repository.WorkshopRepository;
 
 /**
@@ -205,6 +214,12 @@ class CashClosureServiceDatabaseTest {
     private ProductRepository productRepository;
 
     @Autowired
+    private com.cns.spring_house.brand.repository.BrandRepository brandRepository;
+
+    @Autowired
+    private com.cns.spring_house.model.repository.ModelRepository modelRepository;
+
+    @Autowired
     private JobRepository jobRepository;
 
     @Autowired
@@ -219,54 +234,41 @@ class CashClosureServiceDatabaseTest {
     @Autowired
     private PlatformTransactionManager transactionManager;
 
+    /**
+     * Para contar SENTENCIAS, no para consultar.
+     *
+     * Hibernate lleva esa cuenta y es lo unico que puede demostrar que exportar
+     * un cierre grande no cuesta mas viajes que uno pequeno. Comprobarlo
+     * midiendo el tiempo seria medir la maquina.
+     */
+    @Autowired
+    private jakarta.persistence.EntityManagerFactory entityManagerFactory;
+
+    /**
+     * Base propia y desechable.
+     *
+     * El nombre y el DROP pasan por {@link TestDatabases}: alli se comprueba
+     * ANTES de tocar el servidor que es una base {@code _it}, de modo que esta
+     * prueba no puede migrar ni borrar la base de desarrollo. Lo creado se
+     * retira al terminar la JVM en lugar de quedarse suelto.
+     */
     @DynamicPropertySource
-    static void temporaryDatabase(DynamicPropertyRegistry registry)
-            throws IOException, SQLException {
-        Properties environment = loadEnvironment();
-        String host = value(environment, "DB_HOST", "localhost");
-        String port = value(environment, "DB_PORT", "5432");
-        String username = value(environment, "DB_USER", "postgres");
-        String password = value(environment, "DB_PASS", null);
-        String server = "jdbc:postgresql://" + host + ":" + port + "/";
+    static void temporaryDatabase(DynamicPropertyRegistry registry) {
+        String url = TestDatabases.provision(TEMPORARY_DATABASE);
 
-        try (Connection connection = DriverManager.getConnection(
-                server + "postgres", username, password);
-                Statement statement = connection.createStatement()) {
-            statement.execute(
-                    "DROP DATABASE IF EXISTS " + TEMPORARY_DATABASE + " WITH (FORCE)");
-            statement.execute("CREATE DATABASE " + TEMPORARY_DATABASE);
-        }
-
-        registry.add("spring.datasource.url", () -> server + TEMPORARY_DATABASE);
-        registry.add("spring.datasource.username", () -> username);
-        registry.add("spring.datasource.password", () -> password);
+        registry.add("spring.datasource.url", () -> url);
+        registry.add("spring.datasource.username", TestDatabases::username);
+        registry.add("spring.datasource.password", TestDatabases::password);
         registry.add("spring.flyway.enabled", () -> true);
         registry.add("spring.jpa.hibernate.ddl-auto", () -> "none");
-        // Cada clase de prueba con base propia mantiene su contexto —y su pool—
-        // vivo durante toda la ejecucion de la suite, y PostgreSQL corta a las
-        // 100 conexiones. Cinco bastan aqui: el hilo de la prueba mas los dos
-        // que se enfrentan en las pruebas de concurrencia, con margen.
-        registry.add("spring.datasource.hikari.maximum-pool-size", () -> 5);
+        // Cada clase con @DynamicPropertySource levanta su propio contexto y el
+        // TestContext los CACHEA hasta que acaba la JVM: un pool sin acotar por
+        // cada uno agota `max_connections` de PostgreSQL.
+        registry.add("spring.datasource.hikari.maximum-pool-size", () -> 2);
+        registry.add("spring.datasource.hikari.minimum-idle", () -> 0);
     }
 
-    private static Properties loadEnvironment() throws IOException {
-        Properties environment = new Properties();
-        Path envFile = Path.of(".env");
-        if (Files.exists(envFile)) {
-            try (InputStream input = Files.newInputStream(envFile)) {
-                environment.load(input);
-            }
-        }
-        return environment;
-    }
 
-    private static String value(Properties environment, String key, String fallback) {
-        String fromSystem = System.getenv(key);
-        if (fromSystem != null && !fromSystem.isBlank()) {
-            return fromSystem;
-        }
-        return environment.getProperty(key, fallback);
-    }
 
     @BeforeEach
     void resetClock() {
@@ -345,6 +347,7 @@ class CashClosureServiceDatabaseTest {
     private Sale invoice(
             Workshop workshop, LocalDate day, PaymentMethod method, String total) {
         return saleRepository.save(Sale.builder()
+                .taxMode(TaxMode.CF)
                 .workshop(workshop)
                 .employee(employee(workshop))
                 .status(SaleStatus.COMPLETED)
@@ -359,6 +362,7 @@ class CashClosureServiceDatabaseTest {
 
     private Sale pendingExchangeInvoice(Workshop workshop, LocalDate day, String total) {
         return saleRepository.save(Sale.builder()
+                .taxMode(TaxMode.CF)
                 .workshop(workshop)
                 .employee(employee(workshop))
                 .status(SaleStatus.COMPLETED)
@@ -523,6 +527,7 @@ class CashClosureServiceDatabaseTest {
         Product jobProduct = product(FamilyCategory.JOB);
         WorkResult workResult = pendingJobWorkResult(workshop, jobProduct);
         Sale sale = saleRepository.save(Sale.builder()
+                .customer(customer())
                 .workshop(workshop)
                 .employee(employee(workshop))
                 .build());
@@ -539,11 +544,14 @@ class CashClosureServiceDatabaseTest {
      * Es la variante que deja al descubierto la carrera de doble emision: en la
      * variante con WorkResult, `markAsSold` toma su propio cerrojo sobre el
      * trabajo y rechaza la segunda emision de rebote, tapando el problema real.
-     * Una venta de mostrador no tiene esa red.
+     * Una venta sin trabajo pendiente no tiene esa red. Es una venta con NIT,
+     * como toda la que la caja abria antes de V40, para que la emision con el
+     * contrato anterior siga siendo valida.
      */
     private UUID pendingSaleWithoutWork(Workshop workshop) {
         Product jobProduct = product(FamilyCategory.JOB);
         Sale sale = saleRepository.save(Sale.builder()
+                .customer(customer())
                 .workshop(workshop)
                 .employee(employee(workshop))
                 .total(new BigDecimal("500.00"))
@@ -1896,6 +1904,7 @@ class CashClosureServiceDatabaseTest {
         clock.moveTo(DAY_ONE);
 
         Sale draft = saleRepository.save(Sale.builder()
+                .taxMode(TaxMode.CF)
                 .workshop(workshop)
                 .employee(employee(workshop))
                 .status(SaleStatus.CANCELLED)
@@ -2287,6 +2296,712 @@ class CashClosureServiceDatabaseTest {
                 .quantity(quantity)
                 .price(new BigDecimal(subTotal).divide(BigDecimal.valueOf(quantity)))
                 .subTotal(new BigDecimal(subTotal))
+                .build());
+    }
+
+    // ══ RESUMEN DE PRODUCTOS POR FAMILIA, MARCA Y MODELO ═════════
+    //
+    // El segundo PDF del cierre. Lo que se prueba contra la base —y no se puede
+    // probar en memoria— es lo unico que de verdad depende de ella: que las
+    // dimensiones se COPIEN al confirmar y que editar el catalogo despues no
+    // reescriba un documento ya firmado.
+
+    /**
+     * El escenario del enunciado, de punta a punta y contra PostgreSQL.
+     *
+     * Tres hojas Toyota Hilux de largos distintos, una Toyota Tacoma y una
+     * familia sin marca. Al cerrar, el snapshot tiene que agrupar en TRES filas
+     * y no en cinco.
+     */
+    @Test
+    void theProductSummaryCollapsesMeasurementsIntoOneGroup() {
+        Workshop workshop = authenticatedWorkshop();
+        Brand toyota = brand("Toyota");
+        Family hojas = modelFamily("HOJA DE RESORTE");
+        Model hilux = model(toyota, "Hilux");
+        Model tacoma = model(toyota, "Tacoma");
+
+        Sale sale = invoice(workshop, LocalDate.of(2026, 8, 20), PaymentMethod.CASH,
+                "865.00");
+        soldLine(sale, modelProduct(hojas, hilux, "HOJA 80"), 1, "100.00");
+        soldLine(sale, modelProduct(hojas, hilux, "HOJA 90"), 2, "150.00");
+        soldLine(sale, modelProduct(hojas, hilux, "HOJA 100"), 3, "200.00");
+        soldLine(sale, modelProduct(hojas, tacoma, "HOJA TACOMA"), 2, "300.00");
+        Family pernos = plainFamily("PERNO");
+        soldLine(sale, plainProductIn(pernos, "PERNO 1/2"), 10, "115.00");
+
+        CashClosureResponseDTO closure = service.close();
+        CashClosureProductSummaryDTO summary = summaryOf(closure.id());
+
+        assertThat(groups(summary)).hasSize(3);
+        // Los nombres del catalogo llevan un sufijo unico —`family.name` y
+        // `brand.name` son UNIQUE—, asi que se comparan con los persistidos.
+        assertThat(groups(summary))
+                .extracting(
+                        CashClosureProductGroupDTO::familyId,
+                        CashClosureProductGroupDTO::brandId,
+                        CashClosureProductGroupDTO::modelId,
+                        CashClosureProductGroupDTO::quantity)
+                .containsExactly(
+                        tuple(hojas.getId(), toyota.getId(), hilux.getId(), 6L),
+                        tuple(hojas.getId(), toyota.getId(), tacoma.getId(), 2L),
+                        tuple(pernos.getId(), null, null, 10L));
+        assertThat(groups(summary).get(0).familyName())
+                .isEqualTo(hojas.getName())
+                .startsWith("HOJA DE RESORTE");
+        assertThat(groups(summary).get(0).brandName()).startsWith("Toyota");
+        assertThat(groups(summary).get(0).modelName()).isEqualTo("Hilux");
+        assertThat(groups(summary).get(2).brandName()).isNull();
+        assertThat(groups(summary).get(2).modelName()).isNull();
+
+        assertThat(amountOf(summary, "Hilux")).isEqualByComparingTo("450.00");
+        assertThat(summary.totalAmount()).isEqualByComparingTo("865.00");
+        assertThat(summary.totalQuantity()).isEqualTo(18L);
+    }
+
+    /** Marcas distintas del mismo modelo no se funden. */
+    @Test
+    void theProductSummarySplitsByBrand() {
+        Workshop workshop = authenticatedWorkshop();
+        Family hojas = modelFamily("HOJA DE RESORTE");
+        Model toyotaHilux = model(brand("Toyota"), "Hilux");
+        Model nissanHilux = model(brand("Nissan"), "Hilux");
+
+        Sale sale = invoice(workshop, LocalDate.of(2026, 8, 20), PaymentMethod.CASH,
+                "220.00");
+        soldLine(sale, modelProduct(hojas, toyotaHilux, "A"), 1, "100.00");
+        soldLine(sale, modelProduct(hojas, nissanHilux, "B"), 1, "120.00");
+
+        CashClosureProductSummaryDTO summary = summaryOf(service.close().id());
+
+        assertThat(groups(summary)).hasSize(2);
+        assertThat(groups(summary))
+                .extracting(CashClosureProductGroupDTO::brandName)
+                .satisfiesExactly(
+                        first -> assertThat(first).asString().startsWith("Nissan"),
+                        second -> assertThat(second).asString().startsWith("Toyota"));
+    }
+
+    /**
+     * EL CASO QUE JUSTIFICA LA COPIA.
+     *
+     * Se cierra la caja, y DESPUES se renombra la familia, la marca y el modelo
+     * en el catalogo. El reporte del dia cerrado tiene que seguir diciendo lo
+     * que dijo.
+     *
+     * Si las dimensiones se resolvieran al descargar, este documento cambiaria
+     * solo, y un cierre firmado dejaria de ser un cierre.
+     */
+    @Test
+    void catalogueEditsDoNotRewriteAConfirmedProductSummary() {
+        Workshop workshop = authenticatedWorkshop();
+        Brand toyota = brand("Toyota");
+        Family hojas = modelFamily("HOJA DE RESORTE");
+        Model hilux = model(toyota, "Hilux");
+
+        Sale sale = invoice(workshop, LocalDate.of(2026, 8, 20), PaymentMethod.CASH,
+                "100.00");
+        soldLine(sale, modelProduct(hojas, hilux, "HOJA 80"), 1, "100.00");
+
+        UUID closureId = service.close().id();
+        CashClosureProductSummaryDTO before = summaryOf(closureId);
+
+        // El catalogo cambia por completo: otra familia, otra marca, otro modelo.
+        hojas.setName("MUELLES RENOMBRADOS");
+        familyRepository.save(hojas);
+        toyota.setName("MARCA RENOMBRADA");
+        brandRepository.save(toyota);
+        hilux.setName("MODELO RENOMBRADO");
+        modelRepository.save(hilux);
+
+        CashClosureProductSummaryDTO after = summaryOf(closureId);
+
+        assertThat(groups(after)).hasSize(1);
+        assertThat(groups(after).get(0).familyName())
+                .isEqualTo(groups(before).get(0).familyName())
+                .startsWith("HOJA DE RESORTE");
+        assertThat(groups(after).get(0).brandName())
+                .isEqualTo(groups(before).get(0).brandName())
+                .startsWith("Toyota");
+        assertThat(groups(after).get(0).modelName()).isEqualTo("Hilux");
+        assertThat(after.totalAmount()).isEqualByComparingTo(before.totalAmount());
+
+        // Y el catalogo SI cambio: la prueba no pasa por no haber editado nada.
+        assertThat(familyRepository.findById(hojas.getId()).orElseThrow().getName())
+                .isEqualTo("MUELLES RENOMBRADOS");
+    }
+
+    /**
+     * Mover un producto a otra familia tampoco reagrupa el historico: la fila
+     * cerrada sigue en la familia en la que se vendio.
+     */
+    @Test
+    void movingAProductToAnotherFamilyDoesNotRegroupHistory() {
+        Workshop workshop = authenticatedWorkshop();
+        Family original = plainFamily("PERNO");
+        Family other = plainFamily("TORNILLO");
+        Product product = plainProductIn(original, "PERNO 1/2");
+
+        Sale sale = invoice(workshop, LocalDate.of(2026, 8, 20), PaymentMethod.CASH,
+                "50.00");
+        soldLine(sale, product, 1, "50.00");
+
+        UUID closureId = service.close().id();
+
+        product.setFamily(other);
+        productRepository.save(product);
+
+        CashClosureProductSummaryDTO summary = summaryOf(closureId);
+
+        assertThat(groups(summary)).hasSize(1);
+        assertThat(groups(summary).get(0).familyId()).isEqualTo(original.getId());
+        assertThat(groups(summary).get(0).familyName()).startsWith("PERNO");
+    }
+
+    /**
+     * Los servicios quedan fuera de la tabla pero su dinero se declara, para que
+     * la diferencia con el total de articulos del cierre sea explicable.
+     */
+    @Test
+    void theProductSummaryLeavesServicesOutAndSaysHowMuch() {
+        Workshop workshop = authenticatedWorkshop();
+        Product service9 = product(FamilyCategory.JOB);
+
+        Sale sale = invoice(workshop, LocalDate.of(2026, 8, 20), PaymentMethod.CASH,
+                "350.00");
+        soldLine(sale, plainProduct("PERNO", "PERNO 1/2"), 1, "100.00");
+        soldLine(sale, service9, 1, "250.00");
+
+        CashClosureResponseDTO closure = service.close();
+        CashClosureProductSummaryDTO summary = summaryOf(closure.id());
+
+        assertThat(groups(summary)).hasSize(1);
+        assertThat(summary.totalAmount()).isEqualByComparingTo("100.00");
+        assertThat(summary.excludedJobAmount()).isEqualByComparingTo("250.00");
+
+        // El cierre de siempre SIGUE contando el servicio: el resumen no le
+        // quita dinero a nadie, solo responde otra pregunta.
+        assertThat(closure.itemsBilledAmount()).isEqualByComparingTo("350.00");
+        assertThat(summary.totalAmount().add(summary.excludedJobAmount()))
+                .isEqualByComparingTo(closure.itemsBilledAmount());
+    }
+
+    /**
+     * El gran total del resumen cuadra EXACTAMENTE con la suma de las lineas de
+     * mercaderia del cierre, comparando BigDecimal.
+     */
+    @Test
+    void theProductSummaryGrandTotalReconcilesWithTheClosure() {
+        Workshop workshop = authenticatedWorkshop();
+        Family hojas = modelFamily("HOJA DE RESORTE");
+        Model hilux = model(brand("Toyota"), "Hilux");
+
+        Sale sale = invoice(workshop, LocalDate.of(2026, 8, 20), PaymentMethod.CASH,
+                "484.33");
+        soldLine(sale, modelProduct(hojas, hilux, "HOJA 80"), 1, "100.55");
+        soldLine(sale, modelProduct(hojas, hilux, "HOJA 90"), 1, "150.45");
+        soldLine(sale, plainProduct("PERNO", "PERNO 1/2"), 1, "233.33");
+
+        CashClosureResponseDTO closure = service.close();
+        CashClosureProductSummaryDTO summary = summaryOf(closure.id());
+
+        BigDecimal fromGroups = groups(summary).stream()
+                .map(CashClosureProductGroupDTO::amount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        assertThat(fromGroups).isEqualByComparingTo(summary.totalAmount());
+        assertThat(summary.totalAmount()).isEqualByComparingTo("484.33");
+        assertThat(summary.totalAmount()).isEqualByComparingTo(
+                closure.itemsBilledAmount());
+    }
+
+    /** El resumen de otro taller responde igual que uno inexistente: 404. */
+    @Test
+    void theProductSummaryOfAnotherWorkshopIsNotFound() {
+        Workshop owner = authenticatedWorkshop();
+        Sale sale = invoice(owner, LocalDate.of(2026, 8, 20), PaymentMethod.CASH,
+                "100.00");
+        soldLine(sale, plainProduct("PERNO", "PERNO 1/2"), 1, "100.00");
+        UUID closureId = service.close().id();
+
+        authenticatedWorkshop();
+
+        assertThatThrownBy(() -> service.productSummaryDocument(closureId))
+                .isInstanceOf(EntityNotFoundException.class);
+    }
+
+    /** El PDF se genera de verdad y lleva las filas agrupadas. */
+    @Test
+    void theProductSummaryDocumentIsADownloadablePdf() {
+        Workshop workshop = authenticatedWorkshop();
+        Family hojas = modelFamily("HOJA DE RESORTE");
+        Model hilux = model(brand("Toyota"), "Hilux");
+
+        Sale sale = invoice(workshop, LocalDate.of(2026, 8, 20), PaymentMethod.CASH,
+                "250.00");
+        soldLine(sale, modelProduct(hojas, hilux, "HOJA 80"), 1, "100.00");
+        soldLine(sale, modelProduct(hojas, hilux, "HOJA 90"), 1, "150.00");
+
+        CashClosureResponseDTO closure = service.close();
+        var document = service.productSummaryDocument(closure.id());
+
+        assertThat(document.fileName())
+                .isEqualTo("resumen-productos-cierre-2026-08-20.pdf");
+        assertThat(document.content()).isNotEmpty();
+
+        // Y el de siempre sigue llamandose como siempre.
+        assertThat(service.document(closure.id()).fileName())
+                .isEqualTo("cierre-caja-2026-08-20.pdf");
+    }
+
+    /**
+     * El resumen se lee del SNAPSHOT, no de las ventas.
+     *
+     * Se cierra, y despues se anade una linea con fecha del dia ya cerrado
+     * directamente en la base. El reporte no puede verla: si la viera, estaria
+     * releyendo `sale_detail` en vez del cierre.
+     */
+    @Test
+    void theProductSummaryReadsTheSnapshotAndNotTheLiveSales() {
+        Workshop workshop = authenticatedWorkshop();
+        Sale sale = invoice(workshop, LocalDate.of(2026, 8, 20), PaymentMethod.CASH,
+                "100.00");
+        soldLine(sale, plainProduct("PERNO", "PERNO 1/2"), 1, "100.00");
+
+        UUID closureId = service.close().id();
+
+        Sale late = invoice(workshop, LocalDate.of(2026, 8, 20), PaymentMethod.CASH,
+                "999.00");
+        soldLine(late, plainProduct("TUERCA", "TUERCA 1/2"), 5, "999.00");
+
+        CashClosureProductSummaryDTO summary = summaryOf(closureId);
+
+        assertThat(groups(summary)).hasSize(1);
+        assertThat(groups(summary).get(0).familyName()).startsWith("PERNO");
+        assertThat(summary.totalAmount()).isEqualByComparingTo("100.00");
+    }
+
+    // ══ LOS DOS PDF DEL MISMO CIERRE, CONTRA POSTGRESQL ══════════
+    //
+    // Lo que aqui se prueba y no se puede probar en memoria: que los dos
+    // documentos salgan del MISMO snapshot y digan lo mismo del dinero, con
+    // ventas reales y un cierre confirmado de verdad.
+
+    /**
+     * EL CASO QUE DESTAPO LA CONTRADICCION.
+     *
+     * Dos unidades, Q510.00, cobradas integras en efectivo. El cierre de caja
+     * lo dice y el resumen de productos tiene que decir exactamente lo mismo.
+     *
+     * Lo que este reporte publicaba antes era "SIN FORMA DE COBRO REGISTRADA"
+     * sobre ese mismo importe, porque atribuia la via de cobro por su cuenta
+     * en vez de leer el desglose del cierre.
+     */
+    @Test
+    void aCashOnlyClosureSaysEfectivoInBothDocuments() throws Exception {
+        Workshop workshop = authenticatedWorkshop();
+        Brand toyota = brand("Toyota");
+        Family hojas = modelFamily("HOJA DE RESORTE");
+        Model tundra = model(toyota, "Tundra");
+
+        Sale sale = invoice(workshop, LocalDate.of(2026, 8, 20), PaymentMethod.CASH,
+                "510.00");
+        soldLine(sale, modelProduct(hojas, tundra, "Hoja con Agujeros"), 2, "510.00");
+
+        CashClosureResponseDTO closure = service.close();
+
+        String daily = textOf(service.document(closure.id()).content());
+        String products = textOf(
+                service.productSummaryDocument(closure.id()).content());
+
+        // El desglose de cobros es LITERALMENTE el mismo bloque.
+        assertThat(financialBlock(daily, "COBROS POR FORMA DE PAGO"))
+                .isEqualTo(financialBlock(products, "COBROS POR FORMA DE PAGO"))
+                .anySatisfy(line -> assertThat(line)
+                        .contains("Efectivo").contains("Q510.00"));
+
+        // Y el resumen NO inventa que no se sabe como se cobro.
+        assertThat(products).doesNotContain("SIN FORMA DE COBRO REGISTRADA");
+        assertThat(products).contains("Tundra");
+        assertThat(products).contains("TOTAL GENERADO EN PRODUCTOS");
+    }
+
+    /**
+     * Las cinco secciones financieras coinciden palabra por palabra, para un
+     * cierre con las tres vias de cobro, una cambiaria pendiente y una
+     * devolucion.
+     *
+     * Es la comprobacion que sustituye a mirar cifra por cifra: si alguien
+     * anade una linea a una seccion del cierre y se olvida del otro documento,
+     * esto falla.
+     */
+    @Test
+    void bothDocumentsCarryTheSameFinancialSections() throws Exception {
+        Workshop workshop = authenticatedWorkshop();
+        Product perno = plainProduct("PERNO", "PERNO 1/2");
+
+        Sale cash = invoice(workshop, LocalDate.of(2026, 8, 20), PaymentMethod.CASH,
+                "200.00");
+        soldLine(cash, perno, 2, "200.00");
+        Sale card = invoice(workshop, LocalDate.of(2026, 8, 20), PaymentMethod.CARD,
+                "300.00");
+        soldLine(card, plainProduct("TUERCA", "TUERCA 1/2"), 3, "300.00");
+        Sale transfer = invoice(workshop, LocalDate.of(2026, 8, 20),
+                PaymentMethod.TRANSFER, "75.00");
+        soldLine(transfer, plainProduct("ARANDELA", "ARANDELA 1/2"), 1, "75.00");
+        Sale credit = pendingExchangeInvoice(
+                workshop, LocalDate.of(2026, 8, 20), "150.00");
+        soldLine(credit, plainProduct("REMACHE", "REMACHE 1/2"), 1, "150.00");
+
+        // La devolucion va sobre una venta SIN lineas: revertir una que las
+        // tenga exige devolver inventario, y lo que aqui se prueba es que la
+        // seccion de devoluciones se repita, no el flujo de almacen.
+        refund(invoice(workshop, LocalDate.of(2026, 8, 20), PaymentMethod.CASH,
+                        "50.00"),
+                "50.00", PaymentMethod.CASH);
+
+        CashClosureResponseDTO closure = service.close();
+
+        String daily = textOf(service.document(closure.id()).content());
+        String products = textOf(
+                service.productSummaryDocument(closure.id()).content());
+
+        for (String section : List.of(
+                "FACTURACION EMITIDA",
+                "FACTURAS CAMBIARIAS",
+                "COBROS POR FORMA DE PAGO",
+                "DEVOLUCIONES DEL PERIODO",
+                "NETO DEL PERIODO")) {
+            assertThat(financialBlock(daily, section))
+                    .as("seccion %s", section)
+                    .isNotEmpty()
+                    .isEqualTo(financialBlock(products, section));
+        }
+    }
+
+    /**
+     * La UNICA diferencia entre los dos papeles: como se identifica lo vendido.
+     *
+     * El mismo producto sale como articulo en uno y como familia + marca +
+     * modelo en el otro, y ninguno lleva las columnas del contrario.
+     */
+    @Test
+    void onlyTheSoldProductTableDiffersBetweenDocuments() throws Exception {
+        Workshop workshop = authenticatedWorkshop();
+        Brand toyota = brand("Toyota");
+        Family hojas = modelFamily("HOJA DE RESORTE");
+        Model hilux = model(toyota, "Hilux");
+
+        Sale sale = invoice(workshop, LocalDate.of(2026, 8, 20), PaymentMethod.CASH,
+                "250.00");
+        // Dos medidas del MISMO grupo comercial: dos filas alli, una aqui.
+        soldLine(sale, modelProduct(hojas, hilux, "HOJA 80"), 1, "100.00");
+        soldLine(sale, modelProduct(hojas, hilux, "HOJA 90"), 1, "150.00");
+
+        CashClosureResponseDTO closure = service.close();
+
+        String daily = textOf(service.document(closure.id()).content());
+        String products = textOf(
+                service.productSummaryDocument(closure.id()).content());
+
+        assertThat(daily).contains("ARTICULOS VENDIDOS");
+        assertThat(daily).contains("HOJA 80");
+        assertThat(daily).contains("HOJA 90");
+
+        assertThat(products).contains("RESUMEN DE PRODUCTOS");
+        assertThat(products).contains("Hilux");
+        assertThat(products).contains("Q250.00");
+        assertThat(products).doesNotContain("ARTICULOS VENDIDOS");
+
+        // Un solo grupo: las medidas no lo parten.
+        CashClosureProductSummaryDTO summary = summaryOf(closure.id());
+        assertThat(summary.groups()).hasSize(1);
+        assertThat(summary.groups().get(0).quantity()).isEqualTo(2L);
+    }
+
+    /**
+     * Una cambiaria cobrada al dia siguiente no reescribe ninguno de los dos
+     * documentos del dia que la emitio: los dos siguen diciendo que quedo
+     * pendiente, y los dos siguen diciendo lo mismo entre si.
+     */
+    @Test
+    void collectingTomorrowRewritesNeitherDocument() throws Exception {
+        Workshop workshop = authenticatedWorkshop();
+        Sale credit = pendingExchangeInvoice(
+                workshop, LocalDate.of(2026, 8, 20), "200.00");
+        soldLine(credit, plainProduct("PERNO", "PERNO 1/2"), 2, "200.00");
+
+        UUID monday = closeOn(LocalDate.of(2026, 8, 20)).id();
+        String before = textOf(service.productSummaryDocument(monday).content());
+
+        collect(credit, LocalDate.of(2026, 8, 21), PaymentMethod.CARD);
+
+        String after = textOf(service.productSummaryDocument(monday).content());
+        String daily = textOf(service.document(monday).content());
+
+        assertThat(financialBlock(after, "COBROS POR FORMA DE PAGO"))
+                .isEqualTo(financialBlock(before, "COBROS POR FORMA DE PAGO"))
+                .isEqualTo(financialBlock(daily, "COBROS POR FORMA DE PAGO"));
+        assertThat(financialBlock(after, "FACTURAS CAMBIARIAS"))
+                .isEqualTo(financialBlock(daily, "FACTURAS CAMBIARIAS"));
+        assertThat(after).contains("Pendiente");
+    }
+
+    /**
+     * Editar el catalogo despues de cerrar no cambia NINGUNA de las dos hojas:
+     * ni las dimensiones del resumen ni las cifras financieras de los dos.
+     */
+    @Test
+    void catalogueEditsRewriteNeitherDocument() throws Exception {
+        Workshop workshop = authenticatedWorkshop();
+        Brand toyota = brand("Toyota");
+        Family hojas = modelFamily("HOJA DE RESORTE");
+        Model tundra = model(toyota, "Tundra");
+
+        Sale sale = invoice(workshop, LocalDate.of(2026, 8, 20), PaymentMethod.CASH,
+                "510.00");
+        soldLine(sale, modelProduct(hojas, tundra, "Hoja con Agujeros"), 2, "510.00");
+
+        UUID closureId = service.close().id();
+        String productsBefore = textOf(
+                service.productSummaryDocument(closureId).content());
+        String dailyBefore = textOf(service.document(closureId).content());
+
+        // Los nombres del catalogo son UNICOS: se renombran con sufijo propio
+        // para no chocar con los de otra prueba de la misma base.
+        String renamed = "MUELLES RENOMBRADOS " + unique();
+        hojas.setName(renamed);
+        familyRepository.save(hojas);
+        toyota.setName("MARCA RENOMBRADA " + unique());
+        brandRepository.save(toyota);
+        tundra.setName("MODELO RENOMBRADO");
+        modelRepository.save(tundra);
+        sale.setPaymentMethod(PaymentMethod.CARD);
+        saleRepository.save(sale);
+
+        assertThat(withoutGeneratedAt(
+                textOf(service.productSummaryDocument(closureId).content())))
+                .isEqualTo(withoutGeneratedAt(productsBefore));
+        assertThat(withoutGeneratedAt(textOf(service.document(closureId).content())))
+                .isEqualTo(withoutGeneratedAt(dailyBefore));
+
+        // Y el catalogo SI cambio: la prueba no pasa por no haber tocado nada.
+        assertThat(familyRepository.findById(hojas.getId()).orElseThrow().getName())
+                .isEqualTo(renamed);
+    }
+
+    /**
+     * EL NUMERO DE CONSULTAS NO CRECE CON EL CIERRE.
+     *
+     * Se mide un cierre pequeno y uno grande: el numero de sentencias tiene que
+     * ser EL MISMO. El resumen se dibuja sobre las filas del snapshot que ya
+     * llegan con el cierre, sin resolver nada por grupo.
+     */
+    @Test
+    void theProductSummaryCostsTheSameQueriesOnASmallAndOnALargeClosure() {
+        Workshop workshop = authenticatedWorkshop();
+        Sale sale = invoice(workshop, LocalDate.of(2026, 8, 20), PaymentMethod.CASH,
+                "100.00");
+        soldLine(sale, plainProduct("PERNO", "PERNO 1/2"), 1, "100.00");
+        UUID small = service.close().id();
+
+        long smallQueries = statementsWhileExporting(small);
+
+        Workshop other = authenticatedWorkshop();
+        Brand toyota = brand("Toyota");
+        Family hojas = modelFamily("HOJA DE RESORTE");
+        for (PaymentMethod method : PaymentMethod.values()) {
+            for (int index = 0; index < 12; index++) {
+                Model each = model(toyota, "Modelo " + method + index);
+                Sale bulk = invoice(other, LocalDate.of(2026, 8, 20), method, "50.00");
+                soldLine(bulk, modelProduct(hojas, each, "HOJA " + method + index),
+                        2, "50.00");
+            }
+        }
+        UUID large = service.close().id();
+
+        long largeQueries = statementsWhileExporting(large);
+
+        assertThat(largeQueries).isEqualTo(smallQueries);
+    }
+
+    /** Las sentencias que cuesta exportar el resumen de un cierre. */
+    private long statementsWhileExporting(UUID closureId) {
+        org.hibernate.stat.Statistics statistics = entityManagerFactory
+                .unwrap(org.hibernate.SessionFactory.class)
+                .getStatistics();
+        statistics.setStatisticsEnabled(true);
+        statistics.clear();
+
+        service.productSummaryDocument(closureId);
+
+        return statistics.getPrepareStatementCount();
+    }
+
+    /** El texto de un PDF ya generado. */
+    private static String textOf(byte[] pdf) throws Exception {
+        try (org.apache.pdfbox.pdmodel.PDDocument document =
+                org.apache.pdfbox.Loader.loadPDF(pdf)) {
+            return new org.apache.pdfbox.text.PDFTextStripper().getText(document);
+        }
+    }
+
+    /**
+     * Las lineas de una seccion del PDF, desde su titulo hasta el siguiente.
+     *
+     * Se compara el BLOQUE entero y no una cifra suelta: es lo unico que
+     * detecta que una seccion haya perdido una linea en uno de los dos
+     * documentos.
+     */
+    private static List<String> financialBlock(String text, String title) {
+        List<String> lines = new ArrayList<>();
+        boolean inside = false;
+        for (String raw : text.split("\\R")) {
+            String line = raw.strip();
+            if (line.isEmpty() || line.startsWith("Generado el ")) {
+                continue;
+            }
+            if (line.equals(title)) {
+                inside = true;
+                continue;
+            }
+            if (inside && SECTION_TITLES.contains(line)) {
+                break;
+            }
+            if (inside) {
+                lines.add(line);
+            }
+        }
+        return lines;
+    }
+
+    private static final List<String> SECTION_TITLES = List.of(
+            "ARTICULOS VENDIDOS",
+            "RESUMEN DE PRODUCTOS",
+            "FACTURACION EMITIDA",
+            "FACTURAS CAMBIARIAS",
+            "COBROS POR FORMA DE PAGO",
+            "DEVOLUCIONES DEL PERIODO",
+            "NETO DEL PERIODO");
+
+    /** El pie lleva el instante de generacion, que cambia en cada descarga. */
+    private static String withoutGeneratedAt(String text) {
+        List<String> lines = new ArrayList<>();
+        for (String raw : text.split("\\R")) {
+            if (!raw.contains("Generado")) {
+                lines.add(raw);
+            }
+        }
+        return String.join("\n", lines);
+    }
+
+    // ── Apoyo del resumen de productos ───────────────────────────
+
+    /**
+     * Una linea vendida con su importe historico.
+     *
+     * Existe aparte de {@link #line} porque aquella deduce el precio unitario
+     * dividiendo, y Q100.00 entre 3 unidades no tiene representacion decimal
+     * exacta. Lo que este reporte prueba es el SUBTOTAL, asi que el precio se
+     * redondea y no se deja que una division tumbe la prueba.
+     */
+    private void soldLine(Sale sale, Product product, int quantity, String subTotal) {
+        BigDecimal amount = new BigDecimal(subTotal);
+        saleDetailRepository.save(SaleDetail.builder()
+                .sale(sale)
+                .product(product)
+                .quantity(quantity)
+                .price(amount.divide(BigDecimal.valueOf(quantity), 2,
+                        java.math.RoundingMode.HALF_UP))
+                .subTotal(amount)
+                .build());
+    }
+
+
+    private final CashClosureProductGrouper grouper = new CashClosureProductGrouper();
+
+    /**
+     * El resumen tal y como lo construye el servicio al exportar: sobre las
+     * filas del snapshot recien leidas de la base.
+     */
+    private CashClosureProductSummaryDTO summaryOf(UUID closureId) {
+        return new TransactionTemplate(transactionManager).execute(status ->
+                grouper.summarize(
+                        repository.findById(closureId).orElseThrow().getItems()));
+    }
+
+    private static BigDecimal amountOf(
+            CashClosureProductSummaryDTO summary, String modelName) {
+        return groups(summary).stream()
+                .filter(group -> modelName.equals(group.modelName()))
+                .findFirst()
+                .map(CashClosureProductGroupDTO::amount)
+                .orElseThrow();
+    }
+
+    /** Las filas del resumen, que ya vienen en una sola tabla. */
+    private static List<CashClosureProductGroupDTO> groups(
+            CashClosureProductSummaryDTO summary) {
+        return summary.groups();
+    }
+
+
+    private Brand brand(String name) {
+        return brandRepository.save(Brand.builder()
+                .name(name + " " + unique())
+                .logoKey("sin-logo")
+                .build());
+    }
+
+    private Model model(Brand brand, String name) {
+        return modelRepository.save(Model.builder()
+                .brand(brand)
+                .name(name)
+                .yearFrom(2015)
+                .yearTo(2025)
+                .build());
+    }
+
+    /** Familia que SI trabaja con modelo: marca y modelo aplican. */
+    private Family modelFamily(String name) {
+        catalogSequence++;
+        return familyRepository.save(Family.builder()
+                .code("MF" + catalogSequence + unique())
+                .name(name + " " + unique())
+                .requiresModel(true)
+                .category(FamilyCategory.SPECIAL)
+                .build());
+    }
+
+    /** Familia SIN modelo: ni marca ni modelo aplican, y no se inventan. */
+    private Family plainFamily(String name) {
+        catalogSequence++;
+        return familyRepository.save(Family.builder()
+                .code("PF" + catalogSequence + unique())
+                .name(name + " " + unique())
+                .requiresModel(false)
+                .category(FamilyCategory.NORMAL)
+                .build());
+    }
+
+    private Product modelProduct(Family family, Model model, String name) {
+        return productRepository.save(Product.builder()
+                .family(family)
+                .model(model)
+                .name(name + " " + unique())
+                .attributes(new HashMap<>())
+                .build());
+    }
+
+    private Product plainProduct(String familyName, String name) {
+        return plainProductIn(plainFamily(familyName), name);
+    }
+
+    private Product plainProductIn(Family family, String name) {
+        return productRepository.save(Product.builder()
+                .family(family)
+                .name(name + " " + unique())
+                .attributes(new HashMap<>())
                 .build());
     }
 

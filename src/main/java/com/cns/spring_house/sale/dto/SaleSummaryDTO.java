@@ -8,6 +8,7 @@ import com.cns.spring_house.customer.dto.CustomerResponseDTO;
 import com.cns.spring_house.sale.entity.InvoiceType;
 import com.cns.spring_house.sale.entity.PaymentMethod;
 import com.cns.spring_house.sale.entity.PaymentStatus;
+import com.cns.spring_house.sale.entity.TaxMode;
 
 /**
  * Sugerencia del buscador de facturas ya emitidas: lo justo para reconocer cual
@@ -29,6 +30,12 @@ public record SaleSummaryDTO(
 
     UUID id,
     CustomerResponseDTO customer,
+    /** Con NIT, Consumidor Final o sin definir; decide como leer lo demas. */
+    TaxMode taxMode,
+    /** Nombre escrito en la venta: el de CF, el de referencia o el congelado. */
+    String customerName,
+    /** NIT congelado de una venta con NIT ya cerrada; null en CF. */
+    String customerNit,
     String plate,
     InvoiceType invoiceType,
     PaymentStatus paymentStatus,
@@ -47,12 +54,18 @@ public record SaleSummaryDTO(
      * `customer` es opcional en el modelo (una venta de mostrador puede no
      * tenerlo), y un LEFT JOIN sin cliente devuelve todo a null; en ese caso el
      * resumen lleva null y no un cliente vacio con tres nulls dentro.
+     *
+     * Por eso viajan tambien el modo fiscal y el nombre escrito en la venta: sin
+     * ellos una venta a Consumidor Final y una sin cliente serian indistinguibles.
      */
     public SaleSummaryDTO(
             UUID id,
             UUID customerId,
             String customerNit,
+            String registeredCustomerName,
+            TaxMode taxMode,
             String customerName,
+            String saleCustomerNit,
             String plate,
             InvoiceType invoiceType,
             PaymentStatus paymentStatus,
@@ -64,7 +77,10 @@ public record SaleSummaryDTO(
                 id,
                 customerId == null
                         ? null
-                        : new CustomerResponseDTO(customerId, customerNit, customerName),
+                        : new CustomerResponseDTO(customerId, customerNit, registeredCustomerName),
+                taxMode,
+                customerName,
+                saleCustomerNit,
                 plate,
                 invoiceType,
                 paymentStatus,

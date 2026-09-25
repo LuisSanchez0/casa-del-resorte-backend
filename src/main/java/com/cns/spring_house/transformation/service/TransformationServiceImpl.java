@@ -4,6 +4,7 @@
     import java.util.List;
     import java.util.Map;
     import java.util.UUID;
+    import java.util.Set;
 
     import org.springframework.data.jpa.domain.Specification;
     import org.springframework.stereotype.Service;
@@ -49,11 +50,19 @@
         private final TransformationHandlerRegistry registry;
         private final WorkResultService workResultService;
 
+        /**
+         * El alcance sale del token. Antes salia de `requestDTO.workshop()`, de
+         * modo que quien preguntaba elegia que veia: sin el parametro la
+         * especificacion no acotaba nada y la respuesta traia las
+         * transformaciones de TODOS los talleres, y con el UUID de otro traia las
+         * de ese otro. El campo ya no existe en el DTO, asi que no queda nada que
+         * omitir ni que falsear.
+         */
         @Override
         public List<TransformationResponseDTO> getAll(SearchTransformationRequestDTO requestDTO) {
             Specification<Transformation> specs = Specification.allOf(
                     TransformationSpecs.hasEmployee(requestDTO.employee()),
-                    TransformationSpecs.hasWorkshop(requestDTO.workshop()),
+                    TransformationSpecs.hasWorkshop(SecurityUtils.getWorkshopId()),
                     TransformationSpecs.performedDateBetween(requestDTO.minDate(), requestDTO.maxDate()));
             List<TransformationResponseDTO> transformations = repository.findAll(specs)
                     .stream()
@@ -62,9 +71,16 @@
             return transformations;
         }
 
+        /**
+         * Acotado al taller: `transformation.workshop_id` es columna propia y NOT
+         * NULL (V7), asi que la pertenencia se resuelve en la propia consulta.
+         * Una transformacion de otro taller responde EXACTAMENTE lo mismo que una
+         * inexistente, para no confirmar que existe.
+         */
         @Override
         public TransformationResponseDTO get(UUID id) {
-            Transformation transformation = repository.findById(id)
+            Transformation transformation = repository
+                    .findByIdAndWorkshopId(id, SecurityUtils.getWorkshopId())
                     .orElseThrow(() -> new EntityNotFoundException(
                             "No existe la transformacion solicitada"));
             return mapper.toResponse(transformation);
@@ -73,8 +89,20 @@
         @Override
         public TransformationResponseDTO create(
                 CreateTransformationRequestDTO requestDTO) {
+            // PRIMER LIMITE DURO. La unidad se busca ya acotada al taller del
+            // token, no se busca global y se juzga despues: un item de otro
+            // taller no puede llegar al manejador, y llegar bastaba para hacer
+            // dano real —SPECIAL hace `removeStock(1)` sobre el inventario de
+            // ENTRADA y consume su lote; CONTAINER desarma la maleta y suelta sus
+            // componentes—. Conocer un UUID ajeno permitia destruir existencias
+            // de otro taller.
+            //
+            // El taller nunca viaja en el cuerpo de la peticion: sale del JWT.
+            UUID workshopId = SecurityUtils.getWorkshopId();
             InventoryItem inputItem = itemRepository
-                    .findById(requestDTO.inputItem())
+                    .findByIdAndInventoryWorkshopId(requestDTO.inputItem(), workshopId)
+                    // Mismo mensaje que para un id inexistente: no se confirma que
+                    // la pieza exista en otro taller ni se nombra a ese taller.
                     .orElseThrow(() -> new EntityNotFoundException(
                             "No existe el item especificado"));
             if (!isProcessable(inputItem)) {
@@ -100,13 +128,13 @@
             validateOutputMode(category, requestDTO);
             TransformationHandler handler = getHandler(inputItem);
             Transformation transformation = startTransformation();
-            handler.generate(transformation, inputItem, requestDTO);
+            Set<UUID> createdInventoryIds = handler.generate(transformation, inputItem, requestDTO);
             transformation = repository.save(transformation);
             transformation.getItems().stream()
                     .filter(item -> item.getRole() == TransformationItemRole.OUTPUT)
                     .forEach(item -> workResultService
                             .createPendingFromItem(item.getItem()));
-            return mapper.toResponse(transformation);
+            return mapper.toResponse(transformation).withCreatedInventoryIds(createdInventoryIds);
         }
 
         /**

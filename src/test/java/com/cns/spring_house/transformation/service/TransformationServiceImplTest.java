@@ -96,8 +96,17 @@ class TransformationServiceImplTest {
                 .build();
     }
 
+    /**
+     * El servicio busca la unidad de entrada YA ACOTADA al taller del token
+     * (`findByIdAndInventoryWorkshopId`), no global: por eso los stubs responden
+     * a esa consulta y no a `findById`. Una unidad de otro taller simplemente no
+     * aparece, que es justo el limite que se quiere.
+     */
     @BeforeEach
     void setUpAuthentication() {
+        org.mockito.Mockito.lenient().when(mapper.toResponse(any()))
+                .thenReturn(new com.cns.spring_house.transformation.dto.TransformationResponseDTO(
+                        UUID.randomUUID(), null, null, null, java.util.List.of()));
         Jwt jwt = Jwt.withTokenValue("token")
                 .header("alg", "HS256")
                 .subject(userAccountId.toString())
@@ -135,7 +144,7 @@ class TransformationServiceImplTest {
         InventoryItem remainderItem = item(FamilyCategory.SPECIAL);
         UUID outputProductId = UUID.randomUUID();
 
-        when(itemRepository.findById(inputItem.getId()))
+        when(itemRepository.findByIdAndInventoryWorkshopId(inputItem.getId(), workshopId))
                 .thenReturn(Optional.of(inputItem));
         when(registry.get(FamilyCategory.SPECIAL)).thenReturn(handler);
         when(userAccountRepository.findById(userAccountId))
@@ -154,7 +163,7 @@ class TransformationServiceImplTest {
                     .item(inputItem)
                     .role(TransformationItemRole.INPUT)
                     .build());
-            return null;
+            return java.util.Set.of();
         }).when(handler).generate(any(), any(), any());
         when(repository.save(any(Transformation.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
@@ -175,7 +184,7 @@ class TransformationServiceImplTest {
     @Test
     void createRejectsCurlCountsOnANonSpecialCategory() {
         InventoryItem inputItem = item(FamilyCategory.CONTAINER);
-        when(itemRepository.findById(inputItem.getId()))
+        when(itemRepository.findByIdAndInventoryWorkshopId(inputItem.getId(), workshopId))
                 .thenReturn(Optional.of(inputItem));
 
         assertThatThrownBy(() -> service.create(
@@ -190,7 +199,7 @@ class TransformationServiceImplTest {
     @Test
     void createRejectsRemainderCurlCountOnANonSpecialCategory() {
         InventoryItem inputItem = item(FamilyCategory.CONTAINER);
-        when(itemRepository.findById(inputItem.getId()))
+        when(itemRepository.findByIdAndInventoryWorkshopId(inputItem.getId(), workshopId))
                 .thenReturn(Optional.of(inputItem));
 
         assertThatThrownBy(() -> service.create(
@@ -208,7 +217,7 @@ class TransformationServiceImplTest {
     @Test
     void createRejectsOutputAttributesTogetherWithAnOutputProduct() {
         InventoryItem inputItem = item(FamilyCategory.SPECIAL);
-        when(itemRepository.findById(inputItem.getId()))
+        when(itemRepository.findByIdAndInventoryWorkshopId(inputItem.getId(), workshopId))
                 .thenReturn(Optional.of(inputItem));
 
         assertThatThrownBy(() -> service.create(
@@ -225,7 +234,7 @@ class TransformationServiceImplTest {
     @Test
     void createRejectsCantidadColochosInsideOutputAttributes() {
         InventoryItem inputItem = item(FamilyCategory.SPECIAL);
-        when(itemRepository.findById(inputItem.getId()))
+        when(itemRepository.findByIdAndInventoryWorkshopId(inputItem.getId(), workshopId))
                 .thenReturn(Optional.of(inputItem));
 
         assertThatThrownBy(() -> service.create(
@@ -241,7 +250,7 @@ class TransformationServiceImplTest {
     @Test
     void createRejectsCantidadColochosWrittenInAnotherCase() {
         InventoryItem inputItem = item(FamilyCategory.SPECIAL);
-        when(itemRepository.findById(inputItem.getId()))
+        when(itemRepository.findByIdAndInventoryWorkshopId(inputItem.getId(), workshopId))
                 .thenReturn(Optional.of(inputItem));
 
         assertThatThrownBy(() -> service.create(
@@ -256,7 +265,7 @@ class TransformationServiceImplTest {
     @Test
     void createAcceptsOnlyTheCurlCountAsTheRequestedChange() {
         InventoryItem inputItem = item(FamilyCategory.SPECIAL);
-        when(itemRepository.findById(inputItem.getId()))
+        when(itemRepository.findByIdAndInventoryWorkshopId(inputItem.getId(), workshopId))
                 .thenReturn(Optional.of(inputItem));
         when(registry.get(FamilyCategory.SPECIAL)).thenReturn(handler);
         when(userAccountRepository.findById(userAccountId))
@@ -273,7 +282,7 @@ class TransformationServiceImplTest {
     @Test
     void createRejectsASpecialTransformationWithoutAnyRequestedChange() {
         InventoryItem inputItem = item(FamilyCategory.SPECIAL);
-        when(itemRepository.findById(inputItem.getId()))
+        when(itemRepository.findByIdAndInventoryWorkshopId(inputItem.getId(), workshopId))
                 .thenReturn(Optional.of(inputItem));
 
         assertThatThrownBy(() -> service.create(
@@ -287,7 +296,7 @@ class TransformationServiceImplTest {
     void createRejectsAnItemThatIsNotAvailable() {
         InventoryItem inputItem = item(FamilyCategory.SPECIAL);
         inputItem.setStatus(InventoryItemStatus.SOLD);
-        when(itemRepository.findById(inputItem.getId()))
+        when(itemRepository.findByIdAndInventoryWorkshopId(inputItem.getId(), workshopId))
                 .thenReturn(Optional.of(inputItem));
 
         assertThatThrownBy(() -> service.create(
@@ -301,7 +310,7 @@ class TransformationServiceImplTest {
     @Test
     void createResolvesTheEmployeeThroughTheAuthenticatedUserAccount() {
         InventoryItem inputItem = item(FamilyCategory.SPECIAL);
-        when(itemRepository.findById(inputItem.getId()))
+        when(itemRepository.findByIdAndInventoryWorkshopId(inputItem.getId(), workshopId))
                 .thenReturn(Optional.of(inputItem));
         when(registry.get(FamilyCategory.SPECIAL)).thenReturn(handler);
         when(userAccountRepository.findById(userAccountId))
@@ -325,7 +334,7 @@ class TransformationServiceImplTest {
     @Test
     void createTakesTheWorkshopFromTheAuthenticatedEmployee() {
         InventoryItem inputItem = item(FamilyCategory.SPECIAL);
-        when(itemRepository.findById(inputItem.getId()))
+        when(itemRepository.findByIdAndInventoryWorkshopId(inputItem.getId(), workshopId))
                 .thenReturn(Optional.of(inputItem));
         when(registry.get(FamilyCategory.SPECIAL)).thenReturn(handler);
         when(userAccountRepository.findById(userAccountId))
@@ -346,7 +355,7 @@ class TransformationServiceImplTest {
     @Test
     void createRejectsAnAuthenticatedUserWithoutAnEmployee() {
         InventoryItem inputItem = item(FamilyCategory.SPECIAL);
-        when(itemRepository.findById(inputItem.getId()))
+        when(itemRepository.findByIdAndInventoryWorkshopId(inputItem.getId(), workshopId))
                 .thenReturn(Optional.of(inputItem));
         when(registry.get(FamilyCategory.SPECIAL)).thenReturn(handler);
         when(userAccountRepository.findById(userAccountId))
@@ -368,7 +377,7 @@ class TransformationServiceImplTest {
         InventoryItem componentA = item(FamilyCategory.SPECIAL);
         InventoryItem componentB = item(FamilyCategory.SPECIAL);
 
-        when(itemRepository.findById(containerItem.getId()))
+        when(itemRepository.findByIdAndInventoryWorkshopId(containerItem.getId(), workshopId))
                 .thenReturn(Optional.of(containerItem));
         when(registry.get(FamilyCategory.CONTAINER)).thenReturn(handler);
         when(userAccountRepository.findById(userAccountId))
@@ -387,7 +396,7 @@ class TransformationServiceImplTest {
                     .item(containerItem)
                     .role(TransformationItemRole.INPUT)
                     .build());
-            return null;
+            return java.util.Set.of();
         }).when(handler).generate(any(), any(), any());
         when(repository.save(any(Transformation.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));

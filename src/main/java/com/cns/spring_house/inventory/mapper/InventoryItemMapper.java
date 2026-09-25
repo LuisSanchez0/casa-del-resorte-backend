@@ -32,6 +32,7 @@ public interface InventoryItemMapper {
     @Mapping(
             target = "containerId",
             source = "container.id")
+    @Mapping(target = "category", source = "inventory.product.family.category")
     InventoryItemResponseDTO toResponse(
             InventoryItem inventoryItem);
 

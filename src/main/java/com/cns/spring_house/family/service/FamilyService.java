@@ -14,6 +14,7 @@ public interface FamilyService {
     
     FamilyResponseDTO get(UUID id);
     List<FamilyResponseDTO> getAll(SearchFamilyRequestDTO requestDTO);
+    List<FamilyResponseDTO> getTransformationTargets(UUID id);
     FamilyResponseDTO create(CreateFamilyRequestDTO requestDTO);
     FamilyResponseDTO update(UUID id, UpdateFamilyRequestDTO requestDTO);
     FamilyResponseDTO createAttribute(UUID id, CreateAttributeRequestDTO requestDTO);

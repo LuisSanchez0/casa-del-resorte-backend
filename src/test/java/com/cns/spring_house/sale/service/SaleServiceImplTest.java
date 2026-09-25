@@ -51,6 +51,7 @@ import com.cns.spring_house.sale.entity.InvoiceType;
 import com.cns.spring_house.sale.entity.PaymentMethod;
 import com.cns.spring_house.sale.entity.PaymentStatus;
 import com.cns.spring_house.sale.entity.Sale;
+import com.cns.spring_house.sale.entity.TaxMode;
 import com.cns.spring_house.sale.entity.SaleActionType;
 import com.cns.spring_house.sale.entity.SaleDetail;
 import com.cns.spring_house.sale.entity.SaleStatus;
@@ -135,6 +136,17 @@ class SaleServiceImplTest {
             .workshop(workshop)
             .build();
 
+    /**
+     * Cliente con NIT de las ventas abiertas de estas pruebas: una venta abierta
+     * sin cliente estaria sin definir y no se podria emitir sin elegir NIT o CF,
+     * que no es lo que se mide aqui.
+     */
+    private final Customer registeredCustomer = Customer.builder()
+            .id(UUID.randomUUID())
+            .nit("12345678")
+            .name("CLIENTE CON NIT")
+            .build();
+
     /** Posterior a {@link #ISSUED_AT}: cobrar nunca puede quedar antes de emitir. */
     private static final java.time.LocalDateTime NOW =
             java.time.LocalDateTime.of(2026, 8, 20, 18, 45);
@@ -193,8 +205,10 @@ class SaleServiceImplTest {
                 InvoiceType.INVOICE, PaymentMethod.CASH);
     }
 
+    /** Venta con NIT corriente: la identidad fiscal no es lo que se mide aqui. */
     private Sale saleWithDetail(SaleDetail detail) {
         Sale sale = Sale.builder()
+                .customer(registeredCustomer)
                 .id(UUID.randomUUID())
                 .workshop(workshop)
                 .build();
@@ -208,6 +222,7 @@ class SaleServiceImplTest {
         Product jobProduct = product(FamilyCategory.JOB);
         WorkResult workResult = pendingFromJobLog(jobProduct);
         Sale sale = Sale.builder()
+                .customer(registeredCustomer)
                 .id(UUID.randomUUID())
                 .workshop(workshop)
                 .build();
@@ -245,6 +260,7 @@ class SaleServiceImplTest {
                 .build();
         UUID workResultId = UUID.randomUUID();
         Sale sale = Sale.builder()
+                .customer(registeredCustomer)
                 .id(UUID.randomUUID())
                 .workshop(workshop)
                 .build();
@@ -279,6 +295,7 @@ class SaleServiceImplTest {
     void addDetailWithoutWorkResultDoesNotTouchPendingRecords() {
         Product normalProduct = product(FamilyCategory.NORMAL);
         Sale sale = Sale.builder()
+                .customer(registeredCustomer)
                 .id(UUID.randomUUID())
                 .workshop(workshop)
                 .build();
@@ -404,6 +421,7 @@ class SaleServiceImplTest {
     @Test
     void completeSaleRejectsClosedSaleWithoutMarkingWorkResults() {
         Sale sale = Sale.builder()
+                .taxMode(TaxMode.CF)
                 .id(UUID.randomUUID())
                 .status(SaleStatus.COMPLETED)
                 .build();
@@ -652,6 +670,7 @@ class SaleServiceImplTest {
     @Test
     void anIssuedInvoiceIsNoLongerEditable() {
         Sale sale = Sale.builder()
+                .taxMode(TaxMode.CF)
                 .id(UUID.randomUUID())
                 .workshop(workshop)
                 .status(SaleStatus.COMPLETED)
@@ -674,6 +693,7 @@ class SaleServiceImplTest {
 
     private Sale issuedExchangeInvoice() {
         Sale sale = Sale.builder()
+                .taxMode(TaxMode.CF)
                 .id(UUID.randomUUID())
                 .workshop(workshop)
                 .status(SaleStatus.COMPLETED)
@@ -705,6 +725,7 @@ class SaleServiceImplTest {
     @Test
     void aSaleCannotBePaidTwice() {
         Sale sale = Sale.builder()
+                .taxMode(TaxMode.CF)
                 .id(UUID.randomUUID())
                 .workshop(workshop)
                 .status(SaleStatus.COMPLETED)
@@ -726,6 +747,7 @@ class SaleServiceImplTest {
     @Test
     void anOpenSaleCannotRegisterAPayment() {
         Sale sale = Sale.builder()
+                .customer(registeredCustomer)
                 .id(UUID.randomUUID())
                 .workshop(workshop)
                 .build();
@@ -743,6 +765,7 @@ class SaleServiceImplTest {
     @Test
     void aNormalInvoiceCannotGoThroughTheLaterPaymentFlow() {
         Sale sale = Sale.builder()
+                .taxMode(TaxMode.CF)
                 .id(UUID.randomUUID())
                 .workshop(workshop)
                 .status(SaleStatus.COMPLETED)
@@ -791,6 +814,7 @@ class SaleServiceImplTest {
     @Test
     void anEmptySaleCannotBeCompleted() {
         Sale sale = Sale.builder()
+                .customer(registeredCustomer)
                 .id(UUID.randomUUID())
                 .workshop(workshop)
                 .build();
@@ -815,6 +839,7 @@ class SaleServiceImplTest {
     @Test
     void anEmptyExchangeInvoiceIsRejectedToo() {
         Sale sale = Sale.builder()
+                .customer(registeredCustomer)
                 .id(UUID.randomUUID())
                 .workshop(workshop)
                 .build();
@@ -1085,6 +1110,7 @@ class SaleServiceImplTest {
     @Test
     void anIssuedSaleCannotBeCancelled() {
         Sale sale = Sale.builder()
+                .taxMode(TaxMode.CF)
                 .id(UUID.randomUUID())
                 .workshop(workshop)
                 .status(SaleStatus.COMPLETED)
@@ -1106,6 +1132,7 @@ class SaleServiceImplTest {
     @Test
     void aCancelledSaleIsNotCancelledAgain() {
         Sale sale = Sale.builder()
+                .taxMode(TaxMode.CF)
                 .id(UUID.randomUUID())
                 .workshop(workshop)
                 .status(SaleStatus.CANCELLED)
@@ -1165,6 +1192,7 @@ class SaleServiceImplTest {
 
     private Sale completedSaleWithDetail(SaleDetail detail) {
         Sale sale = Sale.builder()
+                .taxMode(TaxMode.CF)
                 .id(UUID.randomUUID())
                 .workshop(workshop)
                 .status(SaleStatus.COMPLETED)
@@ -1227,6 +1255,7 @@ class SaleServiceImplTest {
     @Test
     void aPendingSaleCannotBeReversed() {
         Sale sale = Sale.builder()
+                .customer(registeredCustomer)
                 .id(UUID.randomUUID())
                 .workshop(workshop)
                 .status(SaleStatus.PENDING)
@@ -1246,6 +1275,7 @@ class SaleServiceImplTest {
     @Test
     void aCancelledSaleCannotBeReversed() {
         Sale sale = Sale.builder()
+                .taxMode(TaxMode.CF)
                 .id(UUID.randomUUID())
                 .workshop(workshop)
                 .status(SaleStatus.CANCELLED)
@@ -1264,6 +1294,7 @@ class SaleServiceImplTest {
     @Test
     void aSaleCannotBeReversedTwice() {
         Sale sale = Sale.builder()
+                .taxMode(TaxMode.CF)
                 .id(UUID.randomUUID())
                 .workshop(workshop)
                 .status(SaleStatus.REVERSED)
@@ -1286,6 +1317,7 @@ class SaleServiceImplTest {
         Product jobProduct = product(FamilyCategory.JOB);
         UUID workResultId = UUID.randomUUID();
         Sale sale = Sale.builder()
+                .customer(registeredCustomer)
                 .id(UUID.randomUUID())
                 .workshop(workshop)
                 .build();
@@ -1450,6 +1482,7 @@ class SaleServiceImplTest {
     @Test
     void aCompletedSaleCannotBeDeleted() {
         Sale sale = Sale.builder()
+                .taxMode(TaxMode.CF)
                 .id(UUID.randomUUID())
                 .workshop(workshop)
                 .status(SaleStatus.COMPLETED)

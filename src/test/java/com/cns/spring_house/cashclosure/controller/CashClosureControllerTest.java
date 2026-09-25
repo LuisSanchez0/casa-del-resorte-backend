@@ -225,6 +225,50 @@ class CashClosureControllerTest {
                 .andExpect(header().string("Content-Type", "application/pdf"));
     }
 
+    /**
+     * El SEGUNDO documento vive en su propia ruta y con su propio nombre de
+     * archivo.
+     *
+     * Ruta aparte y no `?formato=`: son dos papeles que se archivan por
+     * separado, y un parametro los dejaria compartiendo nombre.
+     */
+    @Test
+    void downloadsTheProductSummaryPdfAsASeparateAttachment() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(service.productSummaryDocument(id)).thenReturn(
+                new CashClosureDocumentDTO(
+                        "resumen-productos-cierre-2026-08-20.pdf",
+                        new byte[] { 4, 5, 6 }));
+
+        mockMvc.perform(get("/v1/cash-closures/{id}/products-pdf", id))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Disposition",
+                        org.hamcrest.Matchers.containsString("attachment")))
+                .andExpect(header().string("Content-Disposition",
+                        org.hamcrest.Matchers.containsString(
+                                "resumen-productos-cierre-2026-08-20.pdf")))
+                .andExpect(header().string("Content-Type", "application/pdf"));
+    }
+
+    /**
+     * Los dos PDF son documentos DISTINTOS y ninguno llama al otro. Esta prueba
+     * falla el dia que alguien "unifique" las dos rutas y el boton de cierre
+     * empiece a bajar el resumen.
+     */
+    @Test
+    void theTwoPdfRoutesAreIndependent() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(service.document(id)).thenReturn(
+                new CashClosureDocumentDTO("cierre-caja-2026-08-20.pdf",
+                        new byte[] { 1 }));
+
+        mockMvc.perform(get("/v1/cash-closures/{id}/pdf", id))
+                .andExpect(status().isOk());
+
+        verify(service).document(id);
+        verify(service, never()).productSummaryDocument(any());
+    }
+
     // ── Aislamiento ──────────────────────────────────────────────
 
     /**

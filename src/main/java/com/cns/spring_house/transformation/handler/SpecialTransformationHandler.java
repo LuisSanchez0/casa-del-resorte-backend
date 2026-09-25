@@ -1,5 +1,8 @@
 package com.cns.spring_house.transformation.handler;
 
+import java.util.Set;
+import java.util.HashSet;
+
 import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.List;
@@ -17,6 +20,7 @@ import com.cns.spring_house.acquisition.service.InventoryLotService;
 import com.cns.spring_house.family.entity.Family;
 import com.cns.spring_house.family.entity.FamilyCategory;
 import com.cns.spring_house.family.service.HoleMeasurementValidator;
+import com.cns.spring_house.family.service.TransformationFamilyCompatibility;
 import com.cns.spring_house.inventory.entity.Inventory;
 import com.cns.spring_house.inventory.entity.InventoryItem;
 import com.cns.spring_house.inventory.entity.InventoryItemStatus;
@@ -32,6 +36,7 @@ import com.cns.spring_house.transformation.dto.CreateTransformationRequestDTO;
 import com.cns.spring_house.transformation.entity.Transformation;
 import com.cns.spring_house.transformation.entity.TransformationItem;
 import com.cns.spring_house.transformation.entity.TransformationItemRole;
+import com.cns.spring_house.transformation.service.TransformationLengthValidator;
 import com.cns.spring_house.workshop.entity.Workshop;
 import com.cns.spring_house.workshop.repository.WorkshopRepository;
 
@@ -77,26 +82,43 @@ public class SpecialTransformationHandler implements TransformationHandler {
      */
     @Transactional(propagation = Propagation.MANDATORY)
     @Override
-    public void generate(
+    public Set<UUID> generate(
             Transformation transformation,
             InventoryItem inputItem,
             CreateTransformationRequestDTO requestDTO) {
         Product inputProduct = inputItem.getInventory().getProduct();
-        boolean supportsCurlCount = supportsCurlCount(inputProduct.getFamily());
-        validateCurlCountSupport(supportsCurlCount, requestDTO);
+        // La compatibilidad de familia se decide ANTES que nada: es la
+        // comprobacion mas basica —si la pieza no puede llegar a ser eso, el
+        // resto de preguntas no tienen sentido— y ademas de ella depende como se
+        // interpretan los colochos.
         Product selectedProduct = requestDTO.outputProduct() == null
                 ? null
                 : resolveTargetProduct(requestDTO.outputProduct());
         if (selectedProduct != null) {
             validateSelectedProduct(inputProduct, selectedProduct);
         }
+        boolean crossFamily = selectedProduct != null
+                && TransformationFamilyCompatibility.isCrossFamily(
+                        inputProduct.getFamily(), selectedProduct.getFamily());
+        boolean supportsCurlCount = supportsCurlCount(inputProduct.getFamily());
+        validateCurlCountSupport(supportsCurlCount, crossFamily, requestDTO);
         Map<String, Object> outputAttributes =
                 resolveOutputAttributes(inputProduct, selectedProduct, requestDTO);
+        // Una pieza puede conservar o perder largo, nunca ganarlo. Va ANTES que
+        // la regla de orificio a proposito: si el resultado ni siquiera cabe en
+        // la pieza de entrada, ese es el problema que hay que contar, y no que
+        // sus dos lados no sumen un largo que no puede existir.
+        //
+        // La familia que activa la regla es la de la ENTRADA aunque el resultado
+        // cambie de familia: el techo es el largo de la pieza fisica que se va a
+        // cortar, y esa pieza es de la familia de entrada.
+        TransformationLengthValidator.validate(
+                inputProduct.getFamily(), inputProduct.getAttributes(), outputAttributes);
         // Regla de medidas con orificio sobre la pieza EFECTIVA: el largo total
         // contra el que se compara es el que tendra el resultado (el de la
         // entrada, o el que pise el PATCH). Se comprueba antes de materializar
         // nada, asi que un incumplimiento no deja productos ni unidades a medias.
-        HoleMeasurementValidator.validate(inputProduct.getFamily(), outputAttributes);
+        validateHoleMeasurements(inputProduct, selectedProduct, outputAttributes);
         Optional<Double> remainderLength =
                 resolveRemainderLength(inputProduct, outputAttributes);
         validateRemainderCurlCount(
@@ -104,36 +126,70 @@ public class SpecialTransformationHandler implements TransformationHandler {
                 remainderLength.isPresent(),
                 requestDTO.remainderCurlCount());
 
+        Set<UUID> createdInventoryIds = new HashSet<>();
         transformation.addItem(generateOutputItem(
-                inputItem, selectedProduct, outputAttributes, requestDTO.outputName()));
+                inputItem, selectedProduct, outputAttributes, requestDTO.outputName(), createdInventoryIds));
         remainderLength
                 .map(length -> generateRemainder(
-                        inputProduct, length, requestDTO.remainderCurlCount()))
+                        inputProduct, length, requestDTO.remainderCurlCount(), createdInventoryIds))
                 .ifPresent(transformation::addItem);
         transformation.addItem(processInputItem(inputItem));
+        return Set.copyOf(createdInventoryIds);
     }
 
     /**
-     * Un producto de salida solo puede describir OTRA pieza de la misma familia:
-     * la transformación cambia las características de la unidad, nunca lo que la
-     * unidad es. Sin esta comprobación, elegir un producto de otra familia
-     * cambiaba en silencio la familia de la pieza resultante, porque el producto
-     * elegido era también el origen de familia y modelo.
+     * Un producto de salida solo puede describir una pieza que la de entrada
+     * pueda LLEGAR A SER: la transformación cambia las características de la
+     * unidad y, como mucho, la convierte en una pieza de una familia que el
+     * dominio declara compatible. Sin esta comprobación, elegir un producto de
+     * otra familia cambiaba en silencio la familia de la pieza resultante,
+     * porque el producto elegido era también el origen de familia y modelo.
      *
-     * Sus características, además, deben ser las que la familia declara: copiar
-     * una clave que la familia no admite propagaría a un producto nuevo un dato
-     * inconsistente de otro registro.
+     * Quien decide que es compatible es
+     * {@link TransformationFamilyCompatibility}, el MISMO sitio que consulta el
+     * endpoint que alimenta al frontend. Aqui esta la autoridad: una peticion
+     * fabricada a mano con un producto de una familia no compatible se rechaza
+     * aunque el selector nunca lo hubiera ofrecido.
+     *
+     * Sus características, además, deben ser las que declara SU PROPIA familia,
+     * no las de la entrada: copiar una clave que la familia de destino no admite
+     * propagaría a un producto nuevo un dato inconsistente de otro registro.
+     * Mientras el destino es la misma familia de la entrada las dos lecturas
+     * coinciden, asi que esto no cambia nada para las transformaciones de
+     * siempre.
      */
     private void validateSelectedProduct(Product inputProduct, Product selectedProduct) {
         Family family = inputProduct.getFamily();
-        UUID familyId = family == null ? null : family.getId();
         Family selectedFamily = selectedProduct.getFamily();
-        UUID selectedFamilyId = selectedFamily == null ? null : selectedFamily.getId();
-        if (familyId == null || !familyId.equals(selectedFamilyId)) {
+        if (!TransformationFamilyCompatibility.isAllowed(family, selectedFamily)) {
             throw new ValidationException(
-                    "El producto de salida debe pertenecer a la misma familia que la pieza de entrada");
+                    "El producto de salida no pertenece a una familia en la que la pieza de entrada pueda transformarse");
         }
-        validateDeclaredAttributes(family, selectedProduct.getAttributes());
+        validateDeclaredAttributes(selectedFamily, selectedProduct.getAttributes());
+    }
+
+    /**
+     * La regla de medidas con orificio, aplicada contra todas las familias que
+     * tienen algo que decir sobre la pieza resultante.
+     *
+     * Con el resultado en la familia de la entrada —el caso de siempre— esto es
+     * exactamente la comprobación de antes. Cuando el resultado cambia de
+     * familia por compatibilidad se comprueba TAMBIÉN contra la familia de
+     * destino: la pieza resultante va a pertenecer a esa, asi que es esa la que
+     * decide si sus medidas son coherentes. Se suman las dos en lugar de
+     * sustituir una por otra para que la excepcion de familia no pueda relajar
+     * nada: ninguna comprobacion que se hacia antes deja de hacerse.
+     */
+    private void validateHoleMeasurements(
+            Product inputProduct,
+            Product selectedProduct,
+            Map<String, Object> outputAttributes) {
+        Family inputFamily = inputProduct.getFamily();
+        HoleMeasurementValidator.validate(inputFamily, outputAttributes);
+        Family outputFamily = selectedProduct == null ? null : selectedProduct.getFamily();
+        if (TransformationFamilyCompatibility.isCrossFamily(inputFamily, outputFamily)) {
+            HoleMeasurementValidator.validate(outputFamily, outputAttributes);
+        }
     }
 
     /**
@@ -226,7 +282,7 @@ public class SpecialTransformationHandler implements TransformationHandler {
             Product selectedProduct,
             CreateTransformationRequestDTO requestDTO) {
         Map<String, Object> attributes = selectedProduct != null
-                ? mergeSelectedProduct(inputProduct, selectedProduct)
+                ? resolveSelectedAttributes(inputProduct, selectedProduct)
                 : resolveCustomAttributes(inputProduct, requestDTO);
         if (requestDTO.outputCurlCount() != null) {
             putCanonical(
@@ -234,6 +290,43 @@ public class SpecialTransformationHandler implements TransformationHandler {
                     resolveCurlCountKey(inputProduct.getFamily()),
                     requestDTO.outputCurlCount());
         }
+        return attributes;
+    }
+
+    /**
+     * Cómo se leen las características del producto elegido, según describa una
+     * pieza de la misma familia o de una familia compatible.
+     *
+     * <ul>
+     *   <li><b>misma familia</b>: se COMBINAN sobre las de la entrada. Es el
+     *       comportamiento de siempre y sigue teniendo sentido, porque las dos
+     *       piezas hablan el mismo vocabulario: lo que la entrada tenga y el
+     *       producto elegido no diga se conserva.</li>
+     *   <li><b>familia compatible</b>: se ADOPTAN las suyas tal cual. La pieza
+     *       resultante va a ser ese producto, de esa familia, y arrastrar encima
+     *       las características de la entrada significaria escribir en la hoja
+     *       de resorte claves que su familia puede no declarar —y que
+     *       `validateDeclaredAttributes` rechaza en cualquier otro producto—, o
+     *       pisar con el material liso valores que la hoja tiene bien
+     *       guardados.</li>
+     * </ul>
+     */
+    private Map<String, Object> resolveSelectedAttributes(
+            Product inputProduct, Product selectedProduct) {
+        return TransformationFamilyCompatibility.sameFamily(
+                inputProduct.getFamily(), selectedProduct.getFamily())
+                        ? mergeSelectedProduct(inputProduct, selectedProduct)
+                        : adoptSelectedProduct(selectedProduct);
+    }
+
+    /**
+     * Las características GUARDADAS del producto elegido, sin mezclar nada de la
+     * entrada. Se copian para no mutar nunca al elegido, que puede estar en uso
+     * por inventario e historial.
+     */
+    private Map<String, Object> adoptSelectedProduct(Product selectedProduct) {
+        Map<String, Object> attributes = copyOf(selectedProduct.getAttributes());
+        normalizeCurlCount(attributes);
         return attributes;
     }
 
@@ -393,14 +486,15 @@ public class SpecialTransformationHandler implements TransformationHandler {
      * se modifica el elegido, que puede estar en uso por inventario e historial.
      *
      * Familia y modelo salen del producto que sirve de referencia, como hasta
-     * ahora. La familia ya está comprobada como la misma de la entrada, así que
-     * la pieza resultante no puede cambiar de familia por esta vía.
+     * ahora. Esa familia ya paso por `validateSelectedProduct`, asi que la pieza
+     * resultante solo puede quedarse en la familia de la entrada o pasar a una
+     * que el dominio declara compatible; nunca a una cualquiera.
      */
     private TransformationItem generateOutputItem(
             InventoryItem inputItem,
             Product selectedProduct,
             Map<String, Object> attributes,
-            String outputName) {
+            String outputName, Set<UUID> createdInventoryIds) {
         Product inputProduct = inputItem.getInventory().getProduct();
         Product reference = selectedProduct != null ? selectedProduct : inputProduct;
         if (selectedProduct == null && attributes.equals(
@@ -415,8 +509,8 @@ public class SpecialTransformationHandler implements TransformationHandler {
 
         // La pieza resultante sale de la que se consumio, asi que arrastra su
         // costo. El cliente no lo envia: se lee del inventario de origen.
-        InventoryItem item = findOrCreateItem(
-                targetProduct, inputItem.getInventory().getCost());
+        InventoryItem item = createResultItem(
+                targetProduct, inputItem.getInventory().getCost(), createdInventoryIds);
         return TransformationItem.builder()
                 .item(item)
                 .role(TransformationItemRole.OUTPUT)
@@ -471,7 +565,26 @@ public class SpecialTransformationHandler implements TransformationHandler {
      * nunca decidió. Cuando no los maneja, configurarlos no tiene sentido.
      */
     private void validateCurlCountSupport(
-            boolean supportsCurlCount, CreateTransformationRequestDTO requestDTO) {
+            boolean supportsCurlCount, boolean crossFamily,
+            CreateTransformationRequestDTO requestDTO) {
+        // Cambiando de familia, la pieza resultante ES el producto elegido: su
+        // cantidad de colochos es la que ese producto ya tiene guardada, igual
+        // que el resto de sus caracteristicas. Preguntarla aparte permitiria
+        // pedir una pieza que dice ser ese producto y no serlo, que es
+        // exactamente lo que `validateOutputMode` ya impide con
+        // `outputAttributes`. El sobrante SI la lleva: es otra pieza fisica, de
+        // la familia de la entrada, y se valida mas abajo.
+        if (crossFamily) {
+            if (requestDTO.outputCurlCount() != null) {
+                throw new ValidationException(
+                        "La pieza resultante es el producto de salida elegido: su cantidad de colochos es la que ese producto ya tiene");
+            }
+            if (!supportsCurlCount && requestDTO.remainderCurlCount() != null) {
+                throw new ValidationException(
+                        "La familia del producto no admite cantidad de colochos");
+            }
+            return;
+        }
         if (supportsCurlCount) {
             if (requestDTO.outputCurlCount() == null) {
                 throw new ValidationException(
@@ -579,7 +692,8 @@ public class SpecialTransformationHandler implements TransformationHandler {
      * independencia de la principal.
      */
     private TransformationItem generateRemainder(
-            Product inputProduct, double length, Integer remainderCurlCount) {
+            Product inputProduct, double length, Integer remainderCurlCount,
+            Set<UUID> createdInventoryIds) {
         Map<String, Object> attributes = copyOf(inputProduct.getAttributes());
         String lengthKey = findAttributeKeyIgnoreCase(
                 attributes, LENGTH_ATTRIBUTE);
@@ -598,7 +712,7 @@ public class SpecialTransformationHandler implements TransformationHandler {
                 null);
         // El sobrante conserva su regla contable actual: no hereda el costo de
         // la entrada, que ya se atribuyo por completo a la pieza principal.
-        InventoryItem item = findOrCreateItem(productRemainder, BigDecimal.ZERO);
+        InventoryItem item = createResultItem(productRemainder, BigDecimal.ZERO, createdInventoryIds);
         return TransformationItem.builder()
                 .role(TransformationItemRole.REMAINDER)
                 .item(item)
@@ -761,16 +875,25 @@ public class SpecialTransformationHandler implements TransformationHandler {
     }
 
     /**
+     * OUTPUT y REMAINDER siempre reciben un InventoryItem nuevo y un UUID propio.
+     * Solo se reutiliza Inventory; createdInventoryIds describe inventarios,
+     * nunca determina si la pieza fisica o su codigo son nuevos.
      * `cost` solo se usa al crear el inventario. Si el taller ya tiene uno para
      * ese producto se respeta el costo que ya tuviera: la transformacion agrega
      * una unidad, no reescribe la contabilidad de un inventario existente.
      */
-    private InventoryItem findOrCreateItem(Product targetProduct, BigDecimal cost) {
+    private InventoryItem createResultItem(Product targetProduct, BigDecimal cost,
+            Set<UUID> createdInventoryIds) {
         Inventory inventory = inventoryRepository
                 .findByProductIdAndWorkshopId(
                         targetProduct.getId(),
                         SecurityUtils.getWorkshopId())
-                .orElseGet(() -> createInventory(targetProduct, cost));
+                .orElseGet(() -> {
+                    Inventory created = createInventory(targetProduct, cost);
+                    // Only publish identities once persistence has assigned them.
+                    if (created.getId() != null) createdInventoryIds.add(created.getId());
+                    return created;
+                });
         InventoryItem item = InventoryItem.builder()
                 .status(InventoryItemStatus.AVAILABLE)
                 .build();

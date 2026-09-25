@@ -2,6 +2,7 @@ package com.cns.spring_house.transformation.repository;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -13,6 +14,16 @@ import com.cns.spring_house.job.repository.projection.EmployeePerformanceProject
 import com.cns.spring_house.transformation.entity.Transformation;
 
 public interface TransformationRepository extends JpaRepository<Transformation, UUID>, JpaSpecificationExecutor<Transformation> {
+
+    /**
+     * Transformacion acotada al taller del usuario. Buscar solo por id dejaba
+     * leer la de otro taller —con sus productos, sus unidades fisicas y sus
+     * caracteristicas— con solo conocer el UUID.
+     *
+     * `transformation.workshop_id` es columna propia y NOT NULL (V7), asi que el
+     * filtro no necesita pasar por el empleado ni por el inventario.
+     */
+    Optional<Transformation> findByIdAndWorkshopId(UUID id, UUID workshopId);
 
     /**
      * Precio del inventario de ENTRADA de cada transformacion, indexado por la

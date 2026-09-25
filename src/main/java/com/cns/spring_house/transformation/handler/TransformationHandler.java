@@ -1,5 +1,8 @@
 package com.cns.spring_house.transformation.handler;
 
+import java.util.Set;
+import java.util.UUID;
+
 import com.cns.spring_house.family.entity.FamilyCategory;
 import com.cns.spring_house.inventory.entity.InventoryItem;
 import com.cns.spring_house.transformation.dto.CreateTransformationRequestDTO;
@@ -19,7 +22,7 @@ public interface TransformationHandler {
      * de CONTAINER; nulo o vacío significa desarmado completo. Los manejadores
      * que no lo soportan lo ignoran.
      */
-    void generate(
+    Set<UUID> generate(
             Transformation transformation,
             InventoryItem inputItem,
             CreateTransformationRequestDTO requestDTO);

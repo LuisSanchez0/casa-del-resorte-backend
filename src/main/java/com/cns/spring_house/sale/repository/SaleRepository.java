@@ -123,6 +123,9 @@ public interface SaleRepository extends JpaRepository<Sale, UUID>, JpaSpecificat
             customer.id,
             customer.nit,
             customer.name,
+            sale.taxMode,
+            sale.customerName,
+            sale.customerNit,
             sale.plate,
             sale.invoiceType,
             sale.paymentStatus,
@@ -161,8 +164,9 @@ public interface SaleRepository extends JpaRepository<Sale, UUID>, JpaSpecificat
      * El fragmento se compara contra el id de la venta CONVERTIDO A TEXTO: la
      * secretaria lee el identificador impreso en la factura y teclea sus
      * primeros caracteres, no el UUID entero. Tambien coincide contra nit,
-     * nombre de cliente y placa, que es como se reconoce un documento cuando no
-     * se tiene el papel delante.
+     * nombre de cliente —el registrado o, a Consumidor Final, el escrito en la
+     * venta— y placa, que es como se reconoce un documento cuando no se tiene el
+     * papel delante.
      *
      * `pattern` nulo devuelve las mas recientes sin filtrar por texto; el
      * servicio lo normaliza a minusculas y le pone los comodines, porque el
@@ -184,6 +188,9 @@ public interface SaleRepository extends JpaRepository<Sale, UUID>, JpaSpecificat
             customer.id,
             customer.nit,
             customer.name,
+            sale.taxMode,
+            sale.customerName,
+            sale.customerNit,
             sale.plate,
             sale.invoiceType,
             sale.paymentStatus,
@@ -199,6 +206,8 @@ public interface SaleRepository extends JpaRepository<Sale, UUID>, JpaSpecificat
                OR LOWER(CAST(sale.id AS String)) LIKE :pattern ESCAPE '\\'
                OR LOWER(customer.nit) LIKE :pattern ESCAPE '\\'
                OR LOWER(customer.name) LIKE :pattern ESCAPE '\\'
+               OR LOWER(sale.customerName) LIKE :pattern ESCAPE '\\'
+               OR LOWER(sale.customerNit) LIKE :pattern ESCAPE '\\'
                OR LOWER(sale.plate) LIKE :pattern ESCAPE '\\')
     """)
     List<SaleSummaryDTO> findCompletedSaleSummaries(
@@ -572,6 +581,19 @@ public interface SaleRepository extends JpaRepository<Sale, UUID>, JpaSpecificat
      * `sub_total` es el importe HISTORICO de la linea, con el ajuste manual de
      * precio ya incluido.
      *
+     * Viajan tambien las DIMENSIONES COMERCIALES del producto —familia, marca y
+     * modelo, con id y nombre— para que el cierre las copie en su snapshot. No
+     * cambian la granularidad: son funcionalmente dependientes de `product.id`,
+     * asi que anadirlas al GROUP BY no parte ni fusiona ninguna fila.
+     *
+     * Marca y modelo llegan por LEFT JOIN y pueden ser NULL: la marca se alcanza
+     * a traves del modelo (`product.model_id` -> `model.brand_id`, NOT NULL), y
+     * una familia con `requires_model` en false no tiene ninguno de los dos. El
+     * NULL significa NO APLICA, no un dato que falte.
+     *
+     * Son TRES joins mas en la misma consulta agregada, no una consulta por
+     * linea de venta.
+     *
      * El orden termina en `product.id` para que sea total: dos productos
      * homonimos con las mismas cifras podrian alternarse entre peticiones
      * identicas, y el snapshot quedaria distinto segun el plan de ejecucion.
@@ -580,17 +602,27 @@ public interface SaleRepository extends JpaRepository<Sale, UUID>, JpaSpecificat
         SELECT product.id AS productId,
                product.name AS itemName,
                family.category AS itemType,
+               family.id AS familyId,
+               family.name AS familyName,
+               brand.id AS brandId,
+               brand.name AS brandName,
+               model.id AS modelId,
+               model.name AS modelName,
                SUM(detail.quantity) AS quantity,
                COALESCE(SUM(detail.sub_total), 0) AS billedAmount
         FROM sale_detail detail
         JOIN sale ON sale.id = detail.sale_id
         JOIN product ON product.id = detail.product_id
         JOIN family ON family.id = product.family_id
+        LEFT JOIN model ON model.id = product.model_id
+        LEFT JOIN brand ON brand.id = model.brand_id
         WHERE sale.workshop_id = :workshopId
           AND sale.status = 'COMPLETED'
           AND sale.completed_at >= :from
           AND sale.completed_at < :to
-        GROUP BY product.id, product.name, family.category
+        GROUP BY product.id, product.name, family.category,
+                 family.id, family.name, brand.id, brand.name,
+                 model.id, model.name
         ORDER BY billedAmount DESC, quantity DESC, product.name ASC, product.id ASC
     """)
     List<ClosureSoldItemProjection> findSoldItemsBetween(
@@ -610,7 +642,10 @@ public interface SaleRepository extends JpaRepository<Sale, UUID>, JpaSpecificat
      */
     @Query(nativeQuery = true, value = """
         SELECT sale.id AS saleId,
-               customer.name AS customerName,
+               -- El nombre CONGELADO en la venta primero: una edicion posterior
+               -- del cliente no puede cambiar la etiqueta de un cierre. El del
+               -- cliente queda solo para una fila que no lo tuviera.
+               COALESCE(sale.customer_name, customer.name) AS customerName,
                sale.completed_at AS issuedAt,
                sale.total AS amount,
                sale.payment_status AS paymentStatus,
@@ -641,7 +676,10 @@ public interface SaleRepository extends JpaRepository<Sale, UUID>, JpaSpecificat
      */
     @Query(nativeQuery = true, value = """
         SELECT sale.id AS saleId,
-               customer.name AS customerName,
+               -- El nombre CONGELADO en la venta primero: una edicion posterior
+               -- del cliente no puede cambiar la etiqueta de un cierre. El del
+               -- cliente queda solo para una fila que no lo tuviera.
+               COALESCE(sale.customer_name, customer.name) AS customerName,
                sale.completed_at AS issuedAt,
                sale.total AS amount,
                sale.payment_status AS paymentStatus,

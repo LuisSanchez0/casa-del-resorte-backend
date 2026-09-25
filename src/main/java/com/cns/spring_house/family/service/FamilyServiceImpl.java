@@ -56,6 +56,35 @@ public class FamilyServiceImpl implements FamilyService {
                 .toList();
     }
 
+    /**
+     * Las familias en las que una pieza de esta familia puede convertirse al
+     * transformarse: la suya y las que {@link TransformationFamilyCompatibility}
+     * declara compatibles.
+     *
+     * Existe para que el cliente no tenga que conocer ningun codigo ni ningun
+     * nombre de familia para construir su buscador de producto de salida:
+     * pregunta por los destinos de la familia que tiene delante y busca en esos.
+     * La lista NO es una autorizacion —lo que se acepte de verdad lo decide
+     * `SpecialTransformationHandler` al crear la transformacion, contra esta
+     * misma regla—, solo evita ofrecer lo que luego se iba a rechazar.
+     *
+     * Se resuelve sobre el catalogo entero en UNA consulta: la tabla `family`
+     * tiene unas pocas filas y una consulta por destino seria un N+1 para
+     * ahorrar nada.
+     */
+    @Override
+    public List<FamilyResponseDTO> getTransformationTargets(UUID id) {
+        Family family = repository
+                .findById(id)
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "No existe la familia solicitada"));
+        return TransformationFamilyCompatibility
+                .targetsOf(family, repository.findAll())
+                .stream()
+                .map(mapper::toResponse)
+                .toList();
+    }
+
     @Override
     public FamilyResponseDTO create(CreateFamilyRequestDTO requestDTO) {
         if (repository.existsByCode(requestDTO.code())) {

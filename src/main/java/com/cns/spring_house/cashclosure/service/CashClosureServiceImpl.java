@@ -20,6 +20,7 @@ import com.cns.spring_house.cashclosure.dto.CashClosureExchangeDTO;
 import com.cns.spring_house.cashclosure.dto.CashClosureInvoicingDTO;
 import com.cns.spring_house.cashclosure.dto.CashClosureMonthStatus;
 import com.cns.spring_house.cashclosure.dto.CashClosureMonthlyResponseDTO;
+import com.cns.spring_house.cashclosure.dto.CashClosureProductSummaryDTO;
 import com.cns.spring_house.cashclosure.dto.CashClosureRefundsDTO;
 import com.cns.spring_house.cashclosure.dto.ClosureRefundDTO;
 import com.cns.spring_house.cashclosure.dto.ClosureRefundMethodDTO;
@@ -77,6 +78,7 @@ public class CashClosureServiceImpl implements CashClosureService, CashClosureGu
 
     private final CashClosureRepository repository;
     private final CashClosureCalculator calculator;
+    private final CashClosureProductGrouper grouper;
     private final CashClosureMapper mapper;
     private final CashClosureReportService reportService;
     private final CurrentUserService currentUserService;
@@ -453,6 +455,34 @@ public class CashClosureServiceImpl implements CashClosureService, CashClosureGu
 
         return new CashClosureDocumentDTO(
                 "cierre-caja-" + snapshot.businessDate() + ".pdf", content);
+    }
+
+    /**
+     * El resumen de mercaderia del cierre, agrupado por familia, marca y modelo.
+     *
+     * Se agrega sobre las filas del SNAPSHOT —que ya llegan cargadas con el
+     * cierre— y no contra `sale_detail` ni contra el catalogo. Es lo que hace
+     * que el documento de una fecha diga siempre lo mismo: las dimensiones se
+     * copiaron al confirmar, asi que renombrar una marca despues no puede
+     * reescribirlo.
+     *
+     * Ni una consulta por articulo: la coleccion del cierre se resuelve por lote
+     * en la misma lectura que ya hacia falta para el cierre.
+     */
+    @Override
+    public CashClosureDocumentDTO productSummaryDocument(UUID id) {
+        CashClosure closure = findOwnedClosure(id);
+        CashClosureResponseDTO snapshot = mapper.toResponse(closure);
+        CashClosureProductSummaryDTO summary = grouper.summarize(closure.getItems());
+
+        byte[] content = reportService.renderProductSummary(
+                snapshot,
+                summary,
+                headerOf(closure.getWorkshop()),
+                snapshot.closedBy());
+
+        return new CashClosureDocumentDTO(
+                "resumen-productos-cierre-" + snapshot.businessDate() + ".pdf", content);
     }
 
     // ── Apoyo ────────────────────────────────────────────────────

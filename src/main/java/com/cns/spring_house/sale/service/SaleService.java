@@ -11,6 +11,7 @@ import com.cns.spring_house.sale.dto.CompleteSaleRequestDTO;
 import com.cns.spring_house.sale.dto.CreateSaleRequestDTO;
 import com.cns.spring_house.sale.dto.ExchangeInvoiceSummaryDTO;
 import com.cns.spring_house.sale.dto.RegisterPaymentRequestDTO;
+import com.cns.spring_house.sale.dto.SaveForLaterRequestDTO;
 import com.cns.spring_house.sale.dto.ReverseSaleRequestDTO;
 import com.cns.spring_house.sale.dto.SaleResponseDTO;
 import com.cns.spring_house.sale.dto.SaleSummaryDTO;
@@ -55,6 +56,14 @@ public interface SaleService {
     SaleResponseDTO removeDetail(UUID saleDetailId);
 
     SaleResponseDTO completeSale(UUID id, CompleteSaleRequestDTO requestDTO);
+
+    /**
+     * Guarda una venta abierta para retomarla despues (`savedForLater`). Una
+     * venta sin NIT queda SIN DEFINIR y exige su nombre de referencia, que
+     * puede llegar en la peticion o tenerlo ya la venta; una con NIT se
+     * reconoce por su cliente.
+     */
+    SaleResponseDTO saveForLater(UUID id, SaveForLaterRequestDTO requestDTO);
 
     SaleResponseDTO registerPayment(UUID id, RegisterPaymentRequestDTO requestDTO);
 

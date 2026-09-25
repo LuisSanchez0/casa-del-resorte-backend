@@ -28,6 +28,7 @@ import com.cns.spring_house.sale.dto.CompleteSaleRequestDTO;
 import com.cns.spring_house.sale.dto.CreateSaleRequestDTO;
 import com.cns.spring_house.sale.dto.ExchangeInvoiceSummaryDTO;
 import com.cns.spring_house.sale.dto.RegisterPaymentRequestDTO;
+import com.cns.spring_house.sale.dto.SaveForLaterRequestDTO;
 import com.cns.spring_house.refund.entity.SaleRefund;
 import com.cns.spring_house.refund.entity.SaleRefundType;
 import com.cns.spring_house.refund.repository.SaleRefundRepository;
@@ -43,6 +44,7 @@ import com.cns.spring_house.sale.entity.SaleAction;
 import com.cns.spring_house.sale.entity.SaleActionType;
 import com.cns.spring_house.sale.entity.SaleDetail;
 import com.cns.spring_house.sale.entity.SaleStatus;
+import com.cns.spring_house.sale.entity.TaxMode;
 import com.cns.spring_house.sale.handler.SaleDetailHandler;
 import com.cns.spring_house.sale.handler.SaleDetailHandlerRegistry;
 import com.cns.spring_house.sale.mapper.SaleMapper;
@@ -88,6 +90,12 @@ public class SaleServiceImpl implements SaleService {
     private static final int DEFAULT_SUGGESTIONS = 8;
 
     private static final int MAX_SUGGESTIONS = 10;
+
+    private static final String UNRESOLVED_COMPLETION_MESSAGE =
+            "Debe seleccionar NIT o Consumidor Final antes de finalizar la venta";
+
+    private static final String CF_ONLY_AT_COMPLETION_MESSAGE =
+            "Consumidor Final se elige al emitir la venta: abrala sin NIT y elija CF al finalizar";
 
     private final SaleRepository repository;
     private final SaleMapper mapper;
@@ -141,6 +149,7 @@ public class SaleServiceImpl implements SaleService {
                 SaleSpecs.plateContains(requestDTO.plate()),
                 SaleSpecs.hasInvoiceType(requestDTO.invoiceType()),
                 SaleSpecs.hasPaymentStatus(requestDTO.paymentStatus()),
+                SaleSpecs.isSavedForLater(requestDTO.savedForLater()),
                 SaleSpecs.totalBetween(requestDTO.minTotal(), requestDTO.maxTotal()),
                 SaleSpecs.completedAtBetween(requestDTO.minDate(), requestDTO.maxDate()));
         List<SaleResponseDTO> sales = repository.findAll(specs).stream()
@@ -175,15 +184,154 @@ public class SaleServiceImpl implements SaleService {
         Employee employee = currentUserService.getCurrentEmployee();
         Workshop workshop = currentUserService.getCurrentWorkshop();
         cashClosureGuard.ensureCashRegisterIsOpen(workshop.getId());
-        Customer customer = customerRepository.findById(requestDTO.customer())
-                .orElseThrow(() -> new EntityNotFoundException(
-                        "No existe el cliente especificado"));
         Sale sale = Sale.builder()
                 .workshop(workshop)
                 .employee(employee)
-                .customer(customer)
                 .plate(requestDTO.plate())
                 .build();
+        // Sin modo es el contrato anterior, que solo creaba ventas con cliente:
+        // NIT, que sigue exigiendo el cliente. Nunca CF por omision.
+        TaxMode taxMode = requestDTO.taxMode() == null
+                ? TaxMode.NIT
+                : requestDTO.taxMode();
+        // CF es una identidad final: se fija al emitir, en la misma transaccion
+        // que completa la venta. Aceptarla aqui dejaria un carrito abierto a
+        // Consumidor Final si el navegador se cierra antes de emitirlo.
+        if (taxMode == TaxMode.CF) {
+            throw new ValidationException(CF_ONLY_AT_COMPLETION_MESSAGE);
+        }
+        applyTaxIdentity(sale, taxMode, requestDTO.customer(), requestDTO.customerName());
+        sale = repository.save(sale);
+        return mapper.toResponse(sale);
+    }
+
+    /**
+     * Unico punto que fija la identidad fiscal de una venta, al abrirla y al
+     * emitirla, para que las dos puertas no puedan aplicar reglas distintas.
+     *
+     * Deja la venta con la forma exacta que exige ck_sale_tax_identity: cambiar
+     * a CF suelta el Customer —un NIT anterior no puede colarse como identidad
+     * del documento— y cambiar a NIT suelta el nombre suelto, porque el nombre
+     * pasa a ser el del cliente registrado (se congela al cerrar la venta, ver
+     * {@link Sale#freezeFiscalIdentity}). El maestro de clientes no se toca en
+     * ningun caso.
+     *
+     * CF solo llega aqui desde la finalizacion: el alta lo rechaza antes.
+     */
+    private void applyTaxIdentity(
+            Sale sale, TaxMode taxMode, UUID customerId, String customerName) {
+        switch (taxMode) {
+            case NIT -> {
+                if (customerId == null) {
+                    throw new ValidationException("El cliente es obligatorio");
+                }
+                if (customerName != null) {
+                    throw new ValidationException(
+                            "Una venta con NIT usa el nombre del cliente registrado");
+                }
+                Customer customer = customerRepository.findById(customerId)
+                        .orElseThrow(() -> new EntityNotFoundException(
+                                "No existe el cliente especificado"));
+                sale.setCustomer(customer);
+                sale.setCustomerName(null);
+                sale.setCustomerNit(null);
+            }
+            case CF -> {
+                rejectRegisteredCustomer(customerId);
+                sale.setCustomer(null);
+                sale.setCustomerName(customerName);
+                sale.setCustomerNit(null);
+            }
+            case UNRESOLVED -> {
+                rejectRegisteredCustomer(customerId);
+                // Un borrador sin NIT puede no tener nombre todavia: el nombre
+                // se exige al guardarlo para despues, que es cuando hace falta
+                // reconocerlo.
+                sale.setCustomer(null);
+                sale.setCustomerName(customerName);
+                sale.setCustomerNit(null);
+            }
+        }
+        sale.setTaxMode(taxMode);
+    }
+
+    private void rejectRegisteredCustomer(UUID customerId) {
+        if (customerId != null) {
+            throw new ValidationException(
+                    "Solo una venta con NIT lleva un cliente registrado");
+        }
+    }
+
+    /**
+     * La identidad con la que se emite: la que pide la finalizacion o, si no
+     * pide ninguna, la que la venta ya tenia.
+     *
+     * Emitir exige una decision explicita entre NIT y CF. Una venta guardada sin
+     * definir se rechaza aunque la peticion no diga nada —un cliente antiguo que
+     * solo envia el tipo de documento no puede completarla—, y nombre o cliente
+     * sin modo tampoco valen: un nombre suelto no convierte nada en CF.
+     */
+    private void resolveTaxIdentityForCompletion(
+            Sale sale, CompleteSaleRequestDTO requestDTO) {
+        if (requestDTO.taxMode() == null) {
+            if (requestDTO.customer() != null || requestDTO.customerName() != null) {
+                throw new ValidationException(
+                        "Indique si la venta se factura con NIT o a Consumidor Final");
+            }
+        } else if (requestDTO.taxMode() == TaxMode.UNRESOLVED) {
+            throw new ValidationException(UNRESOLVED_COMPLETION_MESSAGE);
+        } else {
+            applyTaxIdentity(sale, requestDTO.taxMode(),
+                    requestDTO.customer(), requestDTO.customerName());
+        }
+
+        if (sale.getTaxMode() == TaxMode.UNRESOLVED) {
+            throw new ValidationException(UNRESOLVED_COMPLETION_MESSAGE);
+        }
+        if (sale.getTaxMode() == TaxMode.NIT && sale.getCustomer() == null) {
+            throw new ValidationException("El cliente es obligatorio");
+        }
+    }
+
+    /**
+     * Guarda la venta abierta para retomarla despues.
+     *
+     * Las lineas ya estaban persistidas desde que se agregaron, y lo reservado
+     * sigue reservado; lo que cambia es que la venta deja de ser un carrito en
+     * curso y pasa a ser una venta retomable (`savedForLater`), que es lo que
+     * lista "Mis ventas pendientes".
+     *
+     * Una venta sin NIT se guarda SIN DEFINIR y con su nombre de referencia,
+     * nunca como Consumidor Final: sin nombre no se podria reconocer despues.
+     * Una con NIT se reconoce por su cliente y no admite otro nombre.
+     */
+    @Override
+    public SaleResponseDTO saveForLater(UUID id, SaveForLaterRequestDTO requestDTO) {
+        Sale sale = findOpenSale(id);
+        switch (sale.getTaxMode()) {
+            // Inalcanzable con los datos que admite la base (ck_sale_tax_identity
+            // prohibe un CF abierto); se deja para que un estado imposible no se
+            // guarde como pendiente.
+            case CF -> throw new ValidationException(
+                    "Una venta a Consumidor Final se finaliza en el momento: no se puede guardar para despues");
+            case NIT -> {
+                if (requestDTO.customerName() != null) {
+                    throw new ValidationException(
+                            "Una venta con NIT usa el nombre del cliente registrado");
+                }
+            }
+            case UNRESOLVED -> {
+                String referenceName = requestDTO.customerName() != null
+                        ? requestDTO.customerName()
+                        : sale.getCustomerName();
+                if (referenceName == null) {
+                    throw new ValidationException(
+                            "El nombre es obligatorio para guardar para despues una venta sin NIT");
+                }
+                sale.setCustomerName(referenceName);
+            }
+        }
+        sale.setSavedForLater(true);
         sale = repository.save(sale);
         return mapper.toResponse(sale);
     }
@@ -252,10 +400,15 @@ public class SaleServiceImpl implements SaleService {
             throw new ValidationException(
                     "No se puede completar una venta sin detalles");
         }
+        resolveTaxIdentityForCompletion(sale, requestDTO);
         LocalDateTime now = LocalDateTime.now(clock);
         sale.setInvoiceType(requestDTO.invoiceType());
         sale.setCompletedAt(now);
         sale.setStatus(SaleStatus.COMPLETED);
+        // La identidad historica se congela en la misma transaccion que emite:
+        // si algo de aqui en adelante falla, se deshace junto con el paso a CF
+        // o a NIT y la venta sigue abierta tal como estaba.
+        sale.freezeFiscalIdentity();
         if (requestDTO.invoiceType() == InvoiceType.INVOICE) {
             if (requestDTO.paymentMethod() == null) {
                 throw new ValidationException(
@@ -413,6 +566,8 @@ public class SaleServiceImpl implements SaleService {
         }
         sale.getDetails().forEach(this::releaseReservation);
         sale.setStatus(SaleStatus.CANCELLED);
+        // Tambien es historial: queda con el cliente que tenia al anularse.
+        sale.freezeFiscalIdentity();
         recordAction(sale, SaleActionType.CANCEL_PENDING, requestDTO.reason());
         sale = repository.save(sale);
         return mapper.toResponse(sale);

@@ -3,6 +3,8 @@ package com.cns.spring_house.cashclosure.service;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 import com.cns.spring_house.cashclosure.dto.CashClosureCollectionsDTO;
 import com.cns.spring_house.cashclosure.dto.CashClosureExchangeDTO;
@@ -26,6 +28,19 @@ public record PeriodCashFigures(
 
     LocalDate businessDate,
     List<ClosureSoldItemDTO> items,
+
+    /**
+     * Las dimensiones comerciales de cada articulo —familia, marca y modelo—,
+     * indexadas por el mismo {@code productId} que identifica la fila de
+     * {@link #items}.
+     *
+     * Van APARTE y no dentro del articulo porque tienen otro destino: el
+     * articulo es lo que la pantalla y el PDF de cierre publican, y esto es
+     * material de snapshot que solo se copia al cerrar para que el resumen
+     * agrupado siga siendo reproducible cuando el catalogo cambie.
+     */
+    Map<UUID, ClosureProductDimensions> productDimensions,
+
     BigDecimal itemsBilledAmount,
     CashClosureInvoicingDTO invoicing,
     CashClosureExchangeDTO exchange,

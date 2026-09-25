@@ -52,6 +52,20 @@ public class FamilyController {
                 .body(families);
     }
 
+    /**
+     * Las familias en las que una pieza de esta puede convertirse al
+     * transformarse. El cliente la usa para saber en que familias buscar
+     * productos de salida sin conocer ninguna por su nombre.
+     */
+    @GetMapping("/{id}/transformation-targets")
+    public ResponseEntity<List<FamilyResponseDTO>> getTransformationTargets(
+            @PathVariable UUID id) {
+        List<FamilyResponseDTO> families = service.getTransformationTargets(id);
+        return ResponseEntity
+                .status(HttpStatus.OK)
+                .body(families);
+    }
+
     @PostMapping
     public ResponseEntity<FamilyResponseDTO> create(
             @RequestBody @Valid CreateFamilyRequestDTO requestDTO) {

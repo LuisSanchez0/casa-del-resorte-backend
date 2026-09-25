@@ -3,7 +3,6 @@ package com.cns.spring_house.migration;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -17,12 +16,12 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Properties;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+
+import com.cns.spring_house.testsupport.TestDatabases;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestInstance.Lifecycle;
 
@@ -67,30 +66,18 @@ class ModelYearRangeMigrationTest {
         LEGACY_MODELS.put("Civic", 2024);
     }
 
-    private String username;
-    private String password;
-    private String server;
-
-    @BeforeAll
-    void readConnectionSettings() throws Exception {
-        Properties environment = loadEnvironment();
-        String host = value(environment, "DB_HOST", "localhost");
-        String port = value(environment, "DB_PORT", "5432");
-        username = value(environment, "DB_USER", "postgres");
-        password = value(environment, "DB_PASS", null);
-        server = "jdbc:postgresql://" + host + ":" + port + "/";
-    }
-
+    /**
+     * Base recien creada y vacia, una por caso.
+     *
+     * Cada caso pide la SUYA —{@code DATABASE_PREFIX + suffix}— y todas pasan
+     * por {@link TestDatabases}: alli el nombre se comprueba antes de llegar al
+     * SQL, de modo que esta prueba no puede borrar la base de desarrollo, y lo
+     * creado queda registrado para retirarlo al terminar la JVM.
+     */
     private Connection freshDatabase(String suffix) throws SQLException {
-        String database = DATABASE_PREFIX + suffix;
-        try (Connection admin = DriverManager.getConnection(
-                server + "postgres", username, password);
-                Statement statement = admin.createStatement()) {
-            statement.execute("DROP DATABASE IF EXISTS " + database
-                    + " WITH (FORCE)");
-            statement.execute("CREATE DATABASE " + database);
-        }
-        return DriverManager.getConnection(server + database, username, password);
+        String url = TestDatabases.provision(DATABASE_PREFIX + suffix);
+        return DriverManager.getConnection(
+                url, TestDatabases.username(), TestDatabases.password());
     }
 
     /**
@@ -345,26 +332,6 @@ class ModelYearRangeMigrationTest {
             rows.next();
             return rows.getInt(1);
         }
-    }
-
-    private static Properties loadEnvironment() throws IOException {
-        Properties environment = new Properties();
-        Path envFile = Path.of(".env");
-        if (Files.exists(envFile)) {
-            try (InputStream input = Files.newInputStream(envFile)) {
-                environment.load(input);
-            }
-        }
-        return environment;
-    }
-
-    private static String value(
-            Properties environment, String key, String fallback) {
-        String fromSystem = System.getenv(key);
-        if (fromSystem != null && !fromSystem.isBlank()) {
-            return fromSystem;
-        }
-        return environment.getProperty(key, fallback);
     }
 
 }

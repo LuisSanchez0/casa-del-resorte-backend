@@ -3,23 +3,15 @@ package com.cns.spring_house.sale.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.io.IOException;
-import java.io.InputStream;
 import java.math.BigDecimal;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.SQLException;
-import java.sql.Statement;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Properties;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.AfterEach;
@@ -39,8 +31,8 @@ import com.cns.spring_house.acquisition.entity.AcquisitionOrigin;
 import com.cns.spring_house.acquisition.entity.AcquisitionType;
 import com.cns.spring_house.acquisition.entity.InventoryAcquisition;
 import com.cns.spring_house.acquisition.repository.InventoryAcquisitionRepository;
-import com.cns.spring_house.supplier.entity.Supplier;
-import com.cns.spring_house.supplier.repository.SupplierRepository;
+import com.cns.spring_house.customer.entity.Customer;
+import com.cns.spring_house.customer.repository.CustomerRepository;
 import com.cns.spring_house.employee.entity.Employee;
 import com.cns.spring_house.employee.repository.EmployeeRepository;
 import com.cns.spring_house.family.entity.Family;
@@ -72,12 +64,16 @@ import com.cns.spring_house.sale.entity.InvoiceType;
 import com.cns.spring_house.sale.entity.PaymentMethod;
 import com.cns.spring_house.sale.entity.PaymentStatus;
 import com.cns.spring_house.sale.entity.Sale;
+import com.cns.spring_house.sale.entity.TaxMode;
 import com.cns.spring_house.sale.entity.SaleActionType;
 import com.cns.spring_house.sale.entity.SaleDetail;
 import com.cns.spring_house.sale.entity.SaleStatus;
 import com.cns.spring_house.sale.repository.SaleDetailRepository;
 import com.cns.spring_house.sale.repository.SaleRepository;
 import com.cns.spring_house.shared.exception.ValidationException;
+import com.cns.spring_house.supplier.entity.Supplier;
+import com.cns.spring_house.supplier.repository.SupplierRepository;
+import com.cns.spring_house.testsupport.TestDatabases;
 import com.cns.spring_house.useraccount.entity.UserAccount;
 import com.cns.spring_house.useraccount.repository.UserAccountRepository;
 import com.cns.spring_house.workresult.dto.WorkResultSource;
@@ -109,6 +105,13 @@ class SaleServiceDatabaseTest {
 
     @Autowired
     private SaleRepository saleRepository;
+
+    @Autowired
+    private CustomerRepository customerRepository;
+
+    /** NIT unico por venta abierta: la columna es UNIQUE. */
+    private final AtomicLong customerSequence =
+            new AtomicLong(System.nanoTime() % 1_000_000_000L);
 
     @Autowired
     private SaleDetailRepository detailRepository;
@@ -153,28 +156,12 @@ class SaleServiceDatabaseTest {
     private SupplierRepository supplierRepository;
 
     @DynamicPropertySource
-    static void temporaryDatabase(DynamicPropertyRegistry registry)
-            throws IOException, SQLException {
-        Properties environment = loadEnvironment();
-        String host = value(environment, "DB_HOST", "localhost");
-        String port = value(environment, "DB_PORT", "5432");
-        String username = value(environment, "DB_USER", "postgres");
-        String password = value(environment, "DB_PASS", null);
-        String server = "jdbc:postgresql://" + host + ":" + port + "/";
+    static void temporaryDatabase(DynamicPropertyRegistry registry) {
+        String url = TestDatabases.provision(TEMPORARY_DATABASE);
 
-        try (Connection connection = DriverManager.getConnection(
-                server + "postgres", username, password);
-                Statement statement = connection.createStatement()) {
-            statement.execute(
-                    "DROP DATABASE IF EXISTS " + TEMPORARY_DATABASE
-                    + " WITH (FORCE)");
-            statement.execute("CREATE DATABASE " + TEMPORARY_DATABASE);
-        }
-
-        registry.add("spring.datasource.url",
-                () -> server + TEMPORARY_DATABASE);
-        registry.add("spring.datasource.username", () -> username);
-        registry.add("spring.datasource.password", () -> password);
+        registry.add("spring.datasource.url", () -> url);
+        registry.add("spring.datasource.username", TestDatabases::username);
+        registry.add("spring.datasource.password", TestDatabases::password);
         registry.add("spring.flyway.enabled", () -> true);
         registry.add("spring.jpa.hibernate.ddl-auto", () -> "none");
         // Cada clase con @DynamicPropertySource levanta su propio contexto, y
@@ -184,26 +171,6 @@ class SaleServiceDatabaseTest {
         // usan las demas pruebas de base de datos del proyecto.
         registry.add("spring.datasource.hikari.maximum-pool-size", () -> 2);
         registry.add("spring.datasource.hikari.minimum-idle", () -> 0);
-    }
-
-    private static Properties loadEnvironment() throws IOException {
-        Properties environment = new Properties();
-        Path envFile = Path.of(".env");
-        if (Files.exists(envFile)) {
-            try (InputStream input = Files.newInputStream(envFile)) {
-                environment.load(input);
-            }
-        }
-        return environment;
-    }
-
-    private static String value(
-            Properties environment, String key, String fallback) {
-        String fromSystem = System.getenv(key);
-        if (fromSystem != null && !fromSystem.isBlank()) {
-            return fromSystem;
-        }
-        return environment.getProperty(key, fallback);
     }
 
     @AfterEach
@@ -368,8 +335,17 @@ class SaleServiceDatabaseTest {
                 .build());
     }
 
+    /**
+     * Venta abierta con NIT, como toda venta que la caja abria antes de V40:
+     * las pruebas de esta clase miden stock, trabajos y cobro, que no dependen
+     * de la identidad fiscal; esa vive en SaleTaxModeDatabaseTest.
+     */
     private Sale openSale(Workshop workshop) {
         return saleRepository.save(Sale.builder()
+                .customer(customerRepository.save(Customer.builder()
+                        .nit(String.valueOf(1_000_000_000L + customerSequence.incrementAndGet()))
+                        .name("CLIENTE " + unique())
+                        .build()))
                 .workshop(workshop)
                 .employee(employee(workshop))
                 .build());
@@ -1338,6 +1314,7 @@ class SaleServiceDatabaseTest {
 
     private Sale issuedExchangeInvoice(Workshop workshop, LocalDateTime issuedAt) {
         return saleRepository.save(Sale.builder()
+                .taxMode(TaxMode.CF)
                 .workshop(workshop)
                 .employee(employee(workshop))
                 .status(SaleStatus.COMPLETED)
@@ -1351,6 +1328,7 @@ class SaleServiceDatabaseTest {
     private Sale collectedExchangeInvoice(Workshop workshop) {
         LocalDateTime issuedAt = LocalDateTime.now().minusDays(20);
         return saleRepository.save(Sale.builder()
+                .taxMode(TaxMode.CF)
                 .workshop(workshop)
                 .employee(employee(workshop))
                 .status(SaleStatus.COMPLETED)
@@ -1365,6 +1343,7 @@ class SaleServiceDatabaseTest {
     private Sale issuedNormalInvoice(Workshop workshop) {
         LocalDateTime now = LocalDateTime.now();
         return saleRepository.save(Sale.builder()
+                .taxMode(TaxMode.CF)
                 .workshop(workshop)
                 .employee(employee(workshop))
                 .status(SaleStatus.COMPLETED)

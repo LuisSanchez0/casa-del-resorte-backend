@@ -3,22 +3,19 @@ package com.cns.spring_house.customer.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.Properties;
 import java.util.UUID;
 
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+
+import com.cns.spring_house.testsupport.TestDatabases;
 
 /**
  * Garantia de unicidad del NIT contra PostgreSQL de verdad, sobre una base
@@ -40,71 +37,39 @@ class CustomerNitUniquenessTest {
 
     private static final String TEMPORARY_DATABASE = "customer_nit_unique_it";
 
-    private static String server;
-    private static String username;
-    private static String password;
+    private static String jdbcUrl;
 
     @BeforeAll
-    static void createTemporaryDatabase() throws IOException, SQLException {
-        Properties environment = loadEnvironment();
-        String host = value(environment, "DB_HOST", "localhost");
-        String port = value(environment, "DB_PORT", "5432");
-        username = value(environment, "DB_USER", "postgres");
-        password = value(environment, "DB_PASS", null);
-        server = "jdbc:postgresql://" + host + ":" + port + "/";
-
-        try (Connection connection = admin();
-                Statement statement = connection.createStatement()) {
-            statement.execute(
-                    "DROP DATABASE IF EXISTS " + TEMPORARY_DATABASE + " WITH (FORCE)");
-            statement.execute("CREATE DATABASE " + TEMPORARY_DATABASE);
-        }
+    static void createTemporaryDatabase() {
+        jdbcUrl = TestDatabases.provision(TEMPORARY_DATABASE);
 
         // El esquema lo pone Flyway, que es la fuente autoritativa: asi la prueba
         // comprueba la restriccion que realmente se despliega, no una inventada.
         Flyway.configure()
-                .dataSource(server + TEMPORARY_DATABASE, username, password)
+                .dataSource(jdbcUrl, TestDatabases.username(), TestDatabases.password())
                 .locations("classpath:db/migration")
                 .load()
                 .migrate();
     }
 
+    /**
+     * Esta clase SI puede soltar su base en el {@code @AfterAll}, y por eso lo
+     * hace: no levanta contexto de Spring, asi que no hay pool cacheado que siga
+     * conectado y la base se libera en el acto en vez de ocupar el servidor
+     * durante el resto de la suite.
+     *
+     * Las pruebas con {@code @DynamicPropertySource} no pueden: el TestContext
+     * cachea su contexto hasta que muere la JVM, y para esas el gancho de
+     * apagado compartido es el unico momento seguro.
+     */
     @AfterAll
-    static void dropTemporaryDatabase() throws SQLException {
-        try (Connection connection = admin();
-                Statement statement = connection.createStatement()) {
-            statement.execute(
-                    "DROP DATABASE IF EXISTS " + TEMPORARY_DATABASE + " WITH (FORCE)");
-        }
-    }
-
-    private static Connection admin() throws SQLException {
-        return DriverManager.getConnection(server + "postgres", username, password);
+    static void dropTemporaryDatabase() {
+        TestDatabases.drop(TEMPORARY_DATABASE);
     }
 
     private static Connection database() throws SQLException {
         return DriverManager.getConnection(
-                server + TEMPORARY_DATABASE, username, password);
-    }
-
-    private static Properties loadEnvironment() throws IOException {
-        Properties environment = new Properties();
-        Path envFile = Path.of(".env");
-        if (Files.exists(envFile)) {
-            try (InputStream input = Files.newInputStream(envFile)) {
-                environment.load(input);
-            }
-        }
-        return environment;
-    }
-
-    private static String value(
-            Properties environment, String key, String fallback) {
-        String fromSystem = System.getenv(key);
-        if (fromSystem != null && !fromSystem.isBlank()) {
-            return fromSystem;
-        }
-        return environment.getProperty(key, fallback);
+                jdbcUrl, TestDatabases.username(), TestDatabases.password());
     }
 
     private void insertCustomer(Connection connection, String nit, String name)

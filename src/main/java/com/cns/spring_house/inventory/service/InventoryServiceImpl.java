@@ -1,6 +1,8 @@
 package com.cns.spring_house.inventory.service;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import com.cns.spring_house.inventory.dto.*;
@@ -22,10 +24,12 @@ import com.cns.spring_house.shared.security.SecurityUtils;
 import com.cns.spring_house.inventory.mapper.InventoryMapper;
 import com.cns.spring_house.product.entity.Product;
 import com.cns.spring_house.inventory.entity.Inventory;
+import com.cns.spring_house.inventory.entity.InventoryItem;
 import com.cns.spring_house.inventory.handler.InventoryHandler;
 import com.cns.spring_house.inventory.handler.InventoryHandlerRegistry;
 import com.cns.spring_house.workshop.entity.Workshop;
 import com.cns.spring_house.product.repository.ProductRepository;
+import com.cns.spring_house.inventory.repository.InventoryItemRepository;
 import com.cns.spring_house.inventory.repository.InventoryRepository;
 import com.cns.spring_house.inventory.repository.InventorySpecs;
 import com.cns.spring_house.workshop.repository.WorkshopRepository;
@@ -45,6 +49,7 @@ public class InventoryServiceImpl implements InventoryService {
     private final InventoryItemMapper itemMapper;
     private final SupplierRepository supplierRepository;
     private final CurrentUserService currentUserService;
+    private final InventoryItemRepository itemRepository;
 
     @Override
     @Transactional(readOnly = true)
@@ -57,7 +62,7 @@ public class InventoryServiceImpl implements InventoryService {
                         new EntityNotFoundException(
                                 "No existe el registro solicitado"));
 
-        return mapper.toResponse(inventory);
+        return withProcessableUnits(inventory, processableUnitsByInventory());
     }
 
     /**
@@ -82,10 +87,51 @@ public class InventoryServiceImpl implements InventoryService {
                 InventorySpecs.costBetween(requestDTO.minCost(), requestDTO.maxCost()),
                 InventorySpecs.priceBetween(requestDTO.minPrice(), requestDTO.maxPrice()),
                 InventorySpecs.isLowStock(requestDTO.isLowStock()));
+        Map<UUID, Integer> processable = processableUnitsByInventory();
+
         return repository.findAll(specs)
                 .stream()
-                .map(mapper::toResponse)
+                .map(inventory -> withProcessableUnits(inventory, processable))
                 .toList();
+    }
+
+    /**
+     * Unidades operables por inventario, para TODO el taller en una sola
+     * consulta. No se pregunta por inventario: la lista puede traer decenas de
+     * filas y preguntar una por una seria un N+1.
+     */
+    private Map<UUID, Integer> processableUnitsByInventory() {
+        Map<UUID, Integer> counts = new HashMap<>();
+
+        for (Object[] row : itemRepository
+                .countProcessableUnitsByWorkshop(SecurityUtils.getWorkshopId())) {
+            counts.put((UUID) row[0], ((Number) row[1]).intValue());
+        }
+
+        return counts;
+    }
+
+    /**
+     * El contador no es una propiedad de `Inventory`, asi que el mapeador no
+     * puede rellenarlo: se compone aqui sobre la respuesta ya mapeada.
+     *
+     * Un inventario que no aparece en el agregado cuenta CERO, que es justo lo
+     * que significa: conserva su fila pero no le queda ninguna unidad fisica
+     * sobre la que se pueda actuar.
+     */
+    private InventoryResponseDTO withProcessableUnits(
+            Inventory inventory, Map<UUID, Integer> processable) {
+        InventoryResponseDTO response = mapper.toResponse(inventory);
+
+        return new InventoryResponseDTO(
+                response.id(),
+                response.workshop(),
+                response.product(),
+                response.price(),
+                response.cost(),
+                response.stock(),
+                response.minStock(),
+                processable.getOrDefault(inventory.getId(), 0));
     }
 
     @Override
@@ -102,18 +148,22 @@ public class InventoryServiceImpl implements InventoryService {
                 .orElseThrow(() -> new EntityNotFoundException(
                         "No existe el taller especificado"));
         Product product = productRepository
-                .findById(requestDTO.product())
+                .findByIdForUpdate(requestDTO.product())
                 .orElseThrow(() -> new EntityNotFoundException(
                         "No existe el producto especificado"));
         if (product.getFamily().getCategory() == FamilyCategory.JOB) {
             throw new ValidationException(
                     "No se puede crear un inventario de un servicio");
         }
+        // Serialize first global use across workshops without storing a second identity.
+        boolean firstBarcodeUse = product.getFamily().getCategory() == FamilyCategory.NORMAL
+                && !repository.existsByProductId(product.getId());
         Inventory inventory = mapper.toInventory(requestDTO);
         inventory.setWorkshop(workshop);
         inventory.setProduct(product);
         inventory = repository.save(inventory);
-        return mapper.toResponse(inventory);
+        return withProcessableUnits(inventory, processableUnitsByInventory())
+                .withMutation(new InventoryMutationDetailsDTO(firstBarcodeUse, List.of()));
     }
 
     @Override
@@ -135,7 +185,7 @@ public class InventoryServiceImpl implements InventoryService {
 
         inventory = repository.save(inventory);
 
-        return mapper.toResponse(inventory);
+        return withProcessableUnits(inventory, processableUnitsByInventory());
     }
 
     /**
@@ -180,7 +230,7 @@ public class InventoryServiceImpl implements InventoryService {
         StockEntryContext context = resolveStockEntryContext(
                 category, requestDTO, workshopId);
 
-        handler.addStock(
+        List<InventoryItem> createdItems = handler.addStock(
                 inventory,
                 requestDTO,
                 context);
@@ -193,9 +243,15 @@ public class InventoryServiceImpl implements InventoryService {
             inventory.setCost(requestDTO.unitCost());
         }
 
-        inventory = repository.save(inventory);
+        // Persist the exact handler references before merging the inventory. A cascade
+        // merge can create managed copies while leaving the original new items id-less.
+        createdItems = itemRepository.saveAll(createdItems);
+        // Flush before mapping: every returned physical identity must exist in SQL.
+        inventory = repository.saveAndFlush(inventory);
 
-        return mapper.toResponse(inventory);
+        return withProcessableUnits(inventory, processableUnitsByInventory())
+                .withMutation(new InventoryMutationDetailsDTO(false,
+                        itemMapper.toResponseList(createdItems)));
     }
 
     /**

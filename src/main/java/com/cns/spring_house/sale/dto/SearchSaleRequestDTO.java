@@ -31,8 +31,24 @@ public record SearchSaleRequestDTO(
     UUID employee,
     SaleStatus status,
     InvoiceType invoiceType,
-    PaymentStatus paymentStatus
+    PaymentStatus paymentStatus,
+    /**
+     * Opcional. `true` son las ventas guardadas para despues a proposito;
+     * `false`, los carritos abiertos que nunca se guardaron. Sin el, ambas.
+     */
+    Boolean savedForLater
 
 ) {
+
+    /** Contrato anterior, sin distinguir guardadas de borradores. */
+    public SearchSaleRequestDTO(
+            String customer, UUID customerId, String plate,
+            BigDecimal minTotal, BigDecimal maxTotal,
+            LocalDateTime minDate, LocalDateTime maxDate,
+            UUID workshop, UUID employee, SaleStatus status,
+            InvoiceType invoiceType, PaymentStatus paymentStatus) {
+        this(customer, customerId, plate, minTotal, maxTotal, minDate, maxDate,
+                workshop, employee, status, invoiceType, paymentStatus, null);
+    }
 
 }

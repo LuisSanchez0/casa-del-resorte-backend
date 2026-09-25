@@ -1,5 +1,8 @@
 package com.cns.spring_house.inventory.handler;
 
+import java.util.List;
+import java.util.ArrayList;
+
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -41,7 +44,7 @@ public class SpecialInventoryHandler implements InventoryHandler {
 
     @Transactional(propagation = Propagation.MANDATORY)
     @Override
-    public void addStock(
+    public List<InventoryItem> addStock(
             Inventory inventory,
             AddStockRequestDTO requestDTO,
             StockEntryContext context) {
@@ -59,13 +62,16 @@ public class SpecialInventoryHandler implements InventoryHandler {
                 requestDTO.unitCost(),
                 context.employee());
 
+        List<InventoryItem> createdItems = new ArrayList<>();
         for (int i = 0; i < requestDTO.units(); i++) {
             InventoryItem item = InventoryItem.builder()
                     .status(InventoryItemStatus.AVAILABLE)
                     .build();
             inventory.addItem(item);
+            createdItems.add(item);
         }
         inventory.addStock(requestDTO.units());
+        return List.copyOf(createdItems);
     }
 
 }

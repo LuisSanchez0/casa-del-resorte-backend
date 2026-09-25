@@ -6,6 +6,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -96,11 +97,13 @@ public class CashClosureCalculator {
             UUID workshopId, LocalDate businessDate,
             LocalDateTime from, LocalDateTime to) {
 
-        List<ClosureSoldItemDTO> items = soldItems(workshopId, from, to);
+        SoldItems sold = soldItems(workshopId, from, to);
+        List<ClosureSoldItemDTO> items = sold.items();
 
         return new PeriodCashFigures(
                 businessDate,
                 items,
+                sold.dimensions(),
                 items.stream()
                         .map(ClosureSoldItemDTO::billedAmount)
                         .reduce(BigDecimal.ZERO, BigDecimal::add)
@@ -120,10 +123,12 @@ public class CashClosureCalculator {
      * facturada es dinero facturado. La categoria viaja en cada fila para que la
      * pantalla los distinga sin que ninguna linea desaparezca.
      */
-    private List<ClosureSoldItemDTO> soldItems(
+    private SoldItems soldItems(
             UUID workshopId, LocalDateTime from, LocalDateTime to) {
 
         List<ClosureSoldItemDTO> items = new ArrayList<>();
+        Map<UUID, ClosureProductDimensions> dimensions = new LinkedHashMap<>();
+
         for (ClosureSoldItemProjection row
                 : saleRepository.findSoldItemsBetween(workshopId, from, to)) {
             items.add(new ClosureSoldItemDTO(
@@ -132,9 +137,29 @@ public class CashClosureCalculator {
                     FamilyCategory.valueOf(row.getItemType()),
                     row.getQuantity(),
                     money(row.getBilledAmount())));
+            dimensions.put(row.getProductId(), new ClosureProductDimensions(
+                    row.getFamilyId(),
+                    row.getFamilyName(),
+                    row.getBrandId(),
+                    row.getBrandName(),
+                    row.getModelId(),
+                    row.getModelName()));
         }
-        return List.copyOf(items);
+
+        return new SoldItems(List.copyOf(items), Map.copyOf(dimensions));
     }
+
+    /**
+     * Lo que devuelve la consulta de articulos: las filas que el cierre publica
+     * y las dimensiones que copia.
+     *
+     * Salen de la MISMA consulta y por eso viajan juntas. Pedir las dimensiones
+     * aparte seria una segunda vuelta a la base para datos que ya venian en la
+     * primera, y abriria la puerta a que las dos lecturas no coincidieran.
+     */
+    private record SoldItems(
+            List<ClosureSoldItemDTO> items,
+            Map<UUID, ClosureProductDimensions> dimensions) { }
 
     // ── 2. Cuanto se emitio ──────────────────────────────────────
 

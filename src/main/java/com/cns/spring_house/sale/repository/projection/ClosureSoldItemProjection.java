@@ -24,6 +24,29 @@ public interface ClosureSoldItemProjection {
     /** Categoria de la familia: NORMAL, SPECIAL, CONTAINER o JOB. */
     String getItemType();
 
+    // ── Dimensiones comerciales del producto ─────────────────────
+    //
+    // Viajan para que el cierre las COPIE en su snapshot, que es lo que hace
+    // reproducible el resumen agrupado de un dia ya cerrado. Aqui son el estado
+    // ACTUAL del catalogo; en cuanto el cierre se confirma, lo que manda es la
+    // copia.
+
+    UUID getFamilyId();
+
+    String getFamilyName();
+
+    /**
+     * NULL cuando NO APLICA: la marca se alcanza a traves del modelo, y una
+     * familia que no trabaja con modelo no tiene ninguno de los dos.
+     */
+    UUID getBrandId();
+
+    String getBrandName();
+
+    UUID getModelId();
+
+    String getModelName();
+
     long getQuantity();
 
     BigDecimal getBilledAmount();

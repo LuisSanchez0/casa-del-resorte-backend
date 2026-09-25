@@ -3,17 +3,8 @@ package com.cns.spring_house.model.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.SQLException;
-import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Properties;
 import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -37,6 +28,7 @@ import com.cns.spring_house.model.mapper.ModelMapperImpl;
 import com.cns.spring_house.model.repository.ModelRepository;
 import com.cns.spring_house.shared.exception.EntityAlreadyExistsException;
 import com.cns.spring_house.shared.exception.ValidationException;
+import com.cns.spring_house.testsupport.TestDatabases;
 
 /**
  * El intervalo de años del modelo contra PostgreSQL de verdad: el servicio
@@ -68,28 +60,12 @@ class ModelYearRangeDatabaseTest {
     private Brand brand;
 
     @DynamicPropertySource
-    static void temporaryDatabase(DynamicPropertyRegistry registry)
-            throws IOException, SQLException {
-        Properties environment = loadEnvironment();
-        String host = value(environment, "DB_HOST", "localhost");
-        String port = value(environment, "DB_PORT", "5432");
-        String username = value(environment, "DB_USER", "postgres");
-        String password = value(environment, "DB_PASS", null);
-        String server = "jdbc:postgresql://" + host + ":" + port + "/";
+    static void temporaryDatabase(DynamicPropertyRegistry registry) {
+        String url = TestDatabases.provision(TEMPORARY_DATABASE);
 
-        try (Connection connection = DriverManager.getConnection(
-                server + "postgres", username, password);
-                Statement statement = connection.createStatement()) {
-            statement.execute(
-                    "DROP DATABASE IF EXISTS " + TEMPORARY_DATABASE
-                    + " WITH (FORCE)");
-            statement.execute("CREATE DATABASE " + TEMPORARY_DATABASE);
-        }
-
-        registry.add("spring.datasource.url",
-                () -> server + TEMPORARY_DATABASE);
-        registry.add("spring.datasource.username", () -> username);
-        registry.add("spring.datasource.password", () -> password);
+        registry.add("spring.datasource.url", () -> url);
+        registry.add("spring.datasource.username", TestDatabases::username);
+        registry.add("spring.datasource.password", TestDatabases::password);
         registry.add("spring.flyway.enabled", () -> true);
         registry.add("spring.jpa.hibernate.ddl-auto", () -> "none");
         // Cada clase con @DynamicPropertySource levanta su propio contexto y el
@@ -97,26 +73,6 @@ class ModelYearRangeDatabaseTest {
         // suma de todos agota max_connections de PostgreSQL.
         registry.add("spring.datasource.hikari.maximum-pool-size", () -> 2);
         registry.add("spring.datasource.hikari.minimum-idle", () -> 0);
-    }
-
-    private static Properties loadEnvironment() throws IOException {
-        Properties environment = new Properties();
-        Path envFile = Path.of(".env");
-        if (Files.exists(envFile)) {
-            try (InputStream input = Files.newInputStream(envFile)) {
-                environment.load(input);
-            }
-        }
-        return environment;
-    }
-
-    private static String value(
-            Properties environment, String key, String fallback) {
-        String fromSystem = System.getenv(key);
-        if (fromSystem != null && !fromSystem.isBlank()) {
-            return fromSystem;
-        }
-        return environment.getProperty(key, fallback);
     }
 
     @BeforeEach

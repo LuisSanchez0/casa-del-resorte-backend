@@ -22,8 +22,9 @@ import java.util.Properties;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+
+import com.cns.spring_house.testsupport.TestDatabases;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestInstance.Lifecycle;
 
@@ -60,19 +61,6 @@ class CashClosureRestructureMigrationTest {
 
     private static final String CLOSURE = "44444444-4444-4444-4444-444444444444";
 
-    private String username;
-    private String password;
-    private String server;
-
-    @BeforeAll
-    void readConnectionSettings() throws Exception {
-        Properties environment = loadEnvironment();
-        String host = value(environment, "DB_HOST", "localhost");
-        String port = value(environment, "DB_PORT", "5432");
-        username = value(environment, "DB_USER", "postgres");
-        password = value(environment, "DB_PASS", null);
-        server = "jdbc:postgresql://" + host + ":" + port + "/";
-    }
 
     /**
      * Toda la historia en una prueba: el cierre viejo, la migracion y lo que
@@ -229,16 +217,19 @@ class CashClosureRestructureMigrationTest {
 
     private static final Pattern VERSION = Pattern.compile("^V(\\d+)__");
 
-    /** Base recien creada y vacia, exclusiva de quien la pide. */
+    /**
+     * Base recien creada y vacia, exclusiva de quien la pide.
+     *
+     * Pasa por {@link TestDatabases} y no por un DROP escrito aqui: alli el
+     * nombre se comprueba ANTES de llegar al SQL, asi que esta prueba no puede
+     * borrar la base de desarrollo ni por error de tecleo. Y lo que se crea
+     * queda apuntado para retirarlo al terminar la JVM, en vez de dejar once
+     * bases sueltas en el servidor.
+     */
     private Connection freshDatabase(String suffix) throws SQLException {
-        String database = DATABASE_PREFIX + suffix;
-        try (Connection admin = DriverManager.getConnection(
-                server + "postgres", username, password);
-                Statement statement = admin.createStatement()) {
-            statement.execute("DROP DATABASE IF EXISTS " + database + " WITH (FORCE)");
-            statement.execute("CREATE DATABASE " + database);
-        }
-        return DriverManager.getConnection(server + database, username, password);
+        String url = TestDatabases.provision(DATABASE_PREFIX + suffix);
+        return DriverManager.getConnection(
+                url, TestDatabases.username(), TestDatabases.password());
     }
 
     /**
@@ -347,29 +338,4 @@ class CashClosureRestructureMigrationTest {
         }
     }
 
-    private static Properties loadEnvironment() throws IOException {
-        Properties properties = new Properties();
-        Path file = Path.of(".env");
-        if (Files.exists(file)) {
-            try (InputStream stream = Files.newInputStream(file)) {
-                properties.load(stream);
-            }
-        }
-        return properties;
-    }
-
-    private static String value(Properties environment, String key, String fallback) {
-        String fromSystem = System.getenv(key);
-        if (fromSystem != null && !fromSystem.isBlank()) {
-            return fromSystem;
-        }
-        String fromFile = environment.getProperty(key);
-        if (fromFile != null && !fromFile.isBlank()) {
-            return fromFile;
-        }
-        if (fallback == null) {
-            throw new IllegalStateException("Falta la variable " + key);
-        }
-        return fallback;
-    }
 }

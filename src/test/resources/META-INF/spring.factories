@@ -1,0 +1,12 @@
+# El guardia de aislamiento de base de datos, aplicado a TODOS los contextos de
+# prueba.
+#
+# Se registra aqui y no clase a clase porque el fallo que cubre es una clase que
+# NO declara nada: un @SpringBootTest sin @DynamicPropertySource hereda el
+# datasource del .env de desarrollo y Flyway migra spring_house_db en silencio.
+# Una anotacion por clase no protege de la clase que nadie anoto.
+#
+# Este fichero vive en src/test/resources, asi que no viaja en el artefacto de
+# produccion.
+org.springframework.test.context.ContextCustomizerFactory=\
+com.cns.spring_house.testsupport.TestDatabaseGuard

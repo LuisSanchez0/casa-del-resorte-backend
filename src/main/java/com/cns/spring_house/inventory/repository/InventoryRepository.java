@@ -96,6 +96,8 @@ public interface InventoryRepository
             Iterable<UUID> productIds,
             UUID workshop);
 
+    boolean existsByProductId(UUID productId);
+
     boolean existsByProductIdAndWorkshopId(
             UUID product,
             UUID workshop);

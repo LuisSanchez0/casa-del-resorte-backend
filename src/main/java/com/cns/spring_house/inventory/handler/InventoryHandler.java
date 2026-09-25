@@ -1,8 +1,11 @@
 package com.cns.spring_house.inventory.handler;
 
+import java.util.List;
+
 import com.cns.spring_house.family.entity.FamilyCategory;
 import com.cns.spring_house.inventory.dto.AddStockRequestDTO;
 import com.cns.spring_house.inventory.entity.Inventory;
+import com.cns.spring_house.inventory.entity.InventoryItem;
 
 public interface InventoryHandler {
 
@@ -20,7 +23,7 @@ public interface InventoryHandler {
      * {@code context} trae lo que decide el servidor —proveedor y empleado— ya
      * resuelto contra el taller del token.
      */
-    void addStock(
+    List<InventoryItem> addStock(
             Inventory inventory,
             AddStockRequestDTO requestDTO,
             StockEntryContext context);

@@ -55,4 +55,17 @@ public interface CashClosureService {
     /** PDF de un cierre confirmado, generado desde el snapshot. */
     CashClosureDocumentDTO document(UUID id);
 
+    /**
+     * SEGUNDO PDF de un cierre confirmado: la mercaderia vendida agrupada por
+     * familia, marca y modelo.
+     *
+     * No sustituye a {@link #document(UUID)} ni lo modifica. Responde otra
+     * pregunta —que se vendio, no cuanto dinero entro— y se descarga aparte.
+     *
+     * Mismas reglas que el anterior, punto por punto: solo cierres CONFIRMADOS,
+     * taller resuelto desde el token y cifras leidas del snapshot. El de otro
+     * taller responde igual que uno inexistente.
+     */
+    CashClosureDocumentDTO productSummaryDocument(UUID id);
+
 }

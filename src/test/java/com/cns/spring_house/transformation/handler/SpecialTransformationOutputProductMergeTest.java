@@ -242,7 +242,7 @@ class SpecialTransformationOutputProductMergeTest {
 
         assertThatThrownBy(() -> transform(inputItem, request(selected, 0, null)))
                 .isInstanceOf(ValidationException.class)
-                .hasMessage("El producto de salida debe pertenecer a la misma familia que la pieza de entrada");
+                .hasMessageContaining("no pertenece a una familia");
 
         verify(productRepository, never()).save(any(Product.class));
         assertThat(inputItem.getStatus()).isEqualTo(InventoryItemStatus.AVAILABLE);

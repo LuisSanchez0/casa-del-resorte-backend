@@ -37,6 +37,7 @@ import com.cns.spring_house.sale.entity.InvoiceType;
 import com.cns.spring_house.sale.entity.PaymentMethod;
 import com.cns.spring_house.sale.entity.PaymentStatus;
 import com.cns.spring_house.sale.entity.SaleStatus;
+import com.cns.spring_house.sale.entity.TaxMode;
 import com.cns.spring_house.sale.service.SaleService;
 import com.cns.spring_house.shared.controller.GlobalExceptionHandler;
 import com.cns.spring_house.shared.exception.EntityNotFoundException;
@@ -72,7 +73,7 @@ class SaleExchangeInvoiceControllerTest {
     private SaleResponseDTO exchangeInvoice(
             UUID id, PaymentStatus paymentStatus, PaymentMethod paymentMethod) {
         return new SaleResponseDTO(
-                id, null, null, null, "P123ABC", List.of(),
+                id, null, TaxMode.CF, null, null, false, null, null, "P123ABC", List.of(),
                 SaleStatus.COMPLETED, InvoiceType.EXCHANGE_INVOICE,
                 paymentStatus, paymentMethod, new BigDecimal("1250.00"),
                 null, null, null, null);
@@ -83,6 +84,7 @@ class SaleExchangeInvoiceControllerTest {
         return new ExchangeInvoiceSummaryDTO(
                 id,
                 new CustomerResponseDTO(UUID.randomUUID(), "12345678", "CLIENTE"),
+                TaxMode.NIT, "CLIENTE", "12345678",
                 "P123ABC", InvoiceType.EXCHANGE_INVOICE,
                 paymentStatus, paymentMethod, new BigDecimal("1250.00"),
                 LocalDateTime.of(2026, 8, 1, 10, 30),
@@ -259,7 +261,7 @@ class SaleExchangeInvoiceControllerTest {
     void cancellingASaleReturnsItAsCancelled() throws Exception {
         UUID saleId = UUID.randomUUID();
         when(service.cancel(any(), any())).thenReturn(new SaleResponseDTO(
-                saleId, null, null, null, "P123ABC", List.of(),
+                saleId, null, TaxMode.CF, null, null, false, null, null, "P123ABC", List.of(),
                 SaleStatus.CANCELLED, null, PaymentStatus.PENDING, null,
                 new BigDecimal("150.00"), null, null, null, null));
 
@@ -321,7 +323,7 @@ class SaleExchangeInvoiceControllerTest {
     void reversingACompletedSaleReturnsItAsReversed() throws Exception {
         UUID saleId = UUID.randomUUID();
         when(service.reverse(any(), any())).thenReturn(new SaleResponseDTO(
-                saleId, null, null, null, "P123ABC", List.of(),
+                saleId, null, TaxMode.CF, null, null, false, null, null, "P123ABC", List.of(),
                 SaleStatus.REVERSED, InvoiceType.INVOICE, PaymentStatus.PAID,
                 PaymentMethod.CASH, new BigDecimal("150.00"),
                 null, null, null, null));

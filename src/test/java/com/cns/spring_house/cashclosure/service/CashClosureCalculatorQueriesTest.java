@@ -29,21 +29,25 @@ import org.springframework.test.context.DynamicPropertySource;
 import java.util.HashMap;
 import java.util.List;
 
+import com.cns.spring_house.brand.entity.Brand;
 import com.cns.spring_house.cashclosure.dto.ClosureExchangeInvoiceDTO;
 import com.cns.spring_house.cashclosure.dto.ClosurePaymentMethodDTO;
 import com.cns.spring_house.cashclosure.dto.ClosureSoldItemDTO;
 import com.cns.spring_house.employee.entity.Employee;
 import com.cns.spring_house.family.entity.Family;
 import com.cns.spring_house.family.entity.FamilyCategory;
+import com.cns.spring_house.model.entity.Model;
 import com.cns.spring_house.product.entity.Product;
-import com.cns.spring_house.sale.entity.SaleDetail;
+import com.cns.spring_house.refund.repository.SaleRefundRepository;
 import com.cns.spring_house.sale.entity.InvoiceType;
 import com.cns.spring_house.sale.entity.PaymentMethod;
 import com.cns.spring_house.sale.entity.PaymentStatus;
 import com.cns.spring_house.sale.entity.Sale;
+import com.cns.spring_house.sale.entity.TaxMode;
+import com.cns.spring_house.sale.entity.SaleDetail;
 import com.cns.spring_house.sale.entity.SaleStatus;
-import com.cns.spring_house.refund.repository.SaleRefundRepository;
 import com.cns.spring_house.sale.repository.SaleRepository;
+import com.cns.spring_house.testsupport.TestDatabases;
 import com.cns.spring_house.workshop.entity.Workshop;
 
 /**
@@ -92,50 +96,31 @@ class CashClosureCalculatorQueriesTest {
         calculator = new CashClosureCalculator(saleRepository, refundRepository);
     }
 
+    /**
+     * Base propia y desechable.
+     *
+     * El nombre y el DROP pasan por {@link TestDatabases}: alli se comprueba
+     * ANTES de tocar el servidor que es una base {@code _it}, de modo que esta
+     * prueba no puede migrar ni borrar la base de desarrollo. Lo creado se
+     * retira al terminar la JVM en lugar de quedarse suelto.
+     */
     @DynamicPropertySource
-    static void temporaryDatabase(DynamicPropertyRegistry registry)
-            throws IOException, SQLException {
-        Properties environment = loadEnvironment();
-        String host = value(environment, "DB_HOST", "localhost");
-        String port = value(environment, "DB_PORT", "5432");
-        String username = value(environment, "DB_USER", "postgres");
-        String password = value(environment, "DB_PASS", null);
-        String server = "jdbc:postgresql://" + host + ":" + port + "/";
+    static void temporaryDatabase(DynamicPropertyRegistry registry) {
+        String url = TestDatabases.provision(TEMPORARY_DATABASE);
 
-        try (Connection connection = DriverManager.getConnection(
-                server + "postgres", username, password);
-                Statement statement = connection.createStatement()) {
-            statement.execute(
-                    "DROP DATABASE IF EXISTS " + TEMPORARY_DATABASE + " WITH (FORCE)");
-            statement.execute("CREATE DATABASE " + TEMPORARY_DATABASE);
-        }
-
-        registry.add("spring.datasource.url", () -> server + TEMPORARY_DATABASE);
-        registry.add("spring.datasource.username", () -> username);
-        registry.add("spring.datasource.password", () -> password);
+        registry.add("spring.datasource.url", () -> url);
+        registry.add("spring.datasource.username", TestDatabases::username);
+        registry.add("spring.datasource.password", TestDatabases::password);
         registry.add("spring.flyway.enabled", () -> true);
         registry.add("spring.jpa.hibernate.ddl-auto", () -> "none");
+        // Cada clase con @DynamicPropertySource levanta su propio contexto y el
+        // TestContext los CACHEA hasta que acaba la JVM: un pool sin acotar por
+        // cada uno agota `max_connections` de PostgreSQL.
         registry.add("spring.datasource.hikari.maximum-pool-size", () -> 2);
+        registry.add("spring.datasource.hikari.minimum-idle", () -> 0);
     }
 
-    private static Properties loadEnvironment() throws IOException {
-        Properties environment = new Properties();
-        Path envFile = Path.of(".env");
-        if (Files.exists(envFile)) {
-            try (InputStream input = Files.newInputStream(envFile)) {
-                environment.load(input);
-            }
-        }
-        return environment;
-    }
 
-    private static String value(Properties environment, String key, String fallback) {
-        String fromSystem = System.getenv(key);
-        if (fromSystem != null && !fromSystem.isBlank()) {
-            return fromSystem;
-        }
-        return environment.getProperty(key, fallback);
-    }
 
     // ── Datos ────────────────────────────────────────────────────
 
@@ -207,6 +192,7 @@ class CashClosureCalculatorQueriesTest {
             PaymentStatus paymentStatus, PaymentMethod paymentMethod,
             LocalDateTime completedAt, LocalDateTime paidAt, String total) {
         return entityManager.persistAndFlush(Sale.builder()
+                .taxMode(status == SaleStatus.PENDING ? TaxMode.UNRESOLVED : TaxMode.CF)
                 .workshop(workshop)
                 .employee(employee(workshop))
                 .status(status)
@@ -627,6 +613,98 @@ class CashClosureCalculatorQueriesTest {
         assertThat(figures.items()).hasSize(1);
         assertThat(figures.items().get(0).productId()).isEqualTo(mine.getId());
         assertThat(figures.exchange().issued()).isEmpty();
+    }
+
+    // ── Dimensiones comerciales del articulo ─────────────────────
+    //
+    // Viajan en la MISMA consulta agregada que el articulo, para que el cierre
+    // pueda copiarlas en su snapshot. Es lo que evita el N+1 obvio: resolver la
+    // familia de cada linea por separado seria una consulta por producto.
+
+    /**
+     * Familia, marca y modelo llegan con cada articulo, sin consulta aparte.
+     *
+     * Y no cambian la granularidad: dos productos del mismo modelo con medidas
+     * distintas siguen siendo DOS articulos aqui —el desglose por producto del
+     * cierre no se toca— y seran una sola fila cuando el reporte los agrupe.
+     */
+    @Test
+    void soldItemsCarryTheirFamilyBrandAndModel() {
+        Workshop workshop = workshop("TALLER A");
+        Brand toyota = entityManager.persistAndFlush(Brand.builder()
+                .name("Toyota")
+                .logoKey("sin-logo")
+                .build());
+        Model hilux = entityManager.persistAndFlush(Model.builder()
+                .brand(toyota)
+                .name("Hilux")
+                .yearFrom(2015)
+                .yearTo(2025)
+                .build());
+        Family hojas = entityManager.persistAndFlush(Family.builder()
+                .code("HRQ")
+                .name("HOJA DE RESORTE QUERIES")
+                .requiresModel(true)
+                .category(FamilyCategory.SPECIAL)
+                .build());
+        Product short80 = entityManager.persistAndFlush(Product.builder()
+                .family(hojas).model(hilux).name("HOJA 80")
+                .attributes(new HashMap<>()).build());
+        Product long90 = entityManager.persistAndFlush(Product.builder()
+                .family(hojas).model(hilux).name("HOJA 90")
+                .attributes(new HashMap<>()).build());
+
+        Sale sale = invoice(workshop, TODAY, PaymentMethod.CASH, "250.00");
+        line(sale, short80, 1, "100.00");
+        line(sale, long90, 1, "150.00");
+
+        PeriodCashFigures figures = figuresOf(workshop);
+
+        // Dos articulos: el desglose por producto sigue siendo por producto.
+        assertThat(figures.items()).hasSize(2);
+
+        // Y las dos dimensiones apuntan al MISMO grupo comercial.
+        ClosureProductDimensions first =
+                figures.productDimensions().get(short80.getId());
+        ClosureProductDimensions second =
+                figures.productDimensions().get(long90.getId());
+
+        assertThat(first.familyId()).isEqualTo(hojas.getId());
+        assertThat(first.familyName()).isEqualTo("HOJA DE RESORTE QUERIES");
+        assertThat(first.brandId()).isEqualTo(toyota.getId());
+        assertThat(first.brandName()).isEqualTo("Toyota");
+        assertThat(first.modelId()).isEqualTo(hilux.getId());
+        assertThat(first.modelName()).isEqualTo("Hilux");
+
+        assertThat(second.familyId()).isEqualTo(first.familyId());
+        assertThat(second.brandId()).isEqualTo(first.brandId());
+        assertThat(second.modelId()).isEqualTo(first.modelId());
+    }
+
+    /**
+     * Una familia que no trabaja con modelo llega SIN marca y SIN modelo.
+     *
+     * El LEFT JOIN es lo que lo permite: con un join normal, estos productos
+     * —que son la mitad del catalogo— desaparecerian del cierre entero.
+     */
+    @Test
+    void soldItemsWithoutAModelCarryNoBrandAndNoModel() {
+        Workshop workshop = workshop("TALLER A");
+        Product perno = product("PERNO 1/2", FamilyCategory.NORMAL);
+
+        Sale sale = invoice(workshop, TODAY, PaymentMethod.CASH, "50.00");
+        line(sale, perno, 1, "50.00");
+
+        PeriodCashFigures figures = figuresOf(workshop);
+        ClosureProductDimensions dimensions =
+                figures.productDimensions().get(perno.getId());
+
+        assertThat(dimensions.familyId()).isNotNull();
+        assertThat(dimensions.familyName()).isNotNull();
+        assertThat(dimensions.brandId()).isNull();
+        assertThat(dimensions.brandName()).isNull();
+        assertThat(dimensions.modelId()).isNull();
+        assertThat(dimensions.modelName()).isNull();
     }
 
     /** Un dia sin actividad responde ceros, no nulos. */

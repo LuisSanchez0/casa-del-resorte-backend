@@ -7,29 +7,90 @@ import java.util.UUID;
 
 import org.springframework.data.jpa.domain.Specification;
 
+import com.cns.spring_house.customer.entity.Customer;
 import com.cns.spring_house.sale.entity.InvoiceType;
 import com.cns.spring_house.sale.entity.PaymentStatus;
 import com.cns.spring_house.sale.entity.Sale;
 import com.cns.spring_house.sale.entity.SaleStatus;
 
+import jakarta.persistence.criteria.Join;
+import jakarta.persistence.criteria.JoinType;
+import jakarta.persistence.criteria.Root;
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
 
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public class SaleSpecs {
     
+    /**
+     * Nombre del cliente registrado O el escrito en la propia venta: una venta
+     * a Consumidor Final o guardada sin definir no tiene Customer, y sin el
+     * segundo termino buscarla por su nombre de referencia no la encontraria.
+     * En una venta con NIT ya cerrada el segundo es el nombre congelado, asi
+     * que se encuentra tambien por el nombre con el que se facturo.
+     *
+     * Los nombres se guardan en mayusculas, asi que el termino tambien se sube:
+     * antes se comparaba tal cual y "juan" nunca encontraba a "JUAN".
+     */
     public static Specification<Sale> nameContains(String customer) {
-        return (root, query, criteriaBuilder) -> customer == null ? null
-                : criteriaBuilder.like(
-                        criteriaBuilder.upper(root.get("customer").get("name")),
-                        "%" + customer + "%");
+        return (root, query, criteriaBuilder) -> {
+            if (customer == null) {
+                return null;
+            }
+            String pattern = "%" + customer.toUpperCase(Locale.ROOT) + "%";
+            return criteriaBuilder.or(
+                    criteriaBuilder.like(
+                            criteriaBuilder.upper(customerJoin(root).get("name")),
+                            pattern),
+                    criteriaBuilder.like(
+                            criteriaBuilder.upper(root.get("customerName")),
+                            pattern));
+        };
     }
 
+    /** NIT actual del cliente O el congelado en la venta al cerrarla. */
     public static Specification<Sale> nitContains(String customer) {
-        return (root, query, criteriaBuilder) -> customer == null ? null
-                : criteriaBuilder.like(
-                        criteriaBuilder.upper(root.get("customer").get("nit")),
-                        "%" + customer + "%");
+        return (root, query, criteriaBuilder) -> {
+            if (customer == null) {
+                return null;
+            }
+            String pattern = "%" + customer.toUpperCase(Locale.ROOT) + "%";
+            return criteriaBuilder.or(
+                    criteriaBuilder.like(
+                            criteriaBuilder.upper(customerJoin(root).get("nit")),
+                            pattern),
+                    criteriaBuilder.like(
+                            criteriaBuilder.upper(root.get("customerNit")),
+                            pattern));
+        };
+    }
+
+    /**
+     * Guardadas para despues (`true`) frente a carritos abiertos que nunca se
+     * guardaron (`false`). Null no filtra.
+     */
+    public static Specification<Sale> isSavedForLater(Boolean savedForLater) {
+        return (root, query, criteriaBuilder) -> savedForLater == null ? null
+                : criteriaBuilder.equal(
+                        root.get("savedForLater"),
+                        savedForLater);
+    }
+
+    /**
+     * LEFT y compartido. `root.get("customer")` genera un INNER JOIN implicito,
+     * que descartaba de la busqueda toda venta sin Customer; y cada spec que lo
+     * pidiera por separado anadiria otro JOIN a la misma tabla.
+     */
+    private static Join<Sale, Customer> customerJoin(Root<Sale> root) {
+        for (Join<Sale, ?> join : root.getJoins()) {
+            if (join.getAttribute().getName().equals("customer")
+                    && join.getJoinType() == JoinType.LEFT) {
+                @SuppressWarnings("unchecked")
+                Join<Sale, Customer> existing = (Join<Sale, Customer>) join;
+                return existing;
+            }
+        }
+        return root.join("customer", JoinType.LEFT);
     }
 
     /**

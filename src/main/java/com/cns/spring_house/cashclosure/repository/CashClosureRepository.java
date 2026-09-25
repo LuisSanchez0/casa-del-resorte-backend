@@ -115,6 +115,12 @@ public interface CashClosureRepository extends JpaRepository<CashClosure, UUID> 
      *
      * Un mismo producto vendido en quince dias distintos tiene quince filas de
      * detalle; aqui vuelve como UNA con la cantidad y el importe del mes.
+     *
+     * Desde V38 tambien puede tener VARIAS filas dentro de un mismo dia, una por
+     * forma de cobro. No hace falta cambiar nada: este GROUP BY ya agrupaba por
+     * `productId` y las suma igual, que es lo correcto —el mes responde que se
+     * vendio, no como se pago cada unidad—. Quien si separa por via de cobro es
+     * el resumen de productos, y lo hace sobre las filas del dia.
      */
     @Query("""
         SELECT item.productId AS productId,

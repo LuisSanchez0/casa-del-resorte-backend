@@ -2,22 +2,13 @@ package com.cns.spring_house.sale.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.io.IOException;
-import java.io.InputStream;
 import java.math.BigDecimal;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.SQLException;
-import java.sql.Statement;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.regex.Pattern;
@@ -53,9 +44,11 @@ import com.cns.spring_house.sale.dto.SaleDetailResponseDTO;
 import com.cns.spring_house.sale.dto.SaleResponseDTO;
 import com.cns.spring_house.sale.dto.SearchSaleRequestDTO;
 import com.cns.spring_house.sale.entity.Sale;
+import com.cns.spring_house.sale.entity.TaxMode;
 import com.cns.spring_house.sale.entity.SaleDetail;
 import com.cns.spring_house.sale.entity.SaleStatus;
 import com.cns.spring_house.sale.repository.SaleRepository;
+import com.cns.spring_house.testsupport.TestDatabases;
 import com.cns.spring_house.useraccount.entity.UserAccount;
 import com.cns.spring_house.useraccount.repository.UserAccountRepository;
 import com.cns.spring_house.workshop.entity.Workshop;
@@ -139,27 +132,12 @@ class SaleDetailFetchPlanTest {
     private InventoryItemRepository itemRepository;
 
     @DynamicPropertySource
-    static void temporaryDatabase(DynamicPropertyRegistry registry)
-            throws IOException, SQLException {
-        Properties environment = loadEnvironment();
-        String host = value(environment, "DB_HOST", "localhost");
-        String port = value(environment, "DB_PORT", "5432");
-        String username = value(environment, "DB_USER", "postgres");
-        String password = value(environment, "DB_PASS", null);
-        String server = "jdbc:postgresql://" + host + ":" + port + "/";
+    static void temporaryDatabase(DynamicPropertyRegistry registry) {
+        String url = TestDatabases.provision(TEMPORARY_DATABASE);
 
-        try (Connection connection = DriverManager.getConnection(
-                server + "postgres", username, password);
-                Statement statement = connection.createStatement()) {
-            statement.execute(
-                    "DROP DATABASE IF EXISTS " + TEMPORARY_DATABASE
-                    + " WITH (FORCE)");
-            statement.execute("CREATE DATABASE " + TEMPORARY_DATABASE);
-        }
-
-        registry.add("spring.datasource.url", () -> server + TEMPORARY_DATABASE);
-        registry.add("spring.datasource.username", () -> username);
-        registry.add("spring.datasource.password", () -> password);
+        registry.add("spring.datasource.url", () -> url);
+        registry.add("spring.datasource.username", TestDatabases::username);
+        registry.add("spring.datasource.password", TestDatabases::password);
         registry.add("spring.flyway.enabled", () -> true);
         registry.add("spring.jpa.hibernate.ddl-auto", () -> "none");
         // Cada clase con @DynamicPropertySource levanta su propio contexto, y
@@ -171,26 +149,6 @@ class SaleDetailFetchPlanTest {
         registry.add(
                 "spring.jpa.properties.hibernate.session_factory.statement_inspector",
                 RecordingInspector.class::getName);
-    }
-
-    private static Properties loadEnvironment() throws IOException {
-        Properties environment = new Properties();
-        Path envFile = Path.of(".env");
-        if (Files.exists(envFile)) {
-            try (InputStream input = Files.newInputStream(envFile)) {
-                environment.load(input);
-            }
-        }
-        return environment;
-    }
-
-    private static String value(
-            Properties environment, String key, String fallback) {
-        String fromSystem = System.getenv(key);
-        if (fromSystem != null && !fromSystem.isBlank()) {
-            return fromSystem;
-        }
-        return environment.getProperty(key, fallback);
     }
 
     @AfterEach
@@ -299,6 +257,7 @@ class SaleDetailFetchPlanTest {
 
     private Sale emptyCompletedSale(Workshop workshop) {
         return Sale.builder()
+                .taxMode(TaxMode.CF)
                 .workshop(workshop)
                 .employee(employee(workshop))
                 .status(SaleStatus.COMPLETED)

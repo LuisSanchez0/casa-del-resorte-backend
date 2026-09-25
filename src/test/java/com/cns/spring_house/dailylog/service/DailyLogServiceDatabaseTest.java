@@ -3,11 +3,7 @@ package com.cns.spring_house.dailylog.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import java.io.IOException;
-import java.io.InputStream;
 import java.math.BigDecimal;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -18,7 +14,6 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Properties;
 import java.util.UUID;
 
 import org.junit.jupiter.api.AfterEach;
@@ -52,11 +47,13 @@ import com.cns.spring_house.role.repository.RoleRepository;
 import com.cns.spring_house.sale.entity.InvoiceType;
 import com.cns.spring_house.sale.entity.PaymentStatus;
 import com.cns.spring_house.sale.entity.Sale;
+import com.cns.spring_house.sale.entity.TaxMode;
 import com.cns.spring_house.sale.entity.SaleStatus;
 import com.cns.spring_house.sale.repository.SaleRepository;
 import com.cns.spring_house.shared.exception.EntityAlreadyExistsException;
 import com.cns.spring_house.shared.exception.EntityNotFoundException;
 import com.cns.spring_house.shared.exception.ValidationException;
+import com.cns.spring_house.testsupport.TestDatabases;
 import com.cns.spring_house.useraccount.entity.UserAccount;
 import com.cns.spring_house.useraccount.repository.UserAccountRepository;
 import com.cns.spring_house.workshop.entity.Workshop;
@@ -111,27 +108,12 @@ class DailyLogServiceDatabaseTest {
     private SaleRepository saleRepository;
 
     @DynamicPropertySource
-    static void temporaryDatabase(DynamicPropertyRegistry registry)
-            throws IOException, SQLException {
-        Properties environment = loadEnvironment();
-        String host = value(environment, "DB_HOST", "localhost");
-        String port = value(environment, "DB_PORT", "5432");
-        String username = value(environment, "DB_USER", "postgres");
-        String password = value(environment, "DB_PASS", null);
-        String server = "jdbc:postgresql://" + host + ":" + port + "/";
-
-        try (Connection connection = DriverManager.getConnection(
-                server + "postgres", username, password);
-                Statement statement = connection.createStatement()) {
-            statement.execute(
-                    "DROP DATABASE IF EXISTS " + TEMPORARY_DATABASE
-                    + " WITH (FORCE)");
-            statement.execute("CREATE DATABASE " + TEMPORARY_DATABASE);
-        }
-
-        jdbcUrl = server + TEMPORARY_DATABASE;
-        jdbcUsername = username;
-        jdbcPassword = password;
+    static void temporaryDatabase(DynamicPropertyRegistry registry) {
+        // Se guardan en campos porque dos pruebas abren su propia conexion JDBC
+        // directa, ademas del datasource de Spring.
+        jdbcUrl = TestDatabases.provision(TEMPORARY_DATABASE);
+        jdbcUsername = TestDatabases.username();
+        jdbcPassword = TestDatabases.password();
 
         registry.add("spring.datasource.url", () -> jdbcUrl);
         registry.add("spring.datasource.username", () -> jdbcUsername);
@@ -144,26 +126,6 @@ class DailyLogServiceDatabaseTest {
         // suite moria con "sorry, too many clients already" en la prueba que
         // tocara arrancar despues. Mismo tope que SaleDashboardQueriesTest.
         registry.add("spring.datasource.hikari.maximum-pool-size", () -> 2);
-    }
-
-    private static Properties loadEnvironment() throws IOException {
-        Properties environment = new Properties();
-        Path envFile = Path.of(".env");
-        if (Files.exists(envFile)) {
-            try (InputStream input = Files.newInputStream(envFile)) {
-                environment.load(input);
-            }
-        }
-        return environment;
-    }
-
-    private static String value(
-            Properties environment, String key, String fallback) {
-        String fromSystem = System.getenv(key);
-        if (fromSystem != null && !fromSystem.isBlank()) {
-            return fromSystem;
-        }
-        return environment.getProperty(key, fallback);
     }
 
     @AfterEach
@@ -248,6 +210,7 @@ class DailyLogServiceDatabaseTest {
      */
     private Sale completedSale(Workshop workshop) {
         return saleRepository.save(Sale.builder()
+                .taxMode(TaxMode.CF)
                 .workshop(workshop)
                 .employee(employee(workshop))
                 .status(SaleStatus.COMPLETED)
@@ -261,6 +224,7 @@ class DailyLogServiceDatabaseTest {
 
     private Sale saleWith(Workshop workshop, SaleStatus status) {
         return saleRepository.save(Sale.builder()
+                .taxMode(status == SaleStatus.PENDING ? TaxMode.UNRESOLVED : TaxMode.CF)
                 .workshop(workshop)
                 .employee(employee(workshop))
                 .status(status)
@@ -609,6 +573,7 @@ class DailyLogServiceDatabaseTest {
         Workshop workshop = authenticatedWorkshop();
         product(FamilyCategory.NORMAL, "PIEZA CAMBIARIA");
         Sale exchangeInvoice = saleRepository.save(Sale.builder()
+                .taxMode(TaxMode.CF)
                 .workshop(workshop)
                 .employee(employee(workshop))
                 .status(SaleStatus.COMPLETED)

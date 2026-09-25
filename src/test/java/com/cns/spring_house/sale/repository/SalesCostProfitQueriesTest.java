@@ -2,20 +2,11 @@ package com.cns.spring_house.sale.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.io.IOException;
-import java.io.InputStream;
 import java.math.BigDecimal;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.SQLException;
-import java.sql.Statement;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Properties;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
@@ -35,9 +26,11 @@ import com.cns.spring_house.sale.entity.InvoiceType;
 import com.cns.spring_house.sale.entity.PaymentMethod;
 import com.cns.spring_house.sale.entity.PaymentStatus;
 import com.cns.spring_house.sale.entity.Sale;
+import com.cns.spring_house.sale.entity.TaxMode;
 import com.cns.spring_house.sale.entity.SaleDetail;
 import com.cns.spring_house.sale.entity.SaleStatus;
 import com.cns.spring_house.sale.repository.projection.SalesCostProfitBucketProjection;
+import com.cns.spring_house.testsupport.TestDatabases;
 import com.cns.spring_house.workshop.entity.Workshop;
 
 /**
@@ -68,50 +61,16 @@ class SalesCostProfitQueriesTest {
     private TestEntityManager entityManager;
 
     @DynamicPropertySource
-    static void temporaryDatabase(DynamicPropertyRegistry registry)
-            throws IOException, SQLException {
-        Properties environment = loadEnvironment();
-        String host = value(environment, "DB_HOST", "localhost");
-        String port = value(environment, "DB_PORT", "5432");
-        String username = value(environment, "DB_USER", "postgres");
-        String password = value(environment, "DB_PASS", null);
-        String server = "jdbc:postgresql://" + host + ":" + port + "/";
+    static void temporaryDatabase(DynamicPropertyRegistry registry) {
+        String url = TestDatabases.provision(TEMPORARY_DATABASE);
 
-        try (Connection connection = DriverManager.getConnection(
-                server + "postgres", username, password);
-                Statement statement = connection.createStatement()) {
-            statement.execute("DROP DATABASE IF EXISTS " + TEMPORARY_DATABASE
-                    + " WITH (FORCE)");
-            statement.execute("CREATE DATABASE " + TEMPORARY_DATABASE);
-        }
-
-        registry.add("spring.datasource.url", () -> server + TEMPORARY_DATABASE);
-        registry.add("spring.datasource.username", () -> username);
-        registry.add("spring.datasource.password", () -> password);
+        registry.add("spring.datasource.url", () -> url);
+        registry.add("spring.datasource.username", TestDatabases::username);
+        registry.add("spring.datasource.password", TestDatabases::password);
         registry.add("spring.flyway.enabled", () -> true);
         registry.add("spring.jpa.hibernate.ddl-auto", () -> "none");
         registry.add("spring.datasource.hikari.maximum-pool-size", () -> 2);
         registry.add("spring.datasource.hikari.minimum-idle", () -> 0);
-    }
-
-    private static Properties loadEnvironment() throws IOException {
-        Properties environment = new Properties();
-        Path envFile = Path.of(".env");
-        if (Files.exists(envFile)) {
-            try (InputStream input = Files.newInputStream(envFile)) {
-                environment.load(input);
-            }
-        }
-        return environment;
-    }
-
-    private static String value(
-            Properties environment, String key, String fallback) {
-        String fromSystem = System.getenv(key);
-        if (fromSystem != null && !fromSystem.isBlank()) {
-            return fromSystem;
-        }
-        return environment.getProperty(key, fallback);
     }
 
     // ═══ Costo y ganancia ════════════════════════════════════════
@@ -282,6 +241,7 @@ class SalesCostProfitQueriesTest {
         Product product = product(workshop, FamilyCategory.NORMAL);
 
         Sale exchange = entityManager.persistAndFlush(Sale.builder()
+                .taxMode(TaxMode.CF)
                 .workshop(workshop)
                 .employee(employee(workshop))
                 .status(SaleStatus.COMPLETED)
@@ -377,6 +337,7 @@ class SalesCostProfitQueriesTest {
     private Sale saleWith(
             Workshop workshop, SaleStatus status, LocalDateTime completedAt) {
         return entityManager.persistAndFlush(Sale.builder()
+                .taxMode(status == SaleStatus.PENDING ? TaxMode.UNRESOLVED : TaxMode.CF)
                 .workshop(workshop)
                 .employee(employee(workshop))
                 .status(status)

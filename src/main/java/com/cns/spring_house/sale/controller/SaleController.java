@@ -18,6 +18,7 @@ import com.cns.spring_house.sale.dto.CompleteSaleRequestDTO;
 import com.cns.spring_house.sale.dto.CreateSaleRequestDTO;
 import com.cns.spring_house.sale.dto.ExchangeInvoiceSummaryDTO;
 import com.cns.spring_house.sale.dto.RegisterPaymentRequestDTO;
+import com.cns.spring_house.sale.dto.SaveForLaterRequestDTO;
 import com.cns.spring_house.sale.dto.ReverseSaleRequestDTO;
 import com.cns.spring_house.sale.dto.SaleDashboardResponseDTO;
 import com.cns.spring_house.sale.dto.SaleResponseDTO;
@@ -151,6 +152,22 @@ public class SaleController {
             @PathVariable UUID id,
             @RequestBody @Valid CompleteSaleRequestDTO requestDTO) {
         SaleResponseDTO sale = service.completeSale(id, requestDTO);
+        return ResponseEntity
+                .status(HttpStatus.OK)
+                .body(sale);
+    }
+
+    /**
+     * "Guardar para despues": marca la venta como retomable. Una venta sin NIT
+     * exige su nombre de referencia (en el cuerpo, o ya guardado en la venta).
+     * El cuerpo es opcional para quien ya llamaba sin el.
+     */
+    @PostMapping("/{id}/save-for-later")
+    public ResponseEntity<SaleResponseDTO> saveForLater(
+            @PathVariable UUID id,
+            @RequestBody(required = false) @Valid SaveForLaterRequestDTO requestDTO) {
+        SaleResponseDTO sale = service.saveForLater(id,
+                requestDTO == null ? new SaveForLaterRequestDTO(null) : requestDTO);
         return ResponseEntity
                 .status(HttpStatus.OK)
                 .body(sale);

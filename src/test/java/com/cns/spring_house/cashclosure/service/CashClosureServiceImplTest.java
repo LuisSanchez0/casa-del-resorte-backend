@@ -14,6 +14,7 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -93,7 +94,8 @@ class CashClosureServiceImplTest {
                 TimeConfig.BUSINESS_ZONE);
 
         service = new CashClosureServiceImpl(
-                repository, calculator, new CashClosureMapper(), reportService,
+                repository, calculator, new CashClosureProductGrouper(),
+                new CashClosureMapper(), reportService,
                 currentUserService, workshopRepository, fixedClock);
 
         Jwt jwt = Jwt.withTokenValue("token")
@@ -130,6 +132,9 @@ class CashClosureServiceImplTest {
     }
 
     private final UUID productId = UUID.randomUUID();
+    private final UUID familyId = UUID.randomUUID();
+    private final UUID brandId = UUID.randomUUID();
+    private final UUID modelId = UUID.randomUUID();
     private final UUID pendingExchangeId = UUID.randomUUID();
 
     /**
@@ -143,6 +148,11 @@ class CashClosureServiceImplTest {
                 List.of(new ClosureSoldItemDTO(
                         productId, "RESORTE DELANTERO", FamilyCategory.NORMAL,
                         4L, new BigDecimal("7000.00"))),
+                // Las dimensiones con las que el snapshot agrupara despues.
+                Map.of(productId, new ClosureProductDimensions(
+                        familyId, "HOJA DE RESORTE",
+                        brandId, "Toyota",
+                        modelId, "Hilux")),
                 new BigDecimal("7000.00"),
                 new CashClosureInvoicingDTO(
                         1L, new BigDecimal("5000.00"),

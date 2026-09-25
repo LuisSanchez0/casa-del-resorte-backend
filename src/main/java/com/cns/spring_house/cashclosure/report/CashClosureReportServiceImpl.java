@@ -12,12 +12,15 @@ import org.springframework.stereotype.Service;
 import com.cns.spring_house.cashclosure.dto.CashClosureCollectionsDTO;
 import com.cns.spring_house.cashclosure.dto.CashClosureExchangeDTO;
 import com.cns.spring_house.cashclosure.dto.CashClosureInvoicingDTO;
+import com.cns.spring_house.cashclosure.dto.CashClosureProductGroupDTO;
+import com.cns.spring_house.cashclosure.dto.CashClosureProductSummaryDTO;
 import com.cns.spring_house.cashclosure.dto.CashClosureRefundsDTO;
 import com.cns.spring_house.cashclosure.dto.ClosureRefundMethodDTO;
 import com.cns.spring_house.cashclosure.dto.CashClosureResponseDTO;
 import com.cns.spring_house.cashclosure.dto.ClosureExchangeInvoiceDTO;
 import com.cns.spring_house.cashclosure.dto.ClosurePaymentMethodDTO;
 import com.cns.spring_house.cashclosure.dto.ClosureSoldItemDTO;
+import com.cns.spring_house.sale.dto.SaleNames;
 import com.cns.spring_house.shared.exception.FileProcessingException;
 
 import lombok.RequiredArgsConstructor;
@@ -44,6 +47,16 @@ public class CashClosureReportServiceImpl implements CashClosureReportService {
     /** Columna donde terminan las cantidades; los importes terminan al margen. */
     private static final float COUNT_COLUMN_OFFSET = 132f;
 
+    /**
+     * La familia de una fila que no se pudo clasificar.
+     *
+     * No es un guion: el guion significa "no aplica" —lo que se imprime en
+     * marca y modelo de una familia que no trabaja con modelo— y la familia
+     * aplica siempre. Esto otro significa "no se sabe", que es distinto y solo
+     * le pasa a cierres anteriores a V37 con el producto ya borrado.
+     */
+    private static final String UNCLASSIFIED = "SIN CLASIFICAR";
+
     private final ReportAssets assets;
     private final Clock clock;
 
@@ -67,10 +80,7 @@ public class CashClosureReportServiceImpl implements CashClosureReportService {
             // dinero. El total cobrado cierra el documento porque es la cifra
             // que la persona busca.
             soldItemsSection(canvas, closure);
-            invoicingSection(canvas, closure.invoicing());
-            exchangeSection(canvas, closure.exchange());
-            collectionsSection(canvas, closure.collections());
-            refundsSection(canvas, closure);
+            financialSections(canvas, closure);
 
             String footerRight = closure.id() == null
                     ? "Documento sin valor de cierre"
@@ -81,6 +91,73 @@ public class CashClosureReportServiceImpl implements CashClosureReportService {
             throw new FileProcessingException(
                     "No se pudo generar el PDF del cierre de caja");
         }
+    }
+
+    /**
+     * EL MISMO cierre de caja, con la mercaderia identificada de otra forma.
+     *
+     * No es un segundo reporte financiero: es una VARIANTE del primero. Lo unico
+     * que cambia es la tabla de lo vendido —familia, marca y modelo en vez de
+     * articulo y tipo— y a partir de ahi el documento vuelve a ser el cierre de
+     * siempre, con sus mismas secciones y sus mismas cifras.
+     *
+     * Esa igualdad no se consigue repitiendo cuentas: {@code closure} es el
+     * MISMO {@link CashClosureResponseDTO} que recibe {@link #renderDaily}, leido
+     * del mismo snapshot, y las secciones financieras las dibuja el mismo
+     * {@link #financialSections}. No hay dos caminos que puedan separarse.
+     *
+     * Antes si los habia, y se separaron: el resumen atribuia por su cuenta una
+     * forma de cobro a cada grupo de producto y acabo imprimiendo "sin forma de
+     * cobro registrada" sobre un cierre que el otro papel declaraba cobrado
+     * integro en efectivo. Dos documentos del mismo dia no pueden contradecirse.
+     */
+    @Override
+    public byte[] renderProductSummary(
+            CashClosureResponseDTO closure,
+            CashClosureProductSummaryDTO summary,
+            ReportHeaderDTO header,
+            String responsible) {
+
+        LocalDateTime generatedAt = LocalDateTime.now(clock);
+        try (PdfCanvas canvas = new PdfCanvas()) {
+            documentHeader(canvas, header, "RESUMEN DE PRODUCTOS",
+                    ReportFormats.date(closure.businessDate()));
+
+            statusBadge(canvas, false);
+            productSummaryMetadata(canvas, closure, responsible, generatedAt);
+
+            // La UNICA diferencia con el cierre de caja.
+            productGroupsSection(canvas, summary);
+            // Y de aqui abajo, literalmente el mismo documento.
+            financialSections(canvas, closure);
+
+            return canvas.finish(
+                    "Generado el " + ReportFormats.dateTime(generatedAt),
+                    "Cierre " + closure.id());
+        } catch (IOException exception) {
+            throw new FileProcessingException(
+                    "No se pudo generar el PDF del resumen de productos");
+        }
+    }
+
+    /**
+     * Las secciones FINANCIERAS del cierre, compartidas por los dos documentos.
+     *
+     * Existe para que la igualdad entre los dos PDF sea estructural y no una
+     * coincidencia que haya que vigilar: no hay una segunda version de estas
+     * secciones que pueda quedarse atras cuando la primera cambie.
+     *
+     * No calcula nada. Recibe el snapshot ya mapeado y lo dibuja; las cifras las
+     * decidio el cierre al confirmarse, y en particular el desglose por forma de
+     * pago sale de `cash_closure_payment_method` a traves de
+     * {@code closure.collections()}, que es la UNICA fuente de esa verdad.
+     */
+    private void financialSections(PdfCanvas canvas, CashClosureResponseDTO closure)
+            throws IOException {
+        invoicingSection(canvas, closure.invoicing());
+        exchangeSection(canvas, closure.exchange());
+        collectionsSection(canvas, closure.collections());
+        refundsSection(canvas, closure);
     }
 
     // ── Encabezado ───────────────────────────────────────────────
@@ -315,8 +392,11 @@ public class CashClosureReportServiceImpl implements CashClosureReportService {
             x += widths[0];
             canvas.text(
                     canvas.fit(
+                            // Sin nombre solo queda una venta a Consumidor
+                            // Final (V40 clasifico asi la antigua venta de
+                            // mostrador): se presenta igual que en la caja.
                             invoice.customerName() == null
-                                    ? "Mostrador" : invoice.customerName(),
+                                    ? SaleNames.CONSUMIDOR_FINAL : invoice.customerName(),
                             PdfCanvas.REGULAR, 8f, widths[1] - 8f),
                     x + 4f, baseline, PdfCanvas.REGULAR, 8f, ReportPalette.TEXT);
             x += widths[1];
@@ -394,6 +474,178 @@ public class CashClosureReportServiceImpl implements CashClosureReportService {
         canvas.text(message, canvas.left() + 4f, canvas.cursor() - 9f,
                 PdfCanvas.REGULAR, 9f, ReportPalette.TEXT_MUTED);
         canvas.moveDown(16f);
+    }
+
+    // ── Secciones del resumen de productos ───────────────────────
+
+    /**
+     * Los mismos datos de identidad que el cierre, porque este papel se archiva
+     * junto a el y tiene que poder emparejarse sin abrir el otro.
+     */
+    private void productSummaryMetadata(
+            PdfCanvas canvas,
+            CashClosureResponseDTO closure,
+            String responsible,
+            LocalDateTime generatedAt) throws IOException {
+
+        metadataRow(canvas, "Fecha operativa",
+                ReportFormats.date(closure.businessDate()));
+        metadataRow(canvas, "Responsable del cierre",
+                responsible == null ? "-" : responsible);
+        metadataRow(canvas, "Cerrado el", ReportFormats.dateTime(closure.closedAt()));
+        metadataRow(canvas, "Identificador", String.valueOf(closure.id()));
+        metadataRow(canvas, "Generado", ReportFormats.dateTime(generatedAt));
+        canvas.moveDown(10f);
+    }
+
+    /**
+     * La tabla del resumen: una fila por grupo comercial.
+     *
+     * Es la UNICA diferencia de contenido entre este documento y el cierre de
+     * caja. Alli la misma mercaderia se lista como articulo y tipo; aqui como
+     * familia, marca y modelo.
+     *
+     * Las medidas NO aparecen, y esa ausencia es el documento entero. Tres hojas
+     * de resorte Toyota Hilux de 80, 90 y 100 son tres productos del catalogo y
+     * UNA linea aqui: quien repone compra "hoja Hilux", no "hoja Hilux de 90".
+     *
+     * Lo que esta tabla NO hace es repartirse por forma de cobro. Como entro el
+     * dinero lo dice la seccion de cobros, mas abajo y una sola vez, con las
+     * cifras del cierre.
+     */
+    private void productGroupsSection(
+            PdfCanvas canvas, CashClosureProductSummaryDTO summary) throws IOException {
+        sectionTitle(canvas, "RESUMEN DE PRODUCTOS");
+
+        if (summary.groups().isEmpty()) {
+            emptyRow(canvas, "No se facturaron productos en el periodo.");
+            totalRow(canvas, "TOTAL GENERADO EN PRODUCTOS", summary.totalAmount());
+            excludedJobsNote(canvas, summary);
+            unclassifiedNote(canvas, summary);
+            return;
+        }
+
+        float[] widths = { 148f, 96f, 96f, 76f, 104f };
+        String[] titles = { "Familia", "Marca", "Modelo", "Cantidad", "Monto generado" };
+        tableHeader(canvas, widths, titles, 3);
+
+        boolean shaded = false;
+        for (CashClosureProductGroupDTO group : summary.groups()) {
+            if (canvas.ensureSpace(ROW_HEIGHT)) {
+                // La cabecera se repite en cada hoja: una tabla larga cuya
+                // segunda pagina empieza en numeros sueltos no se puede leer.
+                tableHeader(canvas, widths, titles, 3);
+                shaded = false;
+            }
+            float top = canvas.cursor();
+            if (shaded) {
+                canvas.fillRect(canvas.left(), top - ROW_HEIGHT, canvas.contentWidth(),
+                        ROW_HEIGHT, ReportPalette.SURFACE_MUTED);
+            }
+            shaded = !shaded;
+
+            float baseline = top - ROW_HEIGHT + 4.5f;
+            float x = canvas.left();
+            // La familia NUNCA se imprime como guion: un guion aqui se leeria
+            // como "no aplica", igual que en marca y modelo, y la familia
+            // siempre aplica. Cuando falta es que no se supo, y eso se dice.
+            boolean unclassified = group.familyId() == null;
+            canvas.text(
+                    canvas.fit(unclassified ? UNCLASSIFIED : dimension(group.familyName()),
+                            PdfCanvas.BOLD, 8f, widths[0] - 8f),
+                    x + 4f, baseline, PdfCanvas.BOLD, 8f,
+                    unclassified ? ReportPalette.TEXT_MUTED : ReportPalette.TEXT);
+            x += widths[0];
+            canvas.text(
+                    canvas.fit(dimension(group.brandName()),
+                            PdfCanvas.REGULAR, 8f, widths[1] - 8f),
+                    x + 4f, baseline, PdfCanvas.REGULAR, 8f, ReportPalette.TEXT);
+            x += widths[1];
+            canvas.text(
+                    canvas.fit(dimension(group.modelName()),
+                            PdfCanvas.REGULAR, 8f, widths[2] - 8f),
+                    x + 4f, baseline, PdfCanvas.REGULAR, 8f, ReportPalette.TEXT);
+            x += widths[2];
+            canvas.textRight(ReportFormats.count(group.quantity()),
+                    x + widths[3] - 4f, baseline, PdfCanvas.REGULAR, 8f,
+                    ReportPalette.TEXT);
+            x += widths[3];
+            canvas.textRight(ReportFormats.money(group.amount()),
+                    x + widths[4] - 4f, baseline, PdfCanvas.BOLD, 8f, ReportPalette.TEXT);
+
+            canvas.moveDown(ROW_HEIGHT);
+        }
+
+        canvas.line(canvas.left(), canvas.cursor(), canvas.right(), canvas.cursor(),
+                ReportPalette.BORDER, 0.6f);
+
+        countRow(canvas, "TOTAL UNIDADES", summary.totalQuantity(), false);
+        totalRow(canvas, "TOTAL GENERADO EN PRODUCTOS", summary.totalAmount());
+        excludedJobsNote(canvas, summary);
+        unclassifiedNote(canvas, summary);
+    }
+
+    /**
+     * Por que este total no coincide con el del cierre.
+     *
+     * La diferencia son los servicios, que no son mercaderia y no tienen marca
+     * ni modelo que agrupar. Decirlo en el papel evita que alguien compare las
+     * dos hojas, vea dos cifras distintas y concluya que una esta mal.
+     *
+     * Solo se imprime cuando hubo servicios: una nota que explica una diferencia
+     * de cero es ruido.
+     */
+    private void excludedJobsNote(
+            PdfCanvas canvas, CashClosureProductSummaryDTO summary) throws IOException {
+        if (summary.excludedJobAmount().signum() == 0) {
+            return;
+        }
+        canvas.ensureSpace(ROW_HEIGHT * 2f);
+        canvas.text(
+                "No incluye servicios facturados por "
+                        + ReportFormats.money(summary.excludedJobAmount())
+                        + ", que se detallan en el cierre de caja.",
+                canvas.left() + 4f, canvas.cursor() - 9f,
+                PdfCanvas.REGULAR, 8f, ReportPalette.TEXT_MUTED);
+        canvas.moveDown(14f);
+    }
+
+    /**
+     * Por que hay una fila sin familia.
+     *
+     * Solo ocurre en cierres anteriores a la migracion que anadio las
+     * dimensiones, y solo si ademas el producto ya no esta en el catalogo. Se
+     * escribe en el papel porque un renglon "SIN CLASIFICAR" sin explicacion
+     * parece un fallo del reporte, y no lo es: es un dato que nunca se
+     * registro.
+     *
+     * Su importe SI esta en el total. Decir lo contrario, o descontarlo, seria
+     * hacer desaparecer dinero facturado para que la tabla quedara bonita.
+     */
+    private void unclassifiedNote(
+            PdfCanvas canvas, CashClosureProductSummaryDTO summary) throws IOException {
+        if (summary.unclassifiedAmount().signum() == 0) {
+            return;
+        }
+        canvas.ensureSpace(ROW_HEIGHT * 2f);
+        canvas.text(
+                "Incluye " + ReportFormats.money(summary.unclassifiedAmount())
+                        + " sin clasificar: cierre anterior al registro de familia,"
+                        + " marca y modelo, con productos ya retirados del catalogo.",
+                canvas.left() + 4f, canvas.cursor() - 9f,
+                PdfCanvas.REGULAR, 8f, ReportPalette.TEXT_MUTED);
+        canvas.moveDown(14f);
+    }
+
+    /**
+     * Una dimension que no aplica se imprime como guion largo.
+     *
+     * Es TINTA y nada mas: lo que agrupo fue el nulo, no este texto. Si el guion
+     * fuera la clave, una familia sin marca y otra sin marca se fundirian por
+     * parecerse en el papel.
+     */
+    private static String dimension(String name) {
+        return name == null || name.isBlank() ? "\u2014" : name;
     }
 
     // ── Primitivas de seccion ────────────────────────────────────
@@ -506,6 +758,17 @@ public class CashClosureReportServiceImpl implements CashClosureReportService {
      */
     private void tableHeader(PdfCanvas canvas, float[] widths, String[] titles)
             throws IOException {
+        tableHeader(canvas, widths, titles, 2);
+    }
+
+    /**
+     * @param leftAligned cuantas columnas iniciales llevan texto. El resto son
+     *        cantidades e importes y se alinean por la derecha, que es como se
+     *        comparan de un vistazo dos numeros de distinto ancho.
+     */
+    private void tableHeader(
+            PdfCanvas canvas, float[] widths, String[] titles, int leftAligned)
+            throws IOException {
         canvas.ensureSpace(ROW_HEIGHT + 2f);
         float top = canvas.cursor();
         canvas.fillRect(canvas.left(), top - ROW_HEIGHT, canvas.contentWidth(),
@@ -514,7 +777,7 @@ public class CashClosureReportServiceImpl implements CashClosureReportService {
         float baseline = top - ROW_HEIGHT + 4.5f;
         float x = canvas.left();
         for (int index = 0; index < titles.length; index++) {
-            if (index == 0 || index == 1) {
+            if (index < leftAligned) {
                 canvas.text(titles[index], x + 4f, baseline,
                         PdfCanvas.BOLD, 8f, ReportPalette.PRIMARY_TEXT);
             } else {

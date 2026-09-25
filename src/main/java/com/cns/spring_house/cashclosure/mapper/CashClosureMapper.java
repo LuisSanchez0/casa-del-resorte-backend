@@ -26,6 +26,7 @@ import com.cns.spring_house.cashclosure.entity.CashClosureExchangeInvoice;
 import com.cns.spring_house.cashclosure.entity.CashClosureItem;
 import com.cns.spring_house.cashclosure.entity.CashClosurePaymentMethodTotal;
 import com.cns.spring_house.cashclosure.entity.ExchangeInvoiceScope;
+import com.cns.spring_house.cashclosure.service.ClosureProductDimensions;
 import com.cns.spring_house.cashclosure.service.PeriodCashFigures;
 import com.cns.spring_house.employee.entity.Employee;
 import com.cns.spring_house.sale.entity.PaymentMethod;
@@ -118,13 +119,8 @@ public class CashClosureMapper {
         applyLegacyPaymentColumns(closure, collections);
 
         for (ClosureSoldItemDTO item : figures.items()) {
-            closure.addItem(CashClosureItem.builder()
-                    .productId(item.productId())
-                    .itemName(item.name())
-                    .itemType(item.type())
-                    .quantity(item.quantity())
-                    .billedAmount(item.billedAmount())
-                    .build());
+            closure.addItem(toItemEntity(
+                    item, figures.productDimensions().get(item.productId())));
         }
 
         for (ClosureExchangeInvoiceDTO invoice : exchange.issued()) {
@@ -184,6 +180,37 @@ public class CashClosureMapper {
                     .reason(refund.reason())
                     .build());
         }
+    }
+
+    /**
+     * Un articulo del snapshot: sus cifras y las DIMENSIONES con las que se
+     * agrupara despues.
+     *
+     * Familia, marca y modelo se copian AQUI, al confirmar, y no se resuelven al
+     * descargar el reporte. Es lo que hace inmutable el resumen agrupado:
+     * renombrar una marca o mover un producto de familia manana no puede cambiar
+     * lo que este cierre dice hoy, igual que ya pasaba con {@code itemName}.
+     *
+     * Las dimensiones pueden faltar si el producto desaparecio del catalogo
+     * entre el calculo y el guardado. No es motivo para tumbar el cierre: se
+     * guarda la fila con sus cifras —que son el dinero— y las dimensiones en
+     * nulo, y el reporte lo dice en vez de inventar una familia.
+     */
+    private static CashClosureItem toItemEntity(
+            ClosureSoldItemDTO item, ClosureProductDimensions dimensions) {
+        return CashClosureItem.builder()
+                .productId(item.productId())
+                .itemName(item.name())
+                .itemType(item.type())
+                .quantity(item.quantity())
+                .billedAmount(item.billedAmount())
+                .familyId(dimensions == null ? null : dimensions.familyId())
+                .familyName(dimensions == null ? null : dimensions.familyName())
+                .brandId(dimensions == null ? null : dimensions.brandId())
+                .brandName(dimensions == null ? null : dimensions.brandName())
+                .modelId(dimensions == null ? null : dimensions.modelId())
+                .modelName(dimensions == null ? null : dimensions.modelName())
+                .build();
     }
 
     private static long refundCountOf(ClosureRefundMethodDTO method) {

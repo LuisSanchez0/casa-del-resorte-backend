@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
@@ -13,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.cns.spring_house.acquisition.service.InventoryLotService;
 import com.cns.spring_house.family.entity.FamilyCategory;
+import com.cns.spring_house.inventory.entity.Inventory;
 import com.cns.spring_house.inventory.entity.InventoryItem;
 import com.cns.spring_house.inventory.entity.InventoryItemStatus;
 import com.cns.spring_house.inventory.repository.InventoryItemRepository;
@@ -49,12 +51,13 @@ public class ContainerTransformationHandler implements TransformationHandler {
      */
     @Transactional(propagation = Propagation.MANDATORY)
     @Override
-    public void generate(
+    public Set<UUID> generate(
                 Transformation transformation,
                 InventoryItem inputItem,
                 CreateTransformationRequestDTO requestDTO) {
         List<InventoryItem> components = resolveComponents(
                 inputItem, requestDTO.containedItems());
+        ensureSameWorkshop(inputItem, components);
 
         for (InventoryItem component : components) {
             inputItem.releaseItem(component);
@@ -75,6 +78,52 @@ public class ContainerTransformationHandler implements TransformationHandler {
         }
 
         transformation.addItem(processInputItem(inputItem));
+        return Set.of(); // Released components already had physical identities.
+    }
+
+    /**
+     * Ningún componente puede colgar de un inventario distinto al de la maleta.
+     *
+     * El taller NO se vuelve a leer del token aquí: el servicio ya acotó la
+     * maleta al taller autenticado antes de llamar, así que exigir que cada
+     * componente comparta el taller de SU PROPIO contenedor es exactamente la
+     * misma garantía, y deja la lectura del JWT en un único sitio. El manejador
+     * comprueba una invariante estructural; el límite entre talleres lo pone el
+     * servicio.
+     *
+     * Se comprueba porque el esquema NO lo garantiza: `container_id` es una
+     * clave ajena a `inventory_item` a secas, y cada unidad cuelga de su propio
+     * `inventory_id`, de modo que nada en la base impide una fila con un
+     * contenedor de un taller y un inventario de otro. Liberar una unidad así le
+     * sumaría existencias —y un lote de producción— al inventario ajeno.
+     *
+     * No añade consultas: `Inventory.workshop` es `@ManyToOne` EAGER, y el
+     * inventario de cada componente ya se carga unas líneas más abajo para
+     * sumarle stock y registrarle la producción.
+     */
+    private void ensureSameWorkshop(
+            InventoryItem inputItem, List<InventoryItem> components) {
+        UUID workshopId = workshopOf(inputItem);
+
+        for (InventoryItem component : components) {
+            // Se comparan los DOS, no se exige que existan: en la base
+            // `inventory.workshop_id` es NOT NULL (V5), asi que en datos reales
+            // ambos estan siempre puestos y la comprobacion es estricta.
+            if (!Objects.equals(workshopId, workshopOf(component))) {
+                // No se nombra ningún taller: se dice que el componente no sirve
+                // para esta operación, igual que en el resto del flujo.
+                throw new ValidationException(
+                        "El componente seleccionado no pertenece a esta unidad contenedora");
+            }
+        }
+    }
+
+    private UUID workshopOf(InventoryItem item) {
+        Inventory inventory = item.getInventory();
+        if (inventory == null || inventory.getWorkshop() == null) {
+            return null;
+        }
+        return inventory.getWorkshop().getId();
     }
 
     /**

@@ -55,7 +55,7 @@ public class ContainerInventoryHandler
      */
     @Override
     @Transactional(propagation = Propagation.MANDATORY)
-    public void addStock(
+    public List<InventoryItem> addStock(
             Inventory containerInventory,
             AddStockRequestDTO requestDTO,
             StockEntryContext context) {
@@ -275,6 +275,7 @@ public class ContainerInventoryHandler
          * un armado, no de una compra.
          */
         lotService.registerProduction(containerInventory, 1);
+        return List.of(containerItem);
     }
 
     private void validateSpecialCategory(

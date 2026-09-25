@@ -12,6 +12,10 @@ import com.cns.spring_house.product.entity.Product;
 
 public interface ProductRepository extends JpaRepository<Product, UUID>, JpaSpecificationExecutor<Product> {
     
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT product FROM Product product WHERE product.id = :id")
+    Optional<Product> findByIdForUpdate(@org.springframework.data.repository.query.Param("id") UUID id);
+
     boolean existsBySku(String sku);
 
     boolean existsBySkuAndIdNot(String sku, UUID id);
@@ -31,7 +35,7 @@ public interface ProductRepository extends JpaRepository<Product, UUID>, JpaSpec
         SELECT *
         from product p
         WHERE p.family_id = :familyId
-            AND p.model_id = :modelId
+            AND p.model_id IS NOT DISTINCT FROM :modelId
             AND p.attributes = cast(:attributes as jsonb)
         ORDER BY p.created_at, p.id
         LIMIT 1
@@ -71,7 +75,7 @@ public interface ProductRepository extends JpaRepository<Product, UUID>, JpaSpec
         SELECT *
         from product p
         WHERE p.family_id = :familyId
-            AND p.model_id = :modelId
+            AND p.model_id IS NOT DISTINCT FROM :modelId
             AND p.attributes = cast(:attributes as jsonb)
             AND p.name = :name
         ORDER BY p.created_at, p.id
