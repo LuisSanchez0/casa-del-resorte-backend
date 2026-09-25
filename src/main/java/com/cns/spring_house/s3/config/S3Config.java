@@ -4,8 +4,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import lombok.RequiredArgsConstructor;
-import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
-import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.services.s3.S3Client;
 
 @Configuration
@@ -16,14 +15,10 @@ public class S3Config {
 
     @Bean
     public S3Client customS3Client() {
-        AwsBasicCredentials credentials = AwsBasicCredentials.create(
-                s3Properties.getAccessKeyId(),
-                s3Properties.getSecretAccessKey());
         return S3Client.builder()
                 .region(s3Properties.getRegion())
-                .credentialsProvider(StaticCredentialsProvider.create(credentials))
+                .credentialsProvider(DefaultCredentialsProvider.create())
                 .build();
-
     }
 
 }

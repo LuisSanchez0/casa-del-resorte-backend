@@ -14,8 +14,6 @@ import software.amazon.awssdk.regions.Region;
 public class S3Properties {
 
     private Region region;
-    private String accessKeyId;
-    private String secretAccessKey;
     private Bucket bucket = new Bucket();
 
     @Getter

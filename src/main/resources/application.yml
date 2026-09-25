@@ -2,32 +2,27 @@ spring:
   config:
     import:
       - optional:file:.env[.properties]
+
   application:
     name: spring-house
+
   mvc:
     servlet:
       path: /api
+
   servlet:
     multipart:
-      # Los limites por defecto (1MB por archivo, 10MB por peticion) no alcanzan
-      # para subir varias fotografias de vehiculo en una sola solicitud.
       max-file-size: 5MB
       max-request-size: 30MB
-  datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:spring_house_db}
-    username: ${DB_USER:postgres}
-    password: ${DB_PASS}
-  data:
-    redis:
-      host: ${CACHE_HOST:localhost}
-      port: ${CACHE_PORT:6379}
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
 
 server:
   port: ${PORT:8080}
+
   error:
-    # spring-boot-devtools activa include-stacktrace=ALWAYS por defecto, lo que
-    # hacía que un 500 devolviera stack trace y SQL al cliente. Se fija aquí para
-    # que ningún perfil pueda adjuntar internals a la respuesta.
     include-stacktrace: never
     include-exception: false
     include-binding-errors: never
@@ -40,20 +35,16 @@ security:
   access-token:
     secret-key: ${AT_SK}
     expiration-time: ${AT_ET}
+
   refresh-token:
     expiration-time: ${RT_ET}
+
   cookie:
-    # En desarrollo (http://localhost:4200 -> http://localhost:8080) la peticion
-    # es cross-origin pero same-site, asi que Lax basta y Secure debe quedar en
-    # false para que el navegador acepte la cookie sobre http. En produccion, con
-    # el frontend en otro dominio, hay que poner None + true.
     secure: ${COOKIE_SECURE:false}
     same-site: ${COOKIE_SAME_SITE:Lax}
 
 aws:
   s3:
-    region: ${AWS_REGION:us-east-2}
-    access-key-id: ${AWS_ACCESS_KEY_ID}
-    secret-access-key: ${AWS_SECRET_ACCESS_KEY}
+    region: ${AWS_REGION:us-east-1}
     bucket:
       name: ${AWS_BUCKET_NAME:spring-house}
