@@ -1,0 +1,19 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    image: spring-house:latest
+    container_name: spring-house
+
+    restart: unless-stopped
+
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+
+    env_file:
+      - /opt/spring-house-config/.env
+
+    ports:
+      - "127.0.0.1:8080:8080"
