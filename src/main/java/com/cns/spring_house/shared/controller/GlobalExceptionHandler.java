@@ -4,11 +4,13 @@ import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.Map;
 
+import org.springframework.dao.TransientDataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.transaction.TransactionTimedOutException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestCookieException;
@@ -32,6 +34,10 @@ public class GlobalExceptionHandler {
     /** Único texto que ve el cliente ante un fallo no controlado. */
     private static final String GENERIC_ERROR_MESSAGE =
             "Ocurrió un error interno. Intenta nuevamente.";
+
+    /** Datos ocupados por otra operación: no se cambió nada y se puede reintentar. */
+    private static final String BUSY_DATA_MESSAGE =
+            "Otra operación está usando estos datos en este momento. No se cambió nada; intenta nuevamente.";
 
     @ExceptionHandler(BadCredentialsException.class)
     ProblemDetail handleBadCredentialsException(BadCredentialsException e) {
@@ -187,6 +193,23 @@ public class GlobalExceptionHandler {
                         "No tienes permisos para realizar esta operación");
         problemDetail.setTitle("Access Denied");
         problemDetail.setProperty("error_category", "Auth");
+        problemDetail.setProperty("timestamp", Instant.now());
+        return problemDetail;
+    }
+
+    /**
+     * Otra operación retenía los mismos datos y la espera llegó a su tope (o la
+     * base eligió esta transacción para romper un interbloqueo). La transacción
+     * ya se deshizo entera, así que reintentar es seguro: 409 con ese mensaje,
+     * no el 500 genérico que no dice qué hacer.
+     */
+    @ExceptionHandler({ TransientDataAccessException.class, TransactionTimedOutException.class })
+    ProblemDetail handleBusyDataException(Exception e) {
+        log.warn("Operacion cancelada por datos en uso: {}", e.getClass().getSimpleName());
+        ProblemDetail problemDetail = ProblemDetail
+                .forStatusAndDetail(HttpStatus.CONFLICT, BUSY_DATA_MESSAGE);
+        problemDetail.setTitle("Data In Use");
+        problemDetail.setProperty("error_category", "Data Conflict");
         problemDetail.setProperty("timestamp", Instant.now());
         return problemDetail;
     }

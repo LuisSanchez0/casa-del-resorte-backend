@@ -23,6 +23,7 @@
     import com.cns.spring_house.transformation.dto.TransformationResponseDTO;
     import com.cns.spring_house.transformation.entity.Transformation;
     import com.cns.spring_house.transformation.entity.TransformationItemRole;
+    import com.cns.spring_house.transformation.handler.CurlCountRequirement;
     import com.cns.spring_house.transformation.handler.TransformationHandlerRegistry;
     import com.cns.spring_house.transformation.handler.TransformationHandler;
     import com.cns.spring_house.transformation.mapper.TransformationMapper;
@@ -89,6 +90,13 @@
         @Override
         public TransformationResponseDTO create(
                 CreateTransformationRequestDTO requestDTO) {
+            return create(requestDTO, CurlCountRequirement.REQUIRED);
+        }
+
+        @Override
+        public TransformationResponseDTO create(
+                CreateTransformationRequestDTO requestDTO,
+                CurlCountRequirement curlCountRequirement) {
             // PRIMER LIMITE DURO. La unidad se busca ya acotada al taller del
             // token, no se busca global y se juzga despues: un item de otro
             // taller no puede llegar al manejador, y llegar bastaba para hacer
@@ -128,7 +136,8 @@
             validateOutputMode(category, requestDTO);
             TransformationHandler handler = getHandler(inputItem);
             Transformation transformation = startTransformation();
-            Set<UUID> createdInventoryIds = handler.generate(transformation, inputItem, requestDTO);
+            Set<UUID> createdInventoryIds = handler.generate(
+                    transformation, inputItem, requestDTO, curlCountRequirement);
             transformation = repository.save(transformation);
             transformation.getItems().stream()
                     .filter(item -> item.getRole() == TransformationItemRole.OUTPUT)

@@ -70,7 +70,11 @@ public interface SaleRepository extends JpaRepository<Sale, UUID>, JpaSpecificat
         "details.item.inventory",
         "details.item.inventory.product",
         "details.item.inventory.product.family",
-        "details.item.inventory.product.model" })
+        "details.item.inventory.product.model",
+        // A UNO: la accion de anular o revertir. Es el lado inverso de un
+        // OneToOne, que Hibernate no puede dejar perezoso, asi que sin el grafo
+        // costaba una consulta por venta del listado.
+        "action" })
     Optional<Sale> findByIdAndWorkshopId(UUID id, UUID workshopId);
 
     /**
@@ -101,7 +105,11 @@ public interface SaleRepository extends JpaRepository<Sale, UUID>, JpaSpecificat
         "details.item.inventory",
         "details.item.inventory.product",
         "details.item.inventory.product.family",
-        "details.item.inventory.product.model" })
+        "details.item.inventory.product.model",
+        // A UNO: la accion de anular o revertir. Es el lado inverso de un
+        // OneToOne, que Hibernate no puede dejar perezoso, asi que sin el grafo
+        // costaba una consulta por venta del listado.
+        "action" })
     List<Sale> findAll(Specification<Sale> specification);
 
     /**
@@ -1013,5 +1021,30 @@ public interface SaleRepository extends JpaRepository<Sale, UUID>, JpaSpecificat
     List<CustomerPerformanceProjection> findTopCustomersByGeneratedSales(
             @Param("workshopId") UUID workshopId,
             @Param("maxRows") int maxRows);
+
+
+    /**
+     * Cerrojo de fila de la venta, SIN cargarla.
+     *
+     * Todo lo que mueve una solicitud de la comanda —enviarla, entregarla,
+     * fabricarla, quitarla, anular la venta o facturarla— lo toma ANTES de leer
+     * la venta, de modo que vendedor, Control y Operador nunca deciden sobre
+     * una copia vieja de la misma venta. Se toma antes y no despues porque una
+     * entidad ya cargada no se relee por haber esperado un cerrojo.
+     *
+     * Devuelve lista y no Optional a proposito: el cerrojo no decide si la venta
+     * existe —eso lo sigue diciendo {@link #findByIdAndWorkshopId}—, solo
+     * serializa a quien llega a la vez.
+     */
+    @Query(nativeQuery = true, value = """
+        SELECT id
+        FROM sale
+        WHERE id = :id
+          AND workshop_id = :workshopId
+        FOR UPDATE
+    """)
+    List<UUID> lockByIdAndWorkshopId(
+            @Param("id") UUID id,
+            @Param("workshopId") UUID workshopId);
 
 }

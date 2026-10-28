@@ -61,6 +61,17 @@ public final class ColumnLimits {
      */
     public static final int SALE_ACTION_REASON = 500;
 
+    /** `sale_detail.instructions` (V42). */
+    public static final int FULFILLMENT_INSTRUCTIONS = 500;
+    /** `sale_detail.fulfillment_note` (V42). */
+    public static final int FULFILLMENT_NOTE = 255;
+    /**
+     * Unidades de una misma pieza especial por solicitud. Cada unidad es una
+     * linea propia —se entrega o se fabrica por separado—, asi que el tope
+     * evita que una cifra mal escrita cree cientos de lineas.
+     */
+    public static final int FULFILLMENT_MAX_UNITS = 50;
+
     /**
      * Observaciones de un cierre de caja. Mismo tope que el motivo de
      * {@code sale_action} y por la misma razon: es texto libre que se imprime

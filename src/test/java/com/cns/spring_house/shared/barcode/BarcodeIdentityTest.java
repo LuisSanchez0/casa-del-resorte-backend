@@ -30,4 +30,18 @@ class BarcodeIdentityTest {
             assertThat(new UUID(recovered.shiftRight(64).longValue(), recovered.longValue())).isEqualTo(id);
         }
     }
+    @Test void aScannedItemLabelLeadsBackToItsUnit() {
+        UUID id = UUID.randomUUID();
+        assertThat(BarcodeIdentity.parseItem(BarcodeIdentity.item(id))).contains(id);
+        assertThat(BarcodeIdentity.parseItem(" " + BarcodeIdentity.item(id).toLowerCase() + " ")).contains(id);
+        assertThat(BarcodeIdentity.parseItem(BarcodeIdentity.item(new UUID(-1, -1)))).contains(new UUID(-1, -1));
+    }
+    @Test void textThatIsNotAnItemLabelIdentifiesNothing() {
+        UUID id = UUID.randomUUID();
+        assertThat(BarcodeIdentity.parseItem(BarcodeIdentity.product(id))).isEmpty();
+        assertThat(BarcodeIdentity.parseItem("HOJA 105")).isEmpty();
+        assertThat(BarcodeIdentity.parseItem("I1-123")).isEmpty();
+        assertThat(BarcodeIdentity.parseItem("I1-9999999999999999999999999999999999999999")).isEmpty();
+        assertThat(BarcodeIdentity.parseItem(null)).isEmpty();
+    }
 }

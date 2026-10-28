@@ -9,9 +9,12 @@ import com.cns.spring_house.sale.dto.AddSaleDetailRequestDTO;
 import com.cns.spring_house.sale.dto.CancelSaleRequestDTO;
 import com.cns.spring_house.sale.dto.CompleteSaleRequestDTO;
 import com.cns.spring_house.sale.dto.CreateSaleRequestDTO;
+import com.cns.spring_house.sale.dto.DispatchSaleRequestDTO;
+import com.cns.spring_house.sale.dto.RequestSpecificationDTO;
 import com.cns.spring_house.sale.dto.ExchangeInvoiceSummaryDTO;
 import com.cns.spring_house.sale.dto.RegisterPaymentRequestDTO;
 import com.cns.spring_house.sale.dto.SaveForLaterRequestDTO;
+import com.cns.spring_house.sale.dto.UpdateRequestPriceDTO;
 import com.cns.spring_house.sale.dto.ReverseSaleRequestDTO;
 import com.cns.spring_house.sale.dto.SaleResponseDTO;
 import com.cns.spring_house.sale.dto.SaleSummaryDTO;
@@ -54,6 +57,18 @@ public interface SaleService {
     SaleResponseDTO addDetail(UUID id, AddSaleDetailRequestDTO requestDTO);
 
     SaleResponseDTO removeDetail(UUID saleDetailId);
+
+    /** Pide una pieza especial descrita por sus caracteristicas. */
+    SaleResponseDTO requestSpecification(UUID id, RequestSpecificationDTO requestDTO);
+
+    /** Envia al taller las solicitudes aun no enviadas ("Enviar comanda"). */
+    SaleResponseDTO dispatch(UUID id, DispatchSaleRequestDTO requestDTO);
+
+    /** El vendedor revisa el precio de una solicitud sin trabajo fisico hecho. */
+    SaleResponseDTO updateRequestPrice(UUID saleDetailId, UpdateRequestPriceDTO requestDTO);
+
+    /** Pedidos abiertos cuyo trabajo ya termino, listos para facturar. */
+    List<SaleResponseDTO> getReady(String query);
 
     SaleResponseDTO completeSale(UUID id, CompleteSaleRequestDTO requestDTO);
 

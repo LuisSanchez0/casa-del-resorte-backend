@@ -27,4 +27,17 @@ public interface TransformationHandler {
             InventoryItem inputItem,
             CreateTransformationRequestDTO requestDTO);
 
+    /**
+     * Igual que {@link #generate(Transformation, InventoryItem, CreateTransformationRequestDTO)},
+     * indicando quien decide los colochos de la pieza principal. Solo SPECIAL
+     * los maneja; el resto lo ignora.
+     */
+    default Set<UUID> generate(
+            Transformation transformation,
+            InventoryItem inputItem,
+            CreateTransformationRequestDTO requestDTO,
+            CurlCountRequirement curlCountRequirement) {
+        return generate(transformation, inputItem, requestDTO);
+    }
+
 }

@@ -49,6 +49,13 @@ public class NormalSaleDetailHandler implements SaleDetailHandler {
         if (requestDTO.quantity() == null) {
             throw new ValidationException("La cantidad a remover es obligatoria");
         }
+        // Lo que otra venta ya tomo no esta en `stock`: se descuenta al
+        // agregarlo. Una pieza normal no se fabrica, asi que pedir mas de lo
+        // que queda se rechaza diciendo cuanto queda, sin recortar la cantidad.
+        int available = inventory.getStock() == null ? 0 : inventory.getStock();
+        if (requestDTO.quantity() > available) {
+            throw new ValidationException(unavailableMessage(available));
+        }
         inventory.removeStock(requestDTO.quantity());
         SaleDetail detail = createDetail(inventory, requestDTO);
         sale.addDetail(detail);
@@ -83,6 +90,15 @@ public class NormalSaleDetailHandler implements SaleDetailHandler {
                         "No existe un inventario para el producto seleccionado"));
         inventory.addStock(saleDetail.getQuantity());
         lotService.restoreSaleDetail(saleDetail);
+    }
+
+    static String unavailableMessage(int available) {
+        if (available <= 0) {
+            return "No hay unidades disponibles de este producto";
+        }
+        return available == 1
+                ? "Solo hay 1 unidad disponible"
+                : "Solo hay " + available + " unidades disponibles";
     }
 
     private SaleDetail createDetail(Inventory inventory, AddSaleDetailRequestDTO requestDTO) {

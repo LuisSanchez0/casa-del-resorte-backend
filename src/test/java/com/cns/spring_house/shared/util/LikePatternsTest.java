@@ -47,4 +47,22 @@ class LikePatternsTest {
         assertThat(LikePatterns.containsIgnoreCase("")).isEqualTo("%%");
     }
 
+
+    @Test
+    void foldsAccentsSoAPlainSearchFindsAccentedText() {
+        assertThat(LikePatterns.containsIgnoreCaseAndAccents("  Camión Pequeño "))
+                .isEqualTo("%camion pequeno%");
+        assertThat(LikePatterns.containsIgnoreCaseAndAccents("50%_x"))
+                .isEqualTo("%50\\%\\_x%");
+    }
+
+    @Test
+    void theTranslateTablesPairEveryAccentedLetterWithItsBase() {
+        assertThat(LikePatterns.ACCENTED).hasSameSizeAs(LikePatterns.UNACCENTED);
+        for (int index = 0; index < LikePatterns.ACCENTED.length(); index++) {
+            String accented = String.valueOf(LikePatterns.ACCENTED.charAt(index));
+            assertThat(LikePatterns.containsIgnoreCaseAndAccents(accented))
+                    .isEqualTo("%" + LikePatterns.UNACCENTED.charAt(index) + "%");
+        }
+    }
 }

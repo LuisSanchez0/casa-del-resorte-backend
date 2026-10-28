@@ -25,6 +25,7 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.OneToOne;
+import jakarta.persistence.OrderBy;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import lombok.AccessLevel;
@@ -114,11 +115,24 @@ public class Sale extends Auditable {
     @Builder.Default
     @Enumerated(EnumType.STRING)
     private PaymentStatus paymentStatus = PaymentStatus.PENDING;
+    /**
+     * Preparacion del pedido en el taller, independiente de {@link #status}.
+     * La recalcula {@link #refreshFulfillmentStatus()} tras cada cambio de una
+     * solicitud; nunca se escribe a mano.
+     */
+    @Builder.Default
+    @Enumerated(EnumType.STRING)
+    private SaleFulfillmentStatus fulfillmentStatus = SaleFulfillmentStatus.NONE;
     /** Null mientras el cobro siga pendiente. */
     @Enumerated(EnumType.STRING)
     private PaymentMethod paymentMethod;
     private LocalDateTime paidAt;
+    /**
+     * En orden de alta: la comanda se sigue mientras el taller la cumple y una
+     * linea no puede cambiar de sitio entre una lectura y la siguiente.
+     */
     @Builder.Default
+    @OrderBy("createdAt ASC, id ASC")
     @OneToMany(mappedBy = "sale", fetch = FetchType.EAGER, orphanRemoval = true, cascade = CascadeType.ALL)
     List<SaleDetail> details = new ArrayList<>();
     @Builder.Default
@@ -153,6 +167,35 @@ public class Sale extends Auditable {
             customerName = customer.getName();
             customerNit = customer.getNit();
         }
+    }
+
+    /**
+     * Deriva la preparacion del pedido de sus lineas. Es la UNICA escritura de
+     * {@link #fulfillmentStatus}, para que el listado de ventas listas nunca
+     * diga algo distinto de lo que dicen las lineas.
+     *
+     * <ul>
+     * <li>Ninguna solicitud enviada todavia: NONE. Un carrito directo, o una
+     * comanda que el vendedor aun esta armando.</li>
+     * <li>Alguna solicitud enviada y alguna pendiente —en el taller o recien
+     * agregada sin enviar—: IN_PROGRESS.</li>
+     * <li>Todas las solicitudes cumplidas: READY_TO_COMPLETE.</li>
+     * </ul>
+     */
+    public void refreshFulfillmentStatus() {
+        boolean anyDispatched = details.stream()
+                .filter(SaleDetail::isRequest)
+                .anyMatch(detail -> detail.getFulfillment().getStatus()
+                        != FulfillmentStatus.PENDING);
+        if (!anyDispatched) {
+            this.fulfillmentStatus = SaleFulfillmentStatus.NONE;
+            return;
+        }
+        boolean anyOutstanding = details.stream()
+                .anyMatch(SaleDetail::blocksCompletion);
+        this.fulfillmentStatus = anyOutstanding
+                ? SaleFulfillmentStatus.IN_PROGRESS
+                : SaleFulfillmentStatus.READY_TO_COMPLETE;
     }
 
     public void addDetail(SaleDetail detail) {

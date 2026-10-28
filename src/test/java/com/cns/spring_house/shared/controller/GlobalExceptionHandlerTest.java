@@ -5,9 +5,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.util.Locale;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.dao.QueryTimeoutException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.transaction.TransactionTimedOutException;
 
 import com.cns.spring_house.shared.exception.EntityNotFoundException;
 import com.cns.spring_house.shared.exception.ValidationException;
@@ -73,6 +76,27 @@ class GlobalExceptionHandlerTest {
                 .isEqualTo("Ocurrió un error interno. Intenta nuevamente.");
         assertThat(problemDetail.getDetail()).doesNotContain(leaky.getMessage());
         assertHasNoInternals(problemDetail);
+    }
+
+    /**
+     * Una espera de cerrojo cancelada por el tope, un interbloqueo o el plazo de
+     * la transaccion vencido: la transaccion se deshizo entera, así que el
+     * cliente recibe un 409 que se puede reintentar, sin el SQL de la sentencia.
+     */
+    @Test
+    void dataHeldByAnotherOperationIsARetryableConflict() {
+        for (Exception busy : new Exception[] {
+            new QueryTimeoutException("ERROR: canceling statement due to user request; select * from sale for no key update"),
+            new CannotAcquireLockException("could not obtain lock on row in relation \"inventory\""),
+            new TransactionTimedOutException("Transaction timed out: deadline was Mon Oct 24"),
+        }) {
+            ProblemDetail problemDetail = handler.handleBusyDataException(busy);
+
+            assertThat(problemDetail.getStatus()).isEqualTo(HttpStatus.CONFLICT.value());
+            assertThat(problemDetail.getDetail()).isEqualTo(
+                    "Otra operación está usando estos datos en este momento. No se cambió nada; intenta nuevamente.");
+            assertHasNoInternals(problemDetail);
+        }
     }
 
     /**

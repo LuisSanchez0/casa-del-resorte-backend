@@ -1,6 +1,7 @@
 package com.cns.spring_house.sale.entity;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.UUID;
 
 import org.hibernate.annotations.UuidGenerator;
@@ -9,6 +10,8 @@ import com.cns.spring_house.inventory.entity.InventoryItem;
 import com.cns.spring_house.product.entity.Product;
 import com.cns.spring_house.workresult.entity.WorkResult;
 
+import jakarta.persistence.Column;
+import jakarta.persistence.Embedded;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
@@ -48,6 +51,12 @@ public class SaleDetail {
     @JoinColumn(name = "work_result_id")
     private WorkResult workResult;
     private Integer quantity;
+    /**
+     * Momento de alta de la linea. Lo pone la base (V42) y solo sirve para
+     * devolver las lineas siempre en el mismo orden.
+     */
+    @Column(insertable = false, updatable = false)
+    private LocalDateTime createdAt;
     private BigDecimal price;
     private BigDecimal subTotal;
     /**
@@ -89,6 +98,49 @@ public class SaleDetail {
      * mas generico que el nombre tecnico del producto.
      */
     private String invoiceDescription;
+    /**
+     * Indicaciones del vendedor para quien cumple la solicitud ("Instrucciones
+     * para el operador"). Son COMPLEMENTO, nunca sustituto: en una pieza manda
+     * la especificacion estructurada del producto pedido y en un servicio manda
+     * el Job; el texto solo aclara lo que esos datos no dicen.
+     */
+    private String instructions;
+    /**
+     * Lo que el vendedor decidio de los colochos de la pieza pedida: si lleva
+     * (true), si no lleva (false), o null si no se pregunto (linea anterior a
+     * la regla, o familia sin colochos). Ver {@code RequestedCurls}.
+     */
+    private Boolean requestedCurls;
+    /**
+     * Cuantos colochos pidio el vendedor (>= 1). Obligatorio en una linea nueva
+     * que lleva colochos; vacio solo en lineas guardadas antes de esa regla. La
+     * cantidad que registre el Operador no se escribe aqui: va en la pieza.
+     */
+    private Integer requestedCurlCount;
+    /**
+     * Null en una linea directa. En una solicitud a Control o al Operador, su
+     * ruta y su estado. Ver {@link Fulfillment}.
+     */
+    @Embedded
+    private Fulfillment fulfillment;
+
+    /** La linea se pidio al taller y no salio directamente del inventario. */
+    public boolean isRequest() {
+        return fulfillment != null && fulfillment.getStatus() != null;
+    }
+
+    /**
+     * Lo que impide facturar la venta: una solicitud que el taller todavia no ha
+     * cumplido. Una anulada no cuenta porque ya no es parte del pedido.
+     */
+    public boolean blocksCompletion() {
+        if (!isRequest()) {
+            return false;
+        }
+        FulfillmentStatus status = fulfillment.getStatus();
+        return status != FulfillmentStatus.FULFILLED
+                && status != FulfillmentStatus.CANCELLED;
+    }
 
     /**
      * Texto que debe aparecer en la factura. La descripcion alterna solo se usa si

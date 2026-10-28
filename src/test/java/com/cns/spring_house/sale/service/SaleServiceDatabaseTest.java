@@ -54,8 +54,10 @@ import com.cns.spring_house.role.repository.RoleRepository;
 import com.cns.spring_house.sale.dto.AddSaleDetailRequestDTO;
 import com.cns.spring_house.sale.dto.CancelSaleRequestDTO;
 import com.cns.spring_house.sale.dto.CompleteSaleRequestDTO;
+import com.cns.spring_house.sale.dto.DispatchSaleRequestDTO;
 import com.cns.spring_house.sale.dto.ExchangeInvoiceSummaryDTO;
 import com.cns.spring_house.sale.dto.RegisterPaymentRequestDTO;
+import com.cns.spring_house.sale.dto.ReleaseFulfillmentRequestDTO;
 import com.cns.spring_house.sale.dto.ReverseSaleRequestDTO;
 import com.cns.spring_house.sale.dto.SaleDetailResponseDTO;
 import com.cns.spring_house.sale.dto.SaleDetailWorkResultDTO;
@@ -105,6 +107,10 @@ class SaleServiceDatabaseTest {
 
     @Autowired
     private SaleRepository saleRepository;
+
+    /** Control: una pieza especial se entrega por la comanda, no desde la caja. */
+    @Autowired
+    private SaleFulfillmentService fulfillmentService;
 
     @Autowired
     private CustomerRepository customerRepository;
@@ -338,7 +344,8 @@ class SaleServiceDatabaseTest {
     /**
      * Venta abierta con NIT, como toda venta que la caja abria antes de V40:
      * las pruebas de esta clase miden stock, trabajos y cobro, que no dependen
-     * de la identidad fiscal; esa vive en SaleTaxModeDatabaseTest.
+     * de la identidad fiscal; esa vive en SaleTaxModeDatabaseTest. Lleva placa
+     * porque un servicio solo se solicita para un vehiculo.
      */
     private Sale openSale(Workshop workshop) {
         return saleRepository.save(Sale.builder()
@@ -348,6 +355,7 @@ class SaleServiceDatabaseTest {
                         .build()))
                 .workshop(workshop)
                 .employee(employee(workshop))
+                .plate("P123ABC")
                 .build());
     }
 
@@ -410,6 +418,31 @@ class SaleServiceDatabaseTest {
                 .build());
     }
 
+    /**
+     * Una pieza especial se pide sin unidad y se envia: el envio reserva la
+     * unidad disponible (SOLD, fuera del stock, costo FIFO tomado), que es lo
+     * que antes hacia agregarla eligiendo el item.
+     */
+    private UUID requestAndDispatchSpecial(
+            Sale sale, Product product, BigDecimal price, String invoiceDescription) {
+        SaleResponseDTO added = service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+                product.getId(), null, null, 1, price, invoiceDescription));
+        UUID line = added.details().stream()
+                .filter(detail -> detail.product().id().equals(product.getId()))
+                .reduce((first, second) -> second)
+                .orElseThrow()
+                .id();
+        service.dispatch(sale.getId(), new DispatchSaleRequestDTO(null));
+        return line;
+    }
+
+    /** ...y Control entrega la unidad reservada. */
+    private void releasedSpecial(
+            Sale sale, Product product, BigDecimal price, String invoiceDescription) {
+        UUID line = requestAndDispatchSpecial(sale, product, price, invoiceDescription);
+        fulfillmentService.release(line, new ReleaseFulfillmentRequestDTO(null));
+    }
+
     private SaleDetailResponseDTO onlyDetailOf(SaleResponseDTO sale) {
         assertThat(sale.details()).hasSize(1);
         return sale.details().get(0);
@@ -437,11 +470,13 @@ class SaleServiceDatabaseTest {
                 workshop, outputItem);
         Sale sale = openSale(workshop);
 
-        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
-                outputProduct.getId(), outputItem.getId(), workResult.getId(),
-                null, new BigDecimal("380.00"), "AMORTIGUADOR RECTIFICADO"));
+        // La pieza fabricada esta en stock: se pide y Control la entrega, y su
+        // trabajo queda en la linea al entregarla.
+        releasedSpecial(sale, outputProduct, new BigDecimal("380.00"), "AMORTIGUADOR RECTIFICADO");
         service.completeSale(sale.getId(), new CompleteSaleRequestDTO(
                 InvoiceType.INVOICE, PaymentMethod.CASH));
+        assertThat(statusOf(workResult)).isEqualTo(WorkResultStatus.SOLD);
+        assertThat(onlyDetailOf(service.get(sale.getId())).item().id()).isEqualTo(outputItem.getId());
 
         SaleDetailResponseDTO detail = onlyDetailOf(service.get(sale.getId()));
 
@@ -629,8 +664,9 @@ class SaleServiceDatabaseTest {
         Product specialProduct = product(FamilyCategory.SPECIAL);
         Inventory stock = inventory(workshop, specialProduct, 1);
         InventoryItem item = availableItem(stock);
-        // WorkResult valido y PENDING, pero de OTRO item: la validacion de origen
-        // lo rechaza despues de que el handler ya movio el inventario.
+        // WorkResult valido y PENDING, pero de OTRO item. Desde la comanda una
+        // pieza especial no se agrega senalando unidad ni trabajo: se rechaza
+        // ANTES de mover nada, y nada queda a medias.
         WorkResult foreignWorkResult = workResultRepository.save(
                 WorkResult.builder()
                         .workshop(workshop)
@@ -850,8 +886,9 @@ class SaleServiceDatabaseTest {
         Inventory stock = inventory(workshop, specialProduct, 1);
         InventoryItem item = availableItem(stock);
         Sale sale = openSale(workshop);
-        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
-                specialProduct.getId(), item.getId(), null, 1, null, null));
+        requestAndDispatchSpecial(sale, specialProduct, null, null);
+        assertThat(itemRepository.findById(item.getId()).orElseThrow().getStatus())
+                .isEqualTo(InventoryItemStatus.SOLD);
 
         service.cancel(sale.getId(), new CancelSaleRequestDTO("Motivo de prueba"));
 
@@ -980,8 +1017,7 @@ class SaleServiceDatabaseTest {
         Sale sale = openSale(workshop);
         service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
                 normalProduct.getId(), null, null, 3, null, null));
-        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
-                specialProduct.getId(), item.getId(), null, 1, null, null));
+        requestAndDispatchSpecial(sale, specialProduct, null, null);
 
         // Alguien devolvio la unidad por otra via: el handler de SPECIAL exige
         // encontrarla vendida y aborta la cancelacion.
@@ -1094,8 +1130,7 @@ class SaleServiceDatabaseTest {
         Inventory stock = inventory(workshop, specialProduct, 1);
         InventoryItem item = availableItem(stock);
         Sale sale = openSale(workshop);
-        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
-                specialProduct.getId(), item.getId(), null, 1, null, null));
+        releasedSpecial(sale, specialProduct, null, null);
         service.completeSale(sale.getId(), new CompleteSaleRequestDTO(
                 InvoiceType.INVOICE, PaymentMethod.CASH));
 
@@ -1259,15 +1294,21 @@ class SaleServiceDatabaseTest {
                 .containsExactly(firstRead.get(2));
     }
 
-    /** El resumen trae lo que la pantalla de caja necesita, ya cobrado o no. */
+    /**
+     * El resumen trae lo que la pantalla de caja necesita, ya cobrado o no.
+     *
+     * Factura un servicio YA EJECUTADO: desde la comanda, un servicio de
+     * catalogo sin trabajo hecho es una solicitud al Operador y no se puede
+     * facturar hasta que la cumpla (ver SaleFulfillmentDatabaseTest).
+     */
     @Test
     void theSummaryCarriesWhatTheDeskNeeds() {
         Workshop workshop = authenticatedWorkshop();
         Product jobProduct = product(FamilyCategory.JOB);
-        job(workshop, jobProduct);
+        WorkResult done = pendingJobWorkResult(workshop, jobProduct);
         Sale sale = openSale(workshop);
         service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
-                jobProduct.getId(), null, null, 1, new BigDecimal("1250.00"), null));
+                jobProduct.getId(), null, done.getId(), 1, new BigDecimal("1250.00"), null));
         service.completeSale(sale.getId(), new CompleteSaleRequestDTO(
                 InvoiceType.EXCHANGE_INVOICE, null));
 
@@ -1402,8 +1443,7 @@ class SaleServiceDatabaseTest {
         Inventory stock = inventory(workshop, specialProduct, 1);
         InventoryItem item = availableItem(stock);
         Sale sale = openSale(workshop);
-        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
-                specialProduct.getId(), item.getId(), null, 1, null, null));
+        releasedSpecial(sale, specialProduct, null, null);
         service.completeSale(sale.getId(), new CompleteSaleRequestDTO(
                 InvoiceType.EXCHANGE_INVOICE, null));
 
@@ -1628,8 +1668,9 @@ class SaleServiceDatabaseTest {
         InventoryItem item = availableItem(stock);
         Sale sale = openSale(workshop);
 
+        // Se pide sin unidad: el precio se fija al pedirla.
         service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
-                product.getId(), item.getId(), null, null,
+                product.getId(), null, null, null,
                 new BigDecimal("330.00"), null));
 
         assertThat(reload(sale).getDetails())

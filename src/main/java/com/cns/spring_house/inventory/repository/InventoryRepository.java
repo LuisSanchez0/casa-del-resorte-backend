@@ -175,4 +175,20 @@ public interface InventoryRepository
             @Param("workshopId") UUID workshopId,
             @Param("maxRows") int maxRows);
 
+
+    /**
+     * Existencias por producto para toda una cola de Control en UNA consulta,
+     * sin cerrojo: es informativo. Quien reserva de verdad es el envio de la
+     * comanda, que si bloquea el inventario.
+     */
+    @Query("""
+        SELECT inventory.product.id, inventory.stock
+        FROM Inventory inventory
+        WHERE inventory.workshop.id = :workshopId
+          AND inventory.product.id IN :productIds
+    """)
+    List<Object[]> findStockByProductIds(
+            @Param("workshopId") UUID workshopId,
+            @Param("productIds") java.util.Collection<UUID> productIds);
+
 }

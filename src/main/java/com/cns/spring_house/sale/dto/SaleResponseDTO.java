@@ -10,6 +10,7 @@ import com.cns.spring_house.employee.dto.EmployeeResponseDTO;
 import com.cns.spring_house.sale.entity.InvoiceType;
 import com.cns.spring_house.sale.entity.PaymentMethod;
 import com.cns.spring_house.sale.entity.PaymentStatus;
+import com.cns.spring_house.sale.entity.SaleFulfillmentStatus;
 import com.cns.spring_house.sale.entity.SaleStatus;
 import com.cns.spring_house.sale.entity.TaxMode;
 import com.cns.spring_house.workshop.dto.WorkshopResponseDTO;
@@ -53,7 +54,12 @@ public record SaleResponseDTO(
     LocalDateTime paidAt,
     LocalDateTime createdAt,
     /** Motivo/autor/fecha de la cancelacion o reversion; null si no aplica. */
-    SaleActionResponseDTO action
+    SaleActionResponseDTO action,
+    /**
+     * Preparacion del pedido en el taller (NONE / IN_PROGRESS /
+     * READY_TO_COMPLETE), independiente de `status`. Ver SaleFulfillmentStatus.
+     */
+    SaleFulfillmentStatus fulfillmentStatus
 
 ) {
 

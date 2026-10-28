@@ -203,4 +203,32 @@ class StrictIntegerCoercionConfigTest {
     void documentsThatNumericStringsAreStillAccepted() {
         assertThat(read("{\"units\":\"2\"}", AddStockRequestDTO.class).units()).isEqualTo(2);
     }
+
+    @Nested
+    @DisplayName("Colochos pedidos y fabricados")
+    class CurlCountFields {
+
+        @Test
+        void aWholeCountIsAccepted() {
+            assertThat(read("{\"product\":\"00000000-0000-0000-0000-000000000001\",\"requestedCurls\":true,\"requestedCurlCount\":4}",
+                    AddSaleDetailRequestDTO.class).requestedCurlCount()).isEqualTo(4);
+        }
+
+        @Test
+        void aFractionalCountIsRejectedOnEveryPath() {
+            assertThatThrownBy(() -> read(
+                    "{\"product\":\"00000000-0000-0000-0000-000000000001\",\"requestedCurls\":true,\"requestedCurlCount\":3.5}",
+                    AddSaleDetailRequestDTO.class))
+                    .isInstanceOf(MismatchedInputException.class);
+            assertThatThrownBy(() -> read(
+                    "{\"family\":\"00000000-0000-0000-0000-000000000001\",\"requestedCurls\":true,\"requestedCurlCount\":3.5}",
+                    com.cns.spring_house.sale.dto.RequestSpecificationDTO.class))
+                    .isInstanceOf(MismatchedInputException.class);
+            assertThatThrownBy(() -> read(
+                    "{\"inputItem\":\"00000000-0000-0000-0000-000000000001\",\"outputCurlCount\":3.5}",
+                    com.cns.spring_house.sale.dto.FulfillTransformationRequestDTO.class))
+                    .isInstanceOf(MismatchedInputException.class);
+        }
+    }
+
 }

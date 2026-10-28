@@ -1,5 +1,6 @@
 package com.cns.spring_house.shared.util;
 
+import java.text.Normalizer;
 import java.util.Locale;
 
 import lombok.AccessLevel;
@@ -40,6 +41,28 @@ public class LikePatterns {
      */
     public static String containsIgnoreCase(String value) {
         return "%" + escape(value.trim().toLowerCase(Locale.ROOT)) + "%";
+    }
+
+    /**
+     * Vocales acentuadas, dieresis, enie y cedilla, y su letra base en
+     * minusculas en la misma posicion. Las consultas las pasan a
+     * `translate(LOWER(...))`, de modo que "camion" encuentra "CAMIÓN", sin la
+     * extension `unaccent`, que esta base no tiene. Van tambien las mayusculas:
+     * con una base en locale C, `LOWER` solo baja las letras ASCII.
+     */
+    public static final String ACCENTED =
+            "áàâäãéèêëíìîïóòôöõúùûüñçÁÀÂÄÃÉÈÊËÍÌÎÏÓÒÔÖÕÚÙÛÜÑÇ";
+    public static final String UNACCENTED =
+            "aaaaaeeeeiiiiooooouuuuncaaaaaeeeeiiiiooooouuuunc";
+
+    /**
+     * Como {@link #containsIgnoreCase(String)}, y ademas sin acentos: para
+     * columnas comparadas con `translate(LOWER(...), ACCENTED, UNACCENTED)`.
+     */
+    public static String containsIgnoreCaseAndAccents(String value) {
+        String plain = Normalizer.normalize(value.trim(), Normalizer.Form.NFD)
+                .replaceAll("\\p{M}", "");
+        return "%" + escape(plain.toLowerCase(Locale.ROOT)) + "%";
     }
 
     private static String escape(String value) {

@@ -2,11 +2,9 @@ package com.cns.spring_house.product.service;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.springframework.data.jpa.domain.Specification;
@@ -19,12 +17,10 @@ import com.cns.spring_house.product.dto.SearchProductRequestDTO;
 import com.cns.spring_house.product.dto.UpdateProductRequestDTO;
 import com.cns.spring_house.shared.exception.EntityAlreadyExistsException;
 import com.cns.spring_house.shared.exception.EntityNotFoundException;
-import com.cns.spring_house.shared.exception.ValidationException;
 import com.cns.spring_house.product.mapper.ProductMapper;
 import com.cns.spring_house.family.entity.Attribute;
 import com.cns.spring_house.family.entity.AttributeDataType;
 import com.cns.spring_house.family.entity.Family;
-import com.cns.spring_house.family.service.HoleMeasurementValidator;
 import com.cns.spring_house.model.entity.Model;
 import com.cns.spring_house.product.entity.Product;
 import com.cns.spring_house.family.repository.FamilyRepository;
@@ -157,32 +153,7 @@ public class ProductServiceImpl implements ProductService {
     }
 
     private void validateAttributes(Family family, Map<String, Object> attributes) {
-        Map<String, Attribute> allowed = family.getAttributes()
-                .stream()
-                .collect(Collectors.toMap(Attribute::getName, Function.identity()));
-        Map<String, String> errors = new HashMap<>();
-        attributes.forEach((key, value) -> {
-            if (!allowed.containsKey(key)) {
-                errors.put(key, "Atributo no permitido");
-            }
-        });
-        allowed.forEach((key, attr) -> {
-            Object value = attributes.get(key);
-            if (value == null) {
-                if (attr.getIsRequired()
-                        && !HoleMeasurementValidator.ownsRequiredness(family, key)) {
-                    errors.put(key, "Es obligatorio");
-                }
-            } else if (!attr.getDataType().isValid(value)) {
-                errors.put(key, "Tipo inválido, se espera un " + attr.getDataType());
-            }
-        });
-        if (!errors.isEmpty()) {
-            throw new ValidationException("Error de validación", errors);
-        }
-        // Regla de medidas con orificio: solo actua si la familia declara el
-        // conjunto completo largo + tieneOrificio + largoIzquierdo + largoDerecho.
-        HoleMeasurementValidator.validate(family, attributes);
+        ProductAttributesValidator.validate(family, attributes);
     }
 
     /**

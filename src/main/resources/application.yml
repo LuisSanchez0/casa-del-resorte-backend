@@ -30,6 +30,9 @@ server:
 app:
   cors:
     origin: ${CLIENT_ORIGIN}
+  # Tope de una fabricacion del Operador: una espera de cerrojo no puede dejar la peticion colgada.
+  fulfillment:
+    transform-timeout-seconds: 10
 
 security:
   access-token:

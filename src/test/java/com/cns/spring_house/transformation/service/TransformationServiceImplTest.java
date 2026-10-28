@@ -3,6 +3,7 @@ package com.cns.spring_house.transformation.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -37,6 +38,7 @@ import com.cns.spring_house.transformation.dto.CreateTransformationRequestDTO;
 import com.cns.spring_house.transformation.entity.Transformation;
 import com.cns.spring_house.transformation.entity.TransformationItem;
 import com.cns.spring_house.transformation.entity.TransformationItemRole;
+import com.cns.spring_house.transformation.handler.CurlCountRequirement;
 import com.cns.spring_house.transformation.handler.TransformationHandler;
 import com.cns.spring_house.transformation.handler.TransformationHandlerRegistry;
 import com.cns.spring_house.transformation.mapper.TransformationMapper;
@@ -164,7 +166,7 @@ class TransformationServiceImplTest {
                     .role(TransformationItemRole.INPUT)
                     .build());
             return java.util.Set.of();
-        }).when(handler).generate(any(), any(), any());
+        }).when(handler).generate(any(), any(), any(), eq(CurlCountRequirement.REQUIRED));
         when(repository.save(any(Transformation.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -276,7 +278,7 @@ class TransformationServiceImplTest {
         service.create(new CreateTransformationRequestDTO(
                 inputItem.getId(), null, null, null, null, 2, null, null));
 
-        verify(handler).generate(any(), any(), any());
+        verify(handler).generate(any(), any(), any(), eq(CurlCountRequirement.REQUIRED));
     }
 
     @Test
@@ -397,7 +399,7 @@ class TransformationServiceImplTest {
                     .role(TransformationItemRole.INPUT)
                     .build());
             return java.util.Set.of();
-        }).when(handler).generate(any(), any(), any());
+        }).when(handler).generate(any(), any(), any(), eq(CurlCountRequirement.REQUIRED));
         when(repository.save(any(Transformation.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 

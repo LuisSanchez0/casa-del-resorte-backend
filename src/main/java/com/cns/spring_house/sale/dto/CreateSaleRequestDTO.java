@@ -1,6 +1,5 @@
 package com.cns.spring_house.sale.dto;
 
-import java.util.Locale;
 import java.util.UUID;
 
 import com.cns.spring_house.sale.entity.TaxMode;
@@ -52,9 +51,7 @@ public record CreateSaleRequestDTO(
      * UNRESOLVED el servicio rechaza.
      */
     public CreateSaleRequestDTO {
-        plate = plate == null || plate.isBlank()
-                ? null
-                : plate.trim().toUpperCase(Locale.ROOT);
+        plate = SalePlates.normalize(plate);
         customerName = SaleNames.normalize(customerName);
     }
 

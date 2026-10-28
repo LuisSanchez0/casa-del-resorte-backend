@@ -75,6 +75,12 @@ public interface WorkResultRepository
 
     boolean existsByItemId(UUID itemId);
 
+    /** El trabajo que una transformacion creo para su pieza de salida. */
+    Optional<WorkResult> findByItemId(UUID itemId);
+
+    /** El trabajo que un servicio ejecutado creo. */
+    Optional<WorkResult> findByJobLogId(UUID jobLogId);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("""
         SELECT workResult

@@ -86,6 +86,16 @@ public class SpecialTransformationHandler implements TransformationHandler {
             Transformation transformation,
             InventoryItem inputItem,
             CreateTransformationRequestDTO requestDTO) {
+        return generate(transformation, inputItem, requestDTO, CurlCountRequirement.REQUIRED);
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    @Override
+    public Set<UUID> generate(
+            Transformation transformation,
+            InventoryItem inputItem,
+            CreateTransformationRequestDTO requestDTO,
+            CurlCountRequirement curlCountRequirement) {
         Product inputProduct = inputItem.getInventory().getProduct();
         // La compatibilidad de familia se decide ANTES que nada: es la
         // comprobacion mas basica —si la pieza no puede llegar a ser eso, el
@@ -101,9 +111,13 @@ public class SpecialTransformationHandler implements TransformationHandler {
                 && TransformationFamilyCompatibility.isCrossFamily(
                         inputProduct.getFamily(), selectedProduct.getFamily());
         boolean supportsCurlCount = supportsCurlCount(inputProduct.getFamily());
-        validateCurlCountSupport(supportsCurlCount, crossFamily, requestDTO);
-        Map<String, Object> outputAttributes =
-                resolveOutputAttributes(inputProduct, selectedProduct, requestDTO);
+        boolean comanda = curlCountRequirement == CurlCountRequirement.AS_REQUESTED;
+        // Solo una pieza pedida —con producto de salida— puede dejar los colochos
+        // sin indicar: es ese producto el que dice si los fija o no.
+        boolean curlCountAsRequested = comanda && selectedProduct != null;
+        validateCurlCountSupport(supportsCurlCount, crossFamily, curlCountAsRequested, requestDTO);
+        Map<String, Object> outputAttributes = resolveOutputAttributes(
+                inputProduct, selectedProduct, curlCountAsRequested, requestDTO);
         // Una pieza puede conservar o perder largo, nunca ganarlo. Va ANTES que
         // la regla de orificio a proposito: si el resultado ni siquiera cabe en
         // la pieza de entrada, ese es el problema que hay que contar, y no que
@@ -121,17 +135,21 @@ public class SpecialTransformationHandler implements TransformationHandler {
         validateHoleMeasurements(inputProduct, selectedProduct, outputAttributes);
         Optional<Double> remainderLength =
                 resolveRemainderLength(inputProduct, outputAttributes);
+        Integer remainderCurlCount = comanda
+                ? comandaRemainderCurlCount(
+                        supportsCurlCount, remainderLength.isPresent(), requestDTO.remainderCurlCount())
+                : requestDTO.remainderCurlCount();
         validateRemainderCurlCount(
                 supportsCurlCount,
                 remainderLength.isPresent(),
-                requestDTO.remainderCurlCount());
+                remainderCurlCount);
 
         Set<UUID> createdInventoryIds = new HashSet<>();
         transformation.addItem(generateOutputItem(
                 inputItem, selectedProduct, outputAttributes, requestDTO.outputName(), createdInventoryIds));
         remainderLength
                 .map(length -> generateRemainder(
-                        inputProduct, length, requestDTO.remainderCurlCount(), createdInventoryIds))
+                        inputProduct, length, remainderCurlCount, createdInventoryIds))
                 .ifPresent(transformation::addItem);
         transformation.addItem(processInputItem(inputItem));
         return Set.copyOf(createdInventoryIds);
@@ -238,6 +256,23 @@ public class SpecialTransformationHandler implements TransformationHandler {
         }
     }
 
+    /**
+     * En una comanda el sobrante vuelve al inventario SIN colochos: cero, que
+     * es como el dominio dice "sin colochos", y no un valor ausente. Nadie lo
+     * escribe: el Operador fabrica lo pedido y el sobrante no es de la venta.
+     * Sin sobrante no hay nada que clasificar, y en una familia sin colochos el
+     * sobrante sigue como siempre. La transformacion manual no pasa por aqui:
+     * ahi el operador sigue indicandolos.
+     */
+    private Integer comandaRemainderCurlCount(
+            boolean supportsCurlCount, boolean hasRemainder, Integer requested) {
+        if (requested != null && requested != 0) {
+            throw new ValidationException(
+                    "En una comanda el sobrante vuelve al inventario sin colochos");
+        }
+        return supportsCurlCount && hasRemainder ? 0 : null;
+    }
+
     private TransformationItem processInputItem(InventoryItem inputItem) {
         inputItem.setStatus(InventoryItemStatus.CONSUMED);
         inputItem.getInventory().removeStock(1);
@@ -276,10 +311,15 @@ public class SpecialTransformationHandler implements TransformationHandler {
      * petición. `outputCurlCount` se aplica el último en ambos: es la única
      * fuente de la cantidad de colochos, de modo que elegir un producto
      * existente no obliga a que ya tenga la cantidad deseada.
+     *
+     * Con los colochos {@link CurlCountRequirement#AS_REQUESTED} y sin cantidad
+     * indicada, la pieza resultante lleva los del producto pedido o ninguno:
+     * los de la ENTRADA no se heredan, porque nadie los decidio para esta pieza.
      */
     private Map<String, Object> resolveOutputAttributes(
             Product inputProduct,
             Product selectedProduct,
+            boolean curlCountAsRequested,
             CreateTransformationRequestDTO requestDTO) {
         Map<String, Object> attributes = selectedProduct != null
                 ? resolveSelectedAttributes(inputProduct, selectedProduct)
@@ -289,8 +329,18 @@ public class SpecialTransformationHandler implements TransformationHandler {
                     attributes,
                     resolveCurlCountKey(inputProduct.getFamily()),
                     requestDTO.outputCurlCount());
+        } else if (curlCountAsRequested && !declaresCurlCount(selectedProduct.getAttributes())) {
+            attributes.keySet().removeIf(key -> key != null
+                    && key.equalsIgnoreCase(CURL_COUNT_ATTRIBUTE));
         }
         return attributes;
+    }
+
+    private boolean declaresCurlCount(Map<String, Object> attributes) {
+        return attributes != null && attributes.entrySet().stream()
+                .anyMatch(entry -> entry.getKey() != null
+                        && entry.getKey().equalsIgnoreCase(CURL_COUNT_ATTRIBUTE)
+                        && entry.getValue() != null);
     }
 
     /**
@@ -563,9 +613,16 @@ public class SpecialTransformationHandler implements TransformationHandler {
      * exige siempre: `0` significa sin colochos y omitirla dejaría una tercera
      * lectura implícita ("conservar lo que trajera la entrada") que el operador
      * nunca decidió. Cuando no los maneja, configurarlos no tiene sentido.
+     *
+     * La excepción es la pieza pedida en una venta
+     * ({@link CurlCountRequirement#AS_REQUESTED}): ahí la cantidad la decide el
+     * producto pedido, y si el vendedor no la especificó no se le exige al
+     * operador inventarla. La tercera lectura implícita tampoco aparece: sin
+     * cantidad, la pieza resultante queda sin colochos registrados (ver
+     * `resolveOutputAttributes`), no con los de la entrada.
      */
     private void validateCurlCountSupport(
-            boolean supportsCurlCount, boolean crossFamily,
+            boolean supportsCurlCount, boolean crossFamily, boolean curlCountAsRequested,
             CreateTransformationRequestDTO requestDTO) {
         // Cambiando de familia, la pieza resultante ES el producto elegido: su
         // cantidad de colochos es la que ese producto ya tiene guardada, igual
@@ -586,7 +643,7 @@ public class SpecialTransformationHandler implements TransformationHandler {
             return;
         }
         if (supportsCurlCount) {
-            if (requestDTO.outputCurlCount() == null) {
+            if (requestDTO.outputCurlCount() == null && !curlCountAsRequested) {
                 throw new ValidationException(
                         "Debes indicar la cantidad de colochos de la pieza resultante");
             }
@@ -666,24 +723,8 @@ public class SpecialTransformationHandler implements TransformationHandler {
      */
     private Optional<Double> resolveRemainderLength(
             Product inputProduct, Map<String, Object> outputAttributes) {
-        Map<String, Object> inputAttributes = inputProduct.getAttributes();
-        boolean hasHole = Boolean.TRUE.equals(
-                getBooleanAttribute(inputAttributes, HOLE_ATTRIBUTE));
-        if (hasHole) {
-            return Optional.empty();
-        }
-        Double inputLength = getNumericAttribute(
-                inputAttributes, LENGTH_ATTRIBUTE);
-        Double outputLength = getNumericAttribute(
-                outputAttributes, LENGTH_ATTRIBUTE);
-        if (inputLength == null || outputLength == null) {
-            return Optional.empty();
-        }
-        double difference = (inputLength - outputLength);
-        if (difference < inputLength / 2) {
-            return Optional.empty();
-        }
-        return Optional.of(difference);
+        return SpecialPieceRules.remainderLength(
+                inputProduct.getAttributes(), outputAttributes);
     }
 
     /**
@@ -846,18 +887,7 @@ public class SpecialTransformationHandler implements TransformationHandler {
      * ("PRODUCTO RESULTANTE"), lo que las hacía indistinguibles en el catálogo.
      */
     private String buildGeneratedName(Family family, Map<String, Object> attributes) {
-        Double length = getNumericAttribute(attributes, LENGTH_ATTRIBUTE);
-        String base = family.getName() == null ? "PRODUCTO RESULTANTE" : family.getName();
-
-        if (length == null) {
-            return base;
-        }
-
-        String formattedLength = length == Math.rint(length)
-                ? String.valueOf((long) (double) length)
-                : String.valueOf((double) length);
-
-        return base + " " + formattedLength;
+        return SpecialPieceRules.generatedName(family, attributes);
     }
 
     /**
@@ -867,11 +897,7 @@ public class SpecialTransformationHandler implements TransformationHandler {
      * de familia + modelo + atributos (findTargetProduct).
      */
     private String buildGeneratedSku() {
-        return "AUTO-" + UUID.randomUUID()
-                .toString()
-                .replace("-", "")
-                .substring(0, 12)
-                .toUpperCase();
+        return SpecialPieceRules.generatedSku();
     }
 
     /**

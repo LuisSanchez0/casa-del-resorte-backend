@@ -252,42 +252,37 @@ class SaleServiceImplTest {
         assertThat(detail.getWorkResult()).isEqualTo(workResult);
     }
 
+    /**
+     * La unidad fisica de una pieza especial la decide Control: la caja no
+     * puede senalarla, ni directamente ni como salida de un trabajo. El rechazo
+     * ocurre antes de tocar el inventario o el trabajo.
+     */
     @Test
-    void addDetailValidatesTheItemOfTheDetailAgainstTheWorkResult() {
+    void addDetailRejectsChoosingThePhysicalUnitOfASpecialPiece() {
         Product specialProduct = product(FamilyCategory.SPECIAL);
-        InventoryItem item = InventoryItem.builder()
-                .id(UUID.randomUUID())
-                .build();
-        UUID workResultId = UUID.randomUUID();
+        UUID itemId = UUID.randomUUID();
         Sale sale = Sale.builder()
                 .customer(registeredCustomer)
                 .id(UUID.randomUUID())
                 .workshop(workshop)
                 .build();
-        SaleDetail detail = SaleDetail.builder()
-                .product(specialProduct)
-                .item(item)
-                .subTotal(BigDecimal.TEN)
-                .build();
-        AddSaleDetailRequestDTO requestDTO = new AddSaleDetailRequestDTO(
-                specialProduct.getId(), item.getId(), workResultId, 1, null, null);
 
         when(repository.findByIdAndWorkshopId(sale.getId(), workshopId))
                 .thenReturn(Optional.of(sale));
         when(productRepository.findById(specialProduct.getId()))
                 .thenReturn(Optional.of(specialProduct));
-        when(registry.get(FamilyCategory.SPECIAL)).thenReturn(handler);
-        doAnswer(invocation -> {
-            sale.addDetail(detail);
-            return detail;
-        }).when(handler).addDetail(sale, requestDTO);
-        when(workResultService.resolvePending(
-                workResultId, specialProduct.getId(), item.getId()))
-                .thenThrow(new ValidationException(
-                        "El trabajo pendiente no corresponde al item vendido"));
 
-        assertThatThrownBy(() -> service.addDetail(sale.getId(), requestDTO))
-                .isInstanceOf(ValidationException.class);
+        assertThatThrownBy(() -> service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+                specialProduct.getId(), itemId, null, 1, null, null)))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("Control entrega la unidad");
+        assertThatThrownBy(() -> service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+                specialProduct.getId(), itemId, UUID.randomUUID(), 1, null, null)))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("Control entrega la unidad");
+
+        verify(registry, never()).get(any());
+        verify(workResultService, never()).resolvePending(any(), any(), any());
         verify(repository, never()).save(any());
     }
 

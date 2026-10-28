@@ -76,7 +76,7 @@ class SaleExchangeInvoiceControllerTest {
                 id, null, TaxMode.CF, null, null, false, null, null, "P123ABC", List.of(),
                 SaleStatus.COMPLETED, InvoiceType.EXCHANGE_INVOICE,
                 paymentStatus, paymentMethod, new BigDecimal("1250.00"),
-                null, null, null, null);
+                null, null, null, null, null);
     }
 
     private ExchangeInvoiceSummaryDTO summary(
@@ -263,7 +263,7 @@ class SaleExchangeInvoiceControllerTest {
         when(service.cancel(any(), any())).thenReturn(new SaleResponseDTO(
                 saleId, null, TaxMode.CF, null, null, false, null, null, "P123ABC", List.of(),
                 SaleStatus.CANCELLED, null, PaymentStatus.PENDING, null,
-                new BigDecimal("150.00"), null, null, null, null));
+                new BigDecimal("150.00"), null, null, null, null, null));
 
         mockMvc.perform(post("/v1/sales/" + saleId + "/cancel")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -326,7 +326,7 @@ class SaleExchangeInvoiceControllerTest {
                 saleId, null, TaxMode.CF, null, null, false, null, null, "P123ABC", List.of(),
                 SaleStatus.REVERSED, InvoiceType.INVOICE, PaymentStatus.PAID,
                 PaymentMethod.CASH, new BigDecimal("150.00"),
-                null, null, null, null));
+                null, null, null, null, null));
 
         mockMvc.perform(post("/v1/sales/" + saleId + "/reverse")
                         .contentType(MediaType.APPLICATION_JSON)

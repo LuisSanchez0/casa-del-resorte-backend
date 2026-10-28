@@ -16,9 +16,12 @@ import com.cns.spring_house.sale.dto.AddSaleDetailRequestDTO;
 import com.cns.spring_house.sale.dto.CancelSaleRequestDTO;
 import com.cns.spring_house.sale.dto.CompleteSaleRequestDTO;
 import com.cns.spring_house.sale.dto.CreateSaleRequestDTO;
+import com.cns.spring_house.sale.dto.DispatchSaleRequestDTO;
+import com.cns.spring_house.sale.dto.RequestSpecificationDTO;
 import com.cns.spring_house.sale.dto.ExchangeInvoiceSummaryDTO;
 import com.cns.spring_house.sale.dto.RegisterPaymentRequestDTO;
 import com.cns.spring_house.sale.dto.SaveForLaterRequestDTO;
+import com.cns.spring_house.sale.dto.UpdateRequestPriceDTO;
 import com.cns.spring_house.sale.dto.ReverseSaleRequestDTO;
 import com.cns.spring_house.sale.dto.SaleDashboardResponseDTO;
 import com.cns.spring_house.sale.dto.SaleResponseDTO;
@@ -136,6 +139,63 @@ public class SaleController {
         return ResponseEntity
                 .status(HttpStatus.OK)
                 .body(sale);
+    }
+
+    /**
+     * "Ventas listas para completar": pedidos abiertos cuyo trabajo en el
+     * taller ya termino. `q` busca por nombre, NIT o placa.
+     */
+    @PreAuthorize("hasRole('SELLER')")
+    @GetMapping("/ready")
+    public ResponseEntity<List<SaleResponseDTO>> getReady(
+            @RequestParam(required = false) String q) {
+        return ResponseEntity
+                .status(HttpStatus.OK)
+                .body(service.getReady(q));
+    }
+
+    /**
+     * "Solicitar con estas caracteristicas": una pieza especial que todavia no
+     * existe en el catalogo, descrita por familia, modelo y caracteristicas.
+     */
+    @PreAuthorize("hasRole('SELLER')")
+    @PostMapping("/{id}/request-specification")
+    public ResponseEntity<SaleResponseDTO> requestSpecification(
+            @PathVariable UUID id,
+            @RequestBody @Valid RequestSpecificationDTO requestDTO) {
+        return ResponseEntity
+                .status(HttpStatus.OK)
+                .body(service.requestSpecification(id, requestDTO));
+    }
+
+    /**
+     * "Enviar comanda". Solo el vendedor: es quien toma el pedido y quien
+     * responde por lo que se le prometio al cliente. Control y el Operador
+     * cumplen solicitudes, no las crean.
+     */
+    @PreAuthorize("hasRole('SELLER')")
+    @PostMapping("/{id}/dispatch")
+    public ResponseEntity<SaleResponseDTO> dispatch(
+            @PathVariable UUID id,
+            @RequestBody(required = false) @Valid DispatchSaleRequestDTO requestDTO) {
+        return ResponseEntity
+                .status(HttpStatus.OK)
+                .body(service.dispatch(id,
+                        requestDTO == null ? new DispatchSaleRequestDTO(null) : requestDTO));
+    }
+
+    /**
+     * Revision del precio de una solicitud. Solo el vendedor —y Administracion—
+     * decide importes: Control y el Operador cumplen, no cobran.
+     */
+    @PreAuthorize("hasAnyRole('SELLER', 'ADMIN')")
+    @PostMapping("/{saleDetailId}/update-price")
+    public ResponseEntity<SaleResponseDTO> updateRequestPrice(
+            @PathVariable UUID saleDetailId,
+            @RequestBody @Valid UpdateRequestPriceDTO requestDTO) {
+        return ResponseEntity
+                .status(HttpStatus.OK)
+                .body(service.updateRequestPrice(saleDetailId, requestDTO));
     }
 
     @PostMapping("/{saleDetailId}/remove-detail")

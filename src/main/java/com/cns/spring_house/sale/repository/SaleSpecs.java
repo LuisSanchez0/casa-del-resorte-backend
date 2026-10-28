@@ -11,6 +11,7 @@ import com.cns.spring_house.customer.entity.Customer;
 import com.cns.spring_house.sale.entity.InvoiceType;
 import com.cns.spring_house.sale.entity.PaymentStatus;
 import com.cns.spring_house.sale.entity.Sale;
+import com.cns.spring_house.sale.entity.SaleFulfillmentStatus;
 import com.cns.spring_house.sale.entity.SaleStatus;
 
 import jakarta.persistence.criteria.Join;
@@ -144,6 +145,14 @@ public class SaleSpecs {
                 : criteriaBuilder.equal(
                         root.get("workshop").get("id"),
                         workshop);
+    }
+
+    /** Preparacion del pedido en el taller. Null no filtra. */
+    public static Specification<Sale> hasFulfillmentStatus(
+            SaleFulfillmentStatus fulfillmentStatus) {
+        return (root, query, criteriaBuilder) -> fulfillmentStatus == null
+                ? null
+                : criteriaBuilder.equal(root.get("fulfillmentStatus"), fulfillmentStatus);
     }
 
     public static Specification<Sale> hasStatus(SaleStatus status) {

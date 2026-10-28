@@ -25,7 +25,21 @@ public record SaleDetailResponseDTO(
      * producto y el item de la linea son los mismos campos que llena cualquier
      * venta SPECIAL. Ver {@link SaleDetailWorkResultDTO}.
      */
-    SaleDetailWorkResultDTO workResult
+    SaleDetailWorkResultDTO workResult,
+    /** Indicaciones del vendedor para Control u Operador; null si no hay. */
+    String instructions,
+    /**
+     * Si la pieza pedida lleva colochos, tal como lo decidio el vendedor; null
+     * si no se pregunto (linea anterior a la regla o familia sin colochos).
+     */
+    Boolean requestedCurls,
+    /** Cuantos pidio el vendedor; null si no los fijo o la pieza no lleva. */
+    Integer requestedCurlCount,
+    /**
+     * Ruta y estado de la linea en el taller. Null en una linea directa, que
+     * salio del inventario al agregarla o respalda un trabajo ya hecho.
+     */
+    SaleDetailFulfillmentDTO fulfillment
 
 ) {
 
