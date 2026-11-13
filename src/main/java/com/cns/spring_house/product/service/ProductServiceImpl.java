@@ -24,7 +24,7 @@ import com.cns.spring_house.family.entity.Family;
 import com.cns.spring_house.model.entity.Model;
 import com.cns.spring_house.product.entity.Product;
 import com.cns.spring_house.family.repository.FamilyRepository;
-import com.cns.spring_house.model.repository.ModelRepository;
+import com.cns.spring_house.model.service.CatalogSelection;
 import com.cns.spring_house.product.repository.ProductRepository;
 import com.cns.spring_house.product.repository.ProductSpecs;
 
@@ -38,7 +38,11 @@ public class ProductServiceImpl implements ProductService {
     private final ProductRepository repository;
     private final ProductMapper mapper;
     private final FamilyRepository familyRepository;
-    private final ModelRepository modelRepository;
+    /**
+     * Un modelo NUEVO para el producto tiene que estar vigente, el y su marca.
+     * El que ya tenia se conserva aunque se haya eliminado: es su historial.
+     */
+    private final CatalogSelection catalogSelection;
 
     @Override
     public ProductResponseDTO get(UUID id) {
@@ -88,11 +92,7 @@ public class ProductServiceImpl implements ProductService {
         Product product = mapper.toProduct(requestDTO);
         product.setFamily(family);
         if (product.getFamily().getRequiresModel()) {
-            Model model = modelRepository
-                    .findById(requestDTO.model())
-                    .orElseThrow(() -> new EntityNotFoundException(
-                            "No existe el modelo especificado"));
-            product.setModel(model);
+            product.setModel(catalogSelection.requireSelectableModel(requestDTO.model()));
         }
         product = repository.save(product);
         return mapper.toResponse(product);
@@ -143,13 +143,12 @@ public class ProductServiceImpl implements ProductService {
         if (modelId == null) {
             return;
         }
+        // El mismo modelo que ya tenia no es una eleccion nueva: se conserva
+        // aunque se haya eliminado, sin vaciarlo ni sustituirlo en silencio.
         if (currentModel != null && modelId.equals(currentModel.getId())) {
             return;
         }
-        Model model = modelRepository.findById(modelId)
-                .orElseThrow(() -> new EntityNotFoundException(
-                        "No existe el modelo especificado"));
-        product.setModel(model);
+        product.setModel(catalogSelection.requireSelectableModel(modelId));
     }
 
     private void validateAttributes(Family family, Map<String, Object> attributes) {

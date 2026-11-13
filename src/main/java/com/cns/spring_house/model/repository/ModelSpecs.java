@@ -13,6 +13,17 @@ public class ModelSpecs {
 
     }
 
+    /**
+     * Solo los ELEGIBLES: el modelo y su marca vigentes. Los modelos de una
+     * marca eliminada desaparecen con ella sin perder su propio estado. Es un
+     * INNER JOIN a la marca, que `model.brand_id NOT NULL` ya garantiza.
+     */
+    public static Specification<Model> isSelectable() {
+        return (root, query, criteriaBuilder) -> criteriaBuilder.and(
+                criteriaBuilder.isNull(root.get("deletedAt")),
+                criteriaBuilder.isNull(root.join("brand").get("deletedAt")));
+    }
+
     public static Specification<Model> hasBrand(UUID brand) {
         return (root, query, criteriaBuilder) -> brand == null ? null
                 : criteriaBuilder.equal(root.get("brand").get("id"), brand);

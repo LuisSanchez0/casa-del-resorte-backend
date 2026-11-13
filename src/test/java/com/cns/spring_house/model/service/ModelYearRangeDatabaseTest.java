@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.time.Clock;
 import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -78,7 +79,8 @@ class ModelYearRangeDatabaseTest {
     @BeforeEach
     void setUp() {
         service = new ModelServiceImpl(
-                new ModelMapperImpl(), repository, brandRepository);
+                new ModelMapperImpl(), repository,
+                new CatalogSelection(repository, brandRepository), Clock.systemUTC());
         brand = entityManager.persistAndFlush(Brand.builder()
                 .name("MARCA " + unique())
                 .logoKey("logo.png")

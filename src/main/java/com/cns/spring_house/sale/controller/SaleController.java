@@ -207,6 +207,17 @@ public class SaleController {
                 .body(sale);
     }
     
+    /**
+     * Emite el documento con la identidad fiscal DEFINITIVA: NIT o CF se
+     * eligen o corrigen aqui, en la misma transaccion que emite (ver
+     * {@link SaleService#completeSale}). Despues de emitir ya no se reescriben.
+     *
+     * Restringido a SELLER por la misma razon que {@link #reverse}: emitir una
+     * factura normal cobra, y fijar a quien se factura es responsabilidad de
+     * quien atiende la caja. Antes cualquier rol autenticado del taller podia
+     * emitir una venta y elegir su NIT llamando a la API directamente.
+     */
+    @PreAuthorize("hasRole('SELLER')")
     @PostMapping("/{id}/complete")
     public ResponseEntity<SaleResponseDTO> complete(
             @PathVariable UUID id,
@@ -268,8 +279,7 @@ public class SaleController {
      *
      * Revertir dejo de ser una correccion de inventario en el momento en que
      * puede llevar una devolucion de dinero: quien revierte puede sacar
-     * efectivo del cajon. Por eso este metodo —y solo este de todo el
-     * controlador— esta restringido por rol.
+     * efectivo del cajon. Por eso este metodo esta restringido por rol.
      *
      * SELLER es quien atiende la caja: su modulo tiene la pantalla `Caja`, es
      * quien completa las ventas, quien cobra las cambiarias y quien, por tanto,

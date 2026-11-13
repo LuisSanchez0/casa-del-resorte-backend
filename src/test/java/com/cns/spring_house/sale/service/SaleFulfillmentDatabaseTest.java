@@ -50,6 +50,8 @@ import com.cns.spring_house.brand.entity.Brand;
 import com.cns.spring_house.brand.repository.BrandRepository;
 import com.cns.spring_house.cashclosure.dto.CashClosureResponseDTO;
 import com.cns.spring_house.cashclosure.service.CashClosureService;
+import com.cns.spring_house.customer.entity.Customer;
+import com.cns.spring_house.customer.repository.CustomerRepository;
 import com.cns.spring_house.dashboard.dto.ProductPerformanceDTO;
 import com.cns.spring_house.dashboard.service.AdminDashboardService;
 import com.cns.spring_house.employee.entity.Employee;
@@ -212,6 +214,15 @@ class SaleFulfillmentDatabaseTest {
 
     @Autowired
     private JobRepository jobRepository;
+
+    @Autowired
+    private CustomerRepository customerRepository;
+
+    @Autowired
+    private com.cns.spring_house.brand.service.BrandService brandService;
+
+    @Autowired
+    private com.cns.spring_house.model.service.ModelService modelService;
 
     @Autowired
     private JdbcTemplate jdbc;
@@ -3789,6 +3800,371 @@ class SaleFulfillmentDatabaseTest {
                 "SELECT attributes ->> 'cantidadColochos' FROM product WHERE id = ?", String.class, productId);
     }
 
+
+    // ── Marca y modelo eliminados: el historial comercial no cambia ──
+
+    /**
+     * Eliminar el modelo y la marca de una pieza ya vendida no toca NADA de lo
+     * vendido: las filas de la venta, de sus lineas y del producto quedan
+     * identicas, y el documento se sigue leyendo con sus nombres. La pieza que
+     * queda en stock se sigue vendiendo —no se elimino ningun producto—; lo
+     * unico que ya no se puede es pedir una pieza NUEVA con ese modelo.
+     */
+    @Test
+    void deletingTheBrandAndModelOfASoldPieceLeavesTheSaleIntactAndOnlyBlocksNewSpecifications() {
+        Shop shop = shop();
+        Product leaf = leaf(shop, 150, 2);
+        stocked(shop, leaf, 2);
+
+        as(shop.seller());
+        SaleResponseDTO sale = saleService.addDetail(
+                openUnresolvedSale("Historial").id(), specialRequest(leaf, 1, null));
+        UUID line = onlyLine(sale).id();
+        saleService.dispatch(sale.id(), new DispatchSaleRequestDTO(null));
+        as(shop.control());
+        fulfillmentService.release(line, new ReleaseFulfillmentRequestDTO(null));
+        as(shop.seller());
+        UUID issued = completeAsCf(sale.id()).id();
+        String detailRows = "SELECT * FROM sale_detail WHERE sale_id = ? ORDER BY id";
+        List<Map<String, Object>> detailsBefore = jdbc.queryForList(detailRows, issued);
+        Map<String, Object> saleBefore = jdbc.queryForMap("SELECT * FROM sale WHERE id = ?", issued);
+        Map<String, Object> productBefore = jdbc.queryForMap("SELECT * FROM product WHERE id = ?", leaf.getId());
+        // La existencia y sus unidades —la vendida y la que queda— tampoco cambian.
+        String stockRows = "SELECT * FROM inventory WHERE product_id = ? ORDER BY id";
+        String unitRows = """
+                SELECT item.* FROM inventory_item item JOIN inventory i ON i.id = item.inventory_id
+                WHERE i.product_id = ? ORDER BY item.id""";
+        List<Map<String, Object>> stockBefore = jdbc.queryForList(stockRows, leaf.getId());
+        List<Map<String, Object>> unitsBefore = jdbc.queryForList(unitRows, leaf.getId());
+        assertThat(unitsBefore).hasSize(2);
+
+        modelService.delete(shop.model().getId());
+        brandService.delete(shop.model().getBrand().getId());
+
+        assertThat(jdbc.queryForList(detailRows, issued)).isEqualTo(detailsBefore);
+        assertThat(jdbc.queryForMap("SELECT * FROM sale WHERE id = ?", issued)).isEqualTo(saleBefore);
+        assertThat(jdbc.queryForMap("SELECT * FROM product WHERE id = ?", leaf.getId())).isEqualTo(productBefore);
+        assertThat(jdbc.queryForList(stockRows, leaf.getId())).isEqualTo(stockBefore);
+        assertThat(jdbc.queryForList(unitRows, leaf.getId())).isEqualTo(unitsBefore);
+        SaleDetailResponseDTO document = onlyLine(saleService.get(issued));
+        assertThat(document.product().model().name()).isEqualTo(shop.model().getName());
+        assertThat(document.product().model().deleted()).isTrue();
+        assertThat(document.product().model().brand().name()).isEqualTo(shop.model().getBrand().getName());
+        assertThat(document.product().model().brand().deleted()).isTrue();
+
+        SaleResponseDTO next = saleService.addDetail(
+                openUnresolvedSale("Stock").id(), specialRequest(leaf, 1, null));
+        assertThat(onlyLine(next).product().id()).isEqualTo(leaf.getId());
+
+        UUID nextId = next.id();
+        long catalog = products();
+        assertThatThrownBy(() -> saleService.requestSpecification(nextId, new RequestSpecificationDTO(
+                seededFamily("HR").getId(), shop.model().getId(),
+                attributes("largo", 91, "tieneOrificio", false, "cantidadColochos", 1),
+                1, PRICE, null, null)))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("modelo seleccionado fue eliminado");
+        assertThat(products()).isEqualTo(catalog);
+    }
+
+    // ── Facturacion al finalizar: NIT o CF se decide en la caja ──
+    //
+    // Abrir una venta sin NIT no la deja a Consumidor Final para siempre: la
+    // identidad fiscal se elige —o se corrige— en la MISMA peticion que emite,
+    // con la venta bloqueada, y queda congelada al emitir. Antes de eso nada la
+    // fija; despues nada la reescribe.
+
+    /** El caso del mostrador: se abrio sin NIT y, al cobrar, el cliente pide factura con NIT. */
+    @Test
+    void aSaleOpenedWithoutNitIsIssuedWithTheNitTheCustomerAsksForAtCheckout() {
+        Shop shop = shop();
+        Customer customer = customer("PEDRO");
+
+        as(shop.seller());
+        SaleResponseDTO ready = readyMixedOrder(shop, openUnresolvedSale("Pedro"));
+        assertThat(ready.taxMode()).isEqualTo(TaxMode.UNRESOLVED);
+        long salesBefore = salesOf(shop);
+
+        SaleResponseDTO issued = completeWithNit(ready.id(), customer);
+
+        assertThat(issued.status()).isEqualTo(SaleStatus.COMPLETED);
+        assertThat(issued.paymentStatus()).isEqualTo(PaymentStatus.PAID);
+        assertIssuedTo(issued.id(), customer);
+        assertSameAccount(ready, issued);
+        assertThat(salesOf(shop)).isEqualTo(salesBefore);
+        UUID work = lineByType(issued, FulfillmentType.SERVICE).workResult().id();
+        assertThat(jdbc.queryForObject("SELECT status FROM work_result WHERE id = ?", String.class, work))
+                .isEqualTo("SOLD");
+    }
+
+    /** Un NIT mal dado al abrir se corrige al cobrar: el documento lleva el corregido. */
+    @Test
+    void theNitASaleWasOpenedWithCanBeCorrectedUntilItIsIssued() {
+        Shop shop = shop();
+        Customer opened = customer("NIT ORIGINAL");
+        Customer corrected = customer("NIT CORREGIDO");
+
+        as(shop.seller());
+        SaleResponseDTO ready = readyMixedOrder(shop, saleService.create(
+                new CreateSaleRequestDTO(opened.getId(), PLATE, TaxMode.NIT, null)));
+        assertThat(ready.customer().id()).isEqualTo(opened.getId());
+
+        SaleResponseDTO issued = completeWithNit(ready.id(), corrected);
+
+        assertIssuedTo(issued.id(), corrected);
+        assertSameAccount(ready, issued);
+        // Corregir la venta no edita el maestro de clientes de nadie.
+        for (Customer untouched : List.of(opened, corrected)) {
+            Customer reloaded = customerRepository.findById(untouched.getId()).orElseThrow();
+            assertThat(reloaded.getNit()).isEqualTo(untouched.getNit());
+            assertThat(reloaded.getName()).isEqualTo(untouched.getName());
+        }
+    }
+
+    /** Un NIT invalido al cobrar se rechaza sin emitir nada y sin tocar la venta lista. */
+    @Test
+    void anInvalidNitAtCheckoutLeavesTheReadySaleExactlyAsItWas() {
+        Shop shop = shop();
+        Customer customer = customer("LUCIA");
+
+        as(shop.seller());
+        SaleResponseDTO ready = readyMixedOrder(shop, openUnresolvedSale("Lucia"));
+        UUID saleId = ready.id();
+        UUID work = lineByType(ready, FulfillmentType.SERVICE).workResult().id();
+        String workStatus = jdbc.queryForObject(
+                "SELECT status FROM work_result WHERE id = ?", String.class, work);
+
+        // NIT sin cliente: jamas se convierte en CF.
+        assertThatThrownBy(() -> saleService.completeSale(saleId, new CompleteSaleRequestDTO(
+                InvoiceType.INVOICE, PaymentMethod.CASH, TaxMode.NIT, null, null)))
+                .isInstanceOf(ValidationException.class);
+        // Un cliente que no existe.
+        assertThatThrownBy(() -> saleService.completeSale(saleId, new CompleteSaleRequestDTO(
+                InvoiceType.INVOICE, PaymentMethod.CASH, TaxMode.NIT, UUID.randomUUID(), null)))
+                .isInstanceOf(EntityNotFoundException.class);
+        // NIT con un nombre suelto: la misma regla que al abrir.
+        assertThatThrownBy(() -> saleService.completeSale(saleId, new CompleteSaleRequestDTO(
+                InvoiceType.INVOICE, PaymentMethod.CASH, TaxMode.NIT, customer.getId(), "OTRO")))
+                .isInstanceOf(ValidationException.class);
+
+        SaleResponseDTO still = saleService.get(saleId);
+        assertThat(still.status()).isEqualTo(SaleStatus.PENDING);
+        assertThat(still.taxMode()).isEqualTo(TaxMode.UNRESOLVED);
+        assertThat(still.customer()).isNull();
+        assertThat(still.customerNit()).isNull();
+        assertThat(still.customerName()).isEqualToIgnoringCase("Lucia");
+        assertThat(still.invoiceType()).isNull();
+        assertThat(still.completedAt()).isNull();
+        assertSameAccount(ready, still);
+        assertThat(jdbc.queryForObject("SELECT status FROM work_result WHERE id = ?", String.class, work))
+                .isEqualTo(workStatus);
+
+        // Y la misma venta se emite en cuanto el NIT es valido.
+        assertIssuedTo(completeWithNit(saleId, customer).id(), customer);
+    }
+
+    /** Ni un reintento identico, ni otro NIT, ni CF reemiten o reescriben una venta emitida. */
+    @Test
+    void anIssuedSaleNeverChangesItsBillingIdentityAndIsNeverIssuedTwice() {
+        Shop shop = shop();
+        Customer billed = customer("FACTURADO");
+        Customer other = customer("OTRO");
+
+        as(shop.seller());
+        SaleResponseDTO ready = readyMixedOrder(shop, openUnresolvedSale("Mario"));
+        UUID saleId = completeWithNit(ready.id(), billed).id();
+        String issuedRow = "SELECT status, tax_mode, customer_id, customer_nit, customer_name, "
+                + "invoice_type, payment_method, payment_status, completed_at, paid_at "
+                + "FROM sale WHERE id = ?";
+        Map<String, Object> stored = jdbc.queryForMap(issuedRow, saleId);
+
+        for (CompleteSaleRequestDTO retry : List.of(
+                nitRequest(billed),
+                nitRequest(other),
+                new CompleteSaleRequestDTO(InvoiceType.INVOICE, PaymentMethod.CASH, TaxMode.CF, null, null))) {
+            assertThatThrownBy(() -> saleService.completeSale(saleId, retry))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("no se encuentra abierta");
+        }
+
+        assertThat(jdbc.queryForMap(issuedRow, saleId)).isEqualTo(stored);
+        assertIssuedTo(saleId, billed);
+        assertSameAccount(ready, saleService.get(saleId));
+    }
+
+    /** Dos cobros simultaneos con identidades distintas: se emite UNA, y es la que quedo guardada. */
+    @Test
+    void twoCheckoutsRacingWithDifferentBillingIssueExactlyOneIdentity() throws Exception {
+        Shop shop = shop();
+        Customer customer = customer("CARRERA");
+
+        as(shop.seller());
+        SaleResponseDTO ready = readyMixedOrder(shop, openUnresolvedSale("Carrera"));
+        UUID saleId = ready.id();
+
+        List<Boolean> outcomes = concurrently(shop.seller(),
+                () -> completeWithNit(saleId, customer),
+                () -> saleService.completeSale(saleId, new CompleteSaleRequestDTO(
+                        InvoiceType.INVOICE, PaymentMethod.CASH, TaxMode.CF, null, null)));
+
+        assertThat(outcomes).containsExactlyInAnyOrder(true, false);
+        as(shop.seller());
+        SaleResponseDTO issued = saleService.get(saleId);
+        assertThat(issued.status()).isEqualTo(SaleStatus.COMPLETED);
+        if (outcomes.get(0)) {
+            assertIssuedTo(saleId, customer);
+        } else {
+            assertThat(issued.taxMode()).isEqualTo(TaxMode.CF);
+            assertThat(issued.customer()).isNull();
+            assertThat(issued.customerNit()).isNull();
+        }
+        assertSameAccount(ready, issued);
+    }
+
+    /** Elegir NIT no salta la regla de que el taller tiene que haber terminado. */
+    @Test
+    void choosingANitNeverIssuesASaleTheWorkshopHasNotFinished() {
+        Shop shop = shop();
+        Product installation = job(shop, "INSTALACION");
+        Customer customer = customer("PRISA");
+
+        as(shop.seller());
+        SaleResponseDTO sale = openUnresolvedSale("Prisa");
+        sale = saleService.addDetail(sale.id(), new AddSaleDetailRequestDTO(
+                installation.getId(), null, null, 1, new BigDecimal("150.00"), null, null));
+        UUID saleId = saleService.dispatch(sale.id(), new DispatchSaleRequestDTO(null)).id();
+
+        assertThatThrownBy(() -> completeWithNit(saleId, customer))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("todavia no ha cumplido");
+
+        SaleResponseDTO still = saleService.get(saleId);
+        assertThat(still.status()).isEqualTo(SaleStatus.PENDING);
+        assertThat(still.fulfillmentStatus()).isEqualTo(SaleFulfillmentStatus.IN_PROGRESS);
+        assertThat(still.taxMode()).isEqualTo(TaxMode.UNRESOLVED);
+        assertThat(still.customer()).isNull();
+        assertThat(onlyLine(still).fulfillment().status()).isEqualTo(FulfillmentStatus.QUEUED);
+    }
+
+    /** Otro taller no puede ni facturar ni emitir nuestra venta lista. */
+    @Test
+    void anotherWorkshopCannotBillOrIssueOurReadySale() {
+        Shop shop = shop();
+        Shop neighbour = shop();
+        Customer customer = customer("VECINO");
+
+        as(shop.seller());
+        SaleResponseDTO ready = readyMixedOrder(shop, openUnresolvedSale("Nuestra"));
+        UUID saleId = ready.id();
+
+        as(neighbour.seller());
+        assertThatThrownBy(() -> completeWithNit(saleId, customer))
+                .isInstanceOf(EntityNotFoundException.class);
+        assertThatThrownBy(() -> saleService.completeSale(saleId, new CompleteSaleRequestDTO(
+                InvoiceType.INVOICE, PaymentMethod.CASH, TaxMode.CF, null, null)))
+                .isInstanceOf(EntityNotFoundException.class);
+
+        as(shop.seller());
+        SaleResponseDTO still = saleService.get(saleId);
+        assertThat(still.status()).isEqualTo(SaleStatus.PENDING);
+        assertThat(still.taxMode()).isEqualTo(TaxMode.UNRESOLVED);
+        assertThat(still.customer()).isNull();
+        assertSameAccount(ready, still);
+    }
+
+    /**
+     * Una comanda mixta ya cumplida sobre la venta abierta: una pieza que
+     * entrega Control y un servicio que ejecuta el Operador.
+     */
+    private SaleResponseDTO readyMixedOrder(Shop shop, SaleResponseDTO open) {
+        Product leaf = leaf(shop, 130, 2);
+        stocked(shop, leaf, 1);
+        Product installation = job(shop, "INSTALACION");
+
+        as(shop.seller());
+        saleService.addDetail(open.id(), specialRequest(leaf, 1, null));
+        saleService.addDetail(open.id(), new AddSaleDetailRequestDTO(
+                installation.getId(), null, null, 1, new BigDecimal("150.00"), null, null));
+        SaleResponseDTO dispatched = saleService.dispatch(open.id(), new DispatchSaleRequestDTO(null));
+
+        as(shop.control());
+        fulfillmentService.release(
+                lineOf(dispatched, FulfillmentType.STOCK_RELEASE), new ReleaseFulfillmentRequestDTO(null));
+        as(shop.operator());
+        fulfillmentService.completeService(lineOf(dispatched, FulfillmentType.SERVICE));
+
+        as(shop.seller());
+        SaleResponseDTO ready = saleService.get(open.id());
+        assertThat(ready.status()).isEqualTo(SaleStatus.PENDING);
+        assertThat(ready.fulfillmentStatus()).isEqualTo(SaleFulfillmentStatus.READY_TO_COMPLETE);
+        assertThat(ready.details()).hasSize(2);
+        return ready;
+    }
+
+    private Customer customer(String name) {
+        // NIT de 10 digitos, unico por prueba: el maestro exige NIT UNIQUE.
+        long digits = 1_000_000_000L + Math.floorMod(
+                UUID.randomUUID().getMostSignificantBits(), 9_000_000_000L);
+        return customerRepository.save(Customer.builder()
+                .name(name + " " + unique().toUpperCase(Locale.ROOT))
+                .nit(Long.toString(digits))
+                .build());
+    }
+
+    private static CompleteSaleRequestDTO nitRequest(Customer customer) {
+        return new CompleteSaleRequestDTO(
+                InvoiceType.INVOICE, PaymentMethod.CASH, TaxMode.NIT, customer.getId(), null);
+    }
+
+    private SaleResponseDTO completeWithNit(UUID saleId, Customer customer) {
+        return saleService.completeSale(saleId, nitRequest(customer));
+    }
+
+    /**
+     * La identidad emitida, en la fila y en lo que devuelve el servicio: es lo
+     * que leen el documento, su reimpresion y la cartera.
+     */
+    private void assertIssuedTo(UUID saleId, Customer customer) {
+        Map<String, Object> row = jdbc.queryForMap(
+                "SELECT tax_mode, customer_id, customer_nit, customer_name FROM sale WHERE id = ?",
+                saleId);
+        assertThat(row.get("tax_mode")).isEqualTo("NIT");
+        assertThat(row.get("customer_id")).isEqualTo(customer.getId());
+        assertThat(row.get("customer_nit")).isEqualTo(customer.getNit());
+        assertThat(row.get("customer_name")).isEqualTo(customer.getName());
+
+        SaleResponseDTO document = saleService.get(saleId);
+        assertThat(document.taxMode()).isEqualTo(TaxMode.NIT);
+        assertThat(document.customerNit()).isEqualTo(customer.getNit());
+        assertThat(document.customerName()).isEqualTo(customer.getName());
+    }
+
+    /** Lo que la facturacion no puede tocar: la misma venta, las mismas lineas, los mismos importes. */
+    private void assertSameAccount(SaleResponseDTO before, SaleResponseDTO after) {
+        assertThat(after.id()).isEqualTo(before.id());
+        assertThat(after.total()).isEqualByComparingTo(before.total());
+        assertThat(after.details()).hasSameSizeAs(before.details());
+        for (SaleDetailResponseDTO line : before.details()) {
+            SaleDetailResponseDTO same = lineById(after, line.id());
+            assertThat(same.product().id()).isEqualTo(line.product().id());
+            assertThat(same.quantity()).isEqualTo(line.quantity());
+            assertThat(same.price()).isEqualByComparingTo(line.price());
+            assertThat(same.subTotal()).isEqualByComparingTo(line.subTotal());
+            assertThat(same.item() == null ? null : same.item().id())
+                    .isEqualTo(line.item() == null ? null : line.item().id());
+            assertThat(same.workResult() == null ? null : same.workResult().id())
+                    .isEqualTo(line.workResult() == null ? null : line.workResult().id());
+            assertThat(same.fulfillment().status()).isEqualTo(line.fulfillment().status());
+        }
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM sale_detail WHERE sale_id = ?", Long.class, before.id()))
+                .isEqualTo(before.details().size());
+    }
+
+    private long salesOf(Shop shop) {
+        return jdbc.queryForObject(
+                "SELECT COUNT(*) FROM sale WHERE workshop_id = ?", Long.class, shop.workshop().getId());
+    }
 
     // ── Datos de partida ─────────────────────────────────────────
 

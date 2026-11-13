@@ -15,4 +15,10 @@ public interface BrandService {
     BrandResponseDTO create(CreateBrandRequestDTO requestDTO);
     BrandResponseDTO update(UUID id, UpdateBrandRequestDTO requestDTO);
 
+    /**
+     * Eliminacion LOGICA y definitiva: no existe la operacion inversa. Repetirla
+     * sobre una marca ya eliminada no cambia nada.
+     */
+    void delete(UUID id);
+
 }

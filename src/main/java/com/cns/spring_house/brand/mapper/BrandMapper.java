@@ -18,6 +18,8 @@ public interface BrandMapper {
     @Mapping(target = "logoKey", ignore = true)
     @Mapping(target = "createdAt", ignore = true)
     @Mapping(target = "updatedAt", ignore = true)
+    // Nadie elimina al dar de alta: `deletedAt` solo lo escribe markDeleted.
+    @Mapping(target = "deletedAt", ignore = true)
     Brand toBrand(CreateBrandRequestDTO requestDTO);
 
     @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)

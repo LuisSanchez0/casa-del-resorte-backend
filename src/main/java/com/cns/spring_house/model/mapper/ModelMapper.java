@@ -18,6 +18,8 @@ public interface ModelMapper {
     @Mapping(target = "brand", ignore = true)
     @Mapping(target = "createdAt", ignore = true)
     @Mapping(target = "updatedAt", ignore = true)
+    // Nadie elimina al dar de alta: `deletedAt` solo lo escribe markDeleted.
+    @Mapping(target = "deletedAt", ignore = true)
     Model toModel(CreateModelRequestDTO requestDTO);
 
     @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)

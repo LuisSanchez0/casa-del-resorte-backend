@@ -1,5 +1,6 @@
 package com.cns.spring_house.model.entity;
 
+import java.time.LocalDateTime;
 import java.util.UUID;
 
 import org.hibernate.annotations.UuidGenerator;
@@ -46,5 +47,32 @@ public class Model extends Auditable {
      */
     private Integer yearFrom;
     private Integer yearTo;
+
+    /**
+     * Cuando se elimino; null mientras el modelo sigue vigente. Misma regla que
+     * {@link Brand#getDeletedAt}: logica, de una sola via y sin setter.
+     */
+    @Setter(AccessLevel.NONE)
+    private LocalDateTime deletedAt;
+
+    public boolean isDeleted() {
+        return deletedAt != null;
+    }
+
+    /**
+     * Se puede elegir para algo NUEVO: el modelo y su marca estan vigentes.
+     * Eliminar la marca no marca a sus modelos —cada uno conserva su propio
+     * estado—, pero dejan de ser elegibles por ella.
+     */
+    public boolean isSelectable() {
+        return !isDeleted() && brand != null && !brand.isDeleted();
+    }
+
+    /** Repetirlo no cambia la fecha original. */
+    public void markDeleted(LocalDateTime when) {
+        if (deletedAt == null) {
+            deletedAt = when;
+        }
+    }
 
 }

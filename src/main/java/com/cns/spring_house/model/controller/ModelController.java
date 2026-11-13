@@ -17,6 +17,8 @@ import java.util.UUID;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -48,6 +50,12 @@ public class ModelController {
                 .body(models);
     }
 
+    /**
+     * Alta en el catalogo GLOBAL: la misma regla que eliminar. La lectura queda
+     * abierta a cualquier sesion —la caja, el taller y el historial la usan—,
+     * pero solo quien administra el catalogo lo cambia.
+     */
+    @PreAuthorize("hasAnyRole('CONTROL', 'ADMIN')")
     @PostMapping
     public ResponseEntity<ModelResponseDTO> create(
             @RequestBody @Valid CreateModelRequestDTO requestDTO ) {
@@ -57,6 +65,8 @@ public class ModelController {
                 .body(model);
     }
 
+    /** Editar: misma regla que dar de alta y eliminar. */
+    @PreAuthorize("hasAnyRole('CONTROL', 'ADMIN')")
     @PatchMapping("/{id}")
     public ResponseEntity<ModelResponseDTO> update(
             @PathVariable UUID id,
@@ -65,6 +75,25 @@ public class ModelController {
         return ResponseEntity
                 .status(HttpStatus.OK)
                 .body(model);
-    }    
+    }
+
+    /**
+     * "Eliminar": eliminacion LOGICA y definitiva. La fila se conserva para el
+     * historial y deja de listarse y de poder elegirse. No existe la operacion
+     * inversa en ninguna ruta.
+     *
+     * 204 tambien si ya estaba eliminado (reintento o doble clic); 404 si
+     * no existe. Solo quien administra el catalogo: Control, que tiene la
+     * pantalla de marcas y modelos, y ADMIN, igual que proveedores.
+     */
+    @PreAuthorize("hasAnyRole('CONTROL', 'ADMIN')")
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> delete(
+            @PathVariable UUID id) {
+        service.delete(id);
+        return ResponseEntity
+                .noContent()
+                .build();
+    }
 
 }

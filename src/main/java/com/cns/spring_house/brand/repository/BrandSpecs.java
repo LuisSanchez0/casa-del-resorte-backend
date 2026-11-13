@@ -20,6 +20,11 @@ public class BrandSpecs {
      * pasa al MISMO helper que producto, servicio, familia y modelo para que los
      * cinco buscadores traten el texto igual.
      */
+    /** Solo las vigentes: una marca eliminada no se lista ni se ofrece. */
+    public static Specification<Brand> isActive() {
+        return (root, query, criteriaBuilder) -> criteriaBuilder.isNull(root.get("deletedAt"));
+    }
+
     public static Specification<Brand> nameContains(String name) {
         return (root, query, criteriaBuilder) -> name == null ? null
                 : criteriaBuilder.like(

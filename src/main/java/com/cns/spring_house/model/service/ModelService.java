@@ -15,4 +15,10 @@ public interface ModelService {
     ModelResponseDTO create(CreateModelRequestDTO requestDTO);
     ModelResponseDTO update(UUID id, UpdateModelRequestDTO requestDTO);
 
+    /**
+     * Eliminacion LOGICA y definitiva: no existe la operacion inversa. Repetirla
+     * sobre un modelo ya eliminado no cambia nada.
+     */
+    void delete(UUID id);
+
 }

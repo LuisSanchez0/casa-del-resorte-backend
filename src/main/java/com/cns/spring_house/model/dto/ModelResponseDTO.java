@@ -31,6 +31,9 @@ public record ModelResponseDTO(
                 example = "2025")
         Integer yearTo,
         @Schema(description = "Marca del modelo; null si el modelo no la tiene asignada")
-        BrandResponseDTO brand
+        BrandResponseDTO brand,
+        @Schema(description = "Solo lectura. True si el modelo se eliminó: un producto histórico "
+                + "lo sigue mostrando, pero no se puede elegir para nada nuevo")
+        boolean deleted
 
 ) { }

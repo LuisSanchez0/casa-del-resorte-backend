@@ -61,7 +61,7 @@ class ModelControllerTest {
 
     /** Sin marca: estas pruebas son del intervalo de anos, no de la marca. */
     private static ModelResponseDTO response(int from, int to) {
-        return new ModelResponseDTO(UUID.randomUUID(), "Corolla", from, to, null);
+        return new ModelResponseDTO(UUID.randomUUID(), "Corolla", from, to, null, false);
     }
 
     @Nested

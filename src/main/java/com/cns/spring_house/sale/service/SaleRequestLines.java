@@ -22,7 +22,7 @@ import com.cns.spring_house.inventory.entity.InventoryItemStatus;
 import com.cns.spring_house.inventory.repository.InventoryItemRepository;
 import com.cns.spring_house.inventory.repository.InventoryRepository;
 import com.cns.spring_house.model.entity.Model;
-import com.cns.spring_house.model.repository.ModelRepository;
+import com.cns.spring_house.model.service.CatalogSelection;
 import com.cns.spring_house.product.entity.Product;
 import com.cns.spring_house.product.repository.ProductRepository;
 import com.cns.spring_house.product.service.ProductAttributesValidator;
@@ -63,7 +63,8 @@ public class SaleRequestLines {
     private final InventoryLotService lotService;
     private final SaleDetailRepository detailRepository;
     private final FamilyRepository familyRepository;
-    private final ModelRepository modelRepository;
+    /** El modelo de una pieza pedida por especificacion tiene que estar vigente. */
+    private final CatalogSelection catalogSelection;
     private final ProductRepository productRepository;
     private final ObjectMapper objectMapper;
 
@@ -239,9 +240,7 @@ public class SaleRequestLines {
             throw new ValidationException(
                     "El modelo es obligatorio para esta familia");
         }
-        return modelRepository.findById(requestDTO.model())
-                .orElseThrow(() -> new EntityNotFoundException(
-                        "No existe el modelo especificado"));
+        return catalogSelection.requireSelectableModel(requestDTO.model());
     }
 
 }
