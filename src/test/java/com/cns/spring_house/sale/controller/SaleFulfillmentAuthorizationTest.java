@@ -34,19 +34,21 @@ import com.cns.spring_house.sale.dto.DispatchSaleRequestDTO;
 import com.cns.spring_house.sale.dto.FulfillTransformationRequestDTO;
 import com.cns.spring_house.sale.dto.ReleaseFulfillmentRequestDTO;
 import com.cns.spring_house.sale.dto.RequestSpecificationDTO;
+import com.cns.spring_house.sale.dto.SaleLineGuidanceRequestDTO;
 import com.cns.spring_house.sale.dto.UpdateRequestPriceDTO;
 import com.cns.spring_house.sale.service.SaleDashboardService;
+import com.cns.spring_house.sale.service.SaleLineGuidanceService;
 import com.cns.spring_house.sale.service.SaleFulfillmentService;
 import com.cns.spring_house.sale.service.SaleService;
 
 /**
  * QUIEN puede mover una solicitud de la comanda.
  *
- * El vendedor pide y envia; Control entrega; el Operador fabrica y ejecuta.
- * Nadie puede hacer el trabajo de otro: un vendedor no puede dar por entregada
- * ni por fabricada una solicitud, y Control no puede fabricar. ADMIN puede lo de
- * Control y el Operador como supervision, pero no enviar la comanda de un
- * vendedor.
+ * El vendedor pide y envia; el Operador entrega lo que ya existe ("Pedidos
+ * por liberar", que fue de Control), fabrica y ejecuta. Nadie puede hacer el
+ * trabajo de otro: un vendedor no puede dar por entregada ni por fabricada una
+ * solicitud, y Control ya no puede ni ver ni liberar ninguna. ADMIN puede lo
+ * del Operador como supervision, pero no enviar la comanda de un vendedor.
  *
  * Como SaleReversalAuthorizationTest, se levanta un contexto con
  * `@EnableMethodSecurity`: la anotacion esta de verdad en juego.
@@ -89,12 +91,12 @@ class SaleFulfillmentAuthorizationTest {
     private Map<String, Action> actions() {
         UUID id = UUID.randomUUID();
         return Map.ofEntries(
-                Map.entry("cola de Control", new Action(
-                        Set.of("CONTROL", "ADMIN"), c -> c.fulfillment.getControlQueue(null, null, null))),
+                Map.entry("pedidos por liberar", new Action(
+                        Set.of("OPERATOR", "ADMIN"), c -> c.fulfillment.getReleaseQueue(null, null, null))),
                 Map.entry("unidades elegibles", new Action(
-                        Set.of("CONTROL", "ADMIN"), c -> c.fulfillment.getEligibleItems(id))),
+                        Set.of("OPERATOR", "ADMIN"), c -> c.fulfillment.getEligibleItems(id))),
                 Map.entry("entregar", new Action(
-                        Set.of("CONTROL", "ADMIN"),
+                        Set.of("OPERATOR", "ADMIN"),
                         c -> c.fulfillment.release(id, new ReleaseFulfillmentRequestDTO(null)))),
                 Map.entry("cola del Operador", new Action(
                         Set.of("OPERATOR", "ADMIN"), c -> c.fulfillment.getOperatorQueue(null, null, null))),
@@ -112,7 +114,7 @@ class SaleFulfillmentAuthorizationTest {
                 Map.entry("terminar servicio", new Action(
                         Set.of("OPERATOR", "ADMIN"), c -> c.fulfillment.completeService(id))),
                 Map.entry("ver solicitud", new Action(
-                        Set.of("CONTROL", "OPERATOR", "ADMIN"), c -> c.fulfillment.get(id))),
+                        Set.of("OPERATOR", "ADMIN"), c -> c.fulfillment.get(id))),
                 Map.entry("enviar comanda", new Action(
                         Set.of("SELLER"),
                         c -> c.sales.dispatch(id, new DispatchSaleRequestDTO(null)))),
@@ -123,11 +125,17 @@ class SaleFulfillmentAuthorizationTest {
                                 BigDecimal.ONE, null, null)))),
                 Map.entry("ventas listas", new Action(
                         Set.of("SELLER"), c -> c.sales.getReady(null))),
+                // La guia de precio de la caja: precios de catalogo, ultimo
+                // precio cobrado y comparables del taller. Solo quien vende.
+                Map.entry("guia de precio", new Action(
+                        Set.of("SELLER"),
+                        c -> c.sales.lineGuidance(new SaleLineGuidanceRequestDTO(
+                                UUID.randomUUID(), null, null, null)))),
                 // El precio lo decide el vendedor (o Administracion), nunca quien
                 // entrega o fabrica.
                 Map.entry("revisar precio", new Action(
                         Set.of("SELLER", "ADMIN"),
-                        c -> c.sales.updateRequestPrice(id, new UpdateRequestPriceDTO(BigDecimal.TEN)))));
+                        c -> c.sales.updateRequestPrice(id, new UpdateRequestPriceDTO(BigDecimal.TEN, BigDecimal.TEN)))));
     }
 
     private record Action(Set<String> allowed, Consumer<SaleFulfillmentAuthorizationTest> call) {
@@ -170,11 +178,58 @@ class SaleFulfillmentAuthorizationTest {
         verify(fulfillmentService, never()).completeService(any());
     }
 
+    /**
+     * "Pedidos por liberar" paso al Operador: una cuenta solo de Control que
+     * llame directo a la API no llega al servicio en NINGUNA operacion de la
+     * comanda —ni listar, ni ver, ni elegir unidad, ni liberar—.
+     */
+    @Test
+    void controlNoLongerReachesAnyFulfillmentOperation() {
+        authenticateAs("CONTROL");
+        UUID id = UUID.randomUUID();
+        List<Runnable> calls = List.of(
+                () -> fulfillment.getReleaseQueue(null, null, null),
+                () -> fulfillment.getOperatorQueue(null, null, null),
+                () -> fulfillment.get(id),
+                () -> fulfillment.getEligibleItems(id),
+                () -> fulfillment.release(id, new ReleaseFulfillmentRequestDTO(null)),
+                () -> fulfillment.release(id, null),
+                () -> fulfillment.start(id),
+                () -> fulfillment.block(id, new BlockFulfillmentRequestDTO("x")),
+                () -> fulfillment.getSources(id, null),
+                () -> fulfillment.transform(id, new FulfillTransformationRequestDTO(UUID.randomUUID(), null)),
+                () -> fulfillment.completeService(id));
+        for (Runnable call : calls) {
+            assertThatThrownBy(call::run).isInstanceOf(AccessDeniedException.class);
+        }
+        Mockito.verifyNoInteractions(fulfillmentService);
+    }
+
+    /** Y el Operador, que ahora libera, llega al servicio con lo que pidio. */
+    @Test
+    void theOperatorReachesTheReleaseOperations() {
+        authenticateAs("OPERATOR");
+        UUID id = UUID.randomUUID();
+        UUID unit = UUID.randomUUID();
+
+        fulfillment.getReleaseQueue(List.of(), 5, 1);
+        fulfillment.getEligibleItems(id);
+        fulfillment.release(id, new ReleaseFulfillmentRequestDTO(unit));
+        fulfillment.release(id, null);
+
+        verify(fulfillmentService).getQueue(
+                com.cns.spring_house.sale.entity.FulfillmentArea.CONTROL, List.of(), 5, 1);
+        verify(fulfillmentService).getEligibleItems(id);
+        verify(fulfillmentService).release(id, new ReleaseFulfillmentRequestDTO(unit));
+        // Sin cuerpo, la unidad reservada: el mismo contrato de siempre.
+        verify(fulfillmentService).release(id, new ReleaseFulfillmentRequestDTO(null));
+    }
+
     @Test
     void anonymousIsDenied() {
         SecurityContextHolder.clearContext();
 
-        assertThatThrownBy(() -> fulfillment.getControlQueue(null, null, null))
+        assertThatThrownBy(() -> fulfillment.getReleaseQueue(null, null, null))
                 .isInstanceOf(AuthenticationCredentialsNotFoundException.class);
         assertThatThrownBy(() -> sales.dispatch(UUID.randomUUID(), new DispatchSaleRequestDTO(null)))
                 .isInstanceOf(AuthenticationCredentialsNotFoundException.class);
@@ -202,9 +257,16 @@ class SaleFulfillmentAuthorizationTest {
         }
 
         @Bean
+        SaleLineGuidanceService saleLineGuidanceService() {
+            return Mockito.mock(SaleLineGuidanceService.class);
+        }
+
+        @Bean
         SaleController saleController(
-                SaleService service, SaleDashboardService dashboardService) {
-            return new SaleController(service, dashboardService);
+                SaleService service,
+                SaleDashboardService dashboardService,
+                SaleLineGuidanceService guidanceService) {
+            return new SaleController(service, dashboardService, guidanceService);
         }
 
         @Bean

@@ -58,9 +58,36 @@ public record RequestSpecificationDTO(
      * "Si" exige la cantidad, aqui o en `cantidadColochos`.
      */
     @Min(value = 0, message = "La cantidad de colochos no puede ser negativa")
-    Integer requestedCurlCount
+    Integer requestedCurlCount,
+    /**
+     * El precio de catalogo que el vendedor tenia a la vista (cero = "sin
+     * precio", lo normal en una pieza nueva). OBLIGATORIO, igual que en
+     * {@link AddSaleDetailRequestDTO}: si la pieza resuelta ya existe y tiene
+     * otro precio, 409 para reconfirmar.
+     */
+    @NotNull(message = "Indique el precio de catalogo que tenia a la vista (0 si no tenia precio)")
+    @DecimalMin(value = "0.00", message = "El precio de catalogo esperado no puede ser negativo")
+    @Digits(integer = ColumnLimits.MONEY_INTEGER_DIGITS,
+            fraction = ColumnLimits.MONEY_FRACTION_DIGITS,
+            message = "El precio de catalogo esperado admite hasta {integer} enteros y {fraction} decimales")
+    BigDecimal expectedCatalogPrice
 
 ) {
+
+    /** Sin precio de catalogo esperado: el contrato anterior, sin comprobacion de cambio. */
+    public RequestSpecificationDTO(
+            UUID family,
+            UUID model,
+            Map<String, Object> attributes,
+            Integer quantity,
+            BigDecimal price,
+            String invoiceDescription,
+            String instructions,
+            Boolean requestedCurls,
+            Integer requestedCurlCount) {
+        this(family, model, attributes, quantity, price, invoiceDescription, instructions,
+                requestedCurls, requestedCurlCount, null);
+    }
 
     /** Sin decision de colochos: la familia no los maneja o los fijan las caracteristicas. */
     public RequestSpecificationDTO(
@@ -71,7 +98,7 @@ public record RequestSpecificationDTO(
             BigDecimal price,
             String invoiceDescription,
             String instructions) {
-        this(family, model, attributes, quantity, price, invoiceDescription, instructions, null, null);
+        this(family, model, attributes, quantity, price, invoiceDescription, instructions, null, null, null);
     }
 
     public RequestSpecificationDTO {

@@ -80,6 +80,9 @@ class VehicleMovementServiceImplTest {
     @Mock
     private CurrentUserService currentUserService;
 
+    @Mock
+    private VehicleWorkTimingService workTimings;
+
     @InjectMocks
     private VehicleMovementServiceImpl service;
 
@@ -226,8 +229,8 @@ class VehicleMovementServiceImplTest {
         service.getAll(new SearchVehicleMovementRequestDTO(
                 null, null, null, null));
 
-        verify(mapper).toResponse(a1);
-        verify(mapper).toResponse(a2);
+        verify(mapper).toResponse(eq(a1), any());
+        verify(mapper).toResponse(eq(a2), any());
     }
 
     // ------------------------------------------------------------------- get
@@ -240,7 +243,7 @@ class VehicleMovementServiceImplTest {
 
         service.get(a1.getId());
 
-        verify(mapper).toResponse(a1);
+        verify(mapper).toResponse(eq(a1), any());
     }
 
     @Test
@@ -268,7 +271,7 @@ class VehicleMovementServiceImplTest {
                 .id(photoId)
                 .photoKey("ajena.jpg")
                 .build());
-        when(repository.findByIdAndWorkshopId(b1.getId(), workshopAId))
+        when(repository.lockOwned(b1.getId(), workshopAId))
                 .thenReturn(Optional.empty());
 
         UpdateVehicleMovementRequestDTO requestDTO =
@@ -296,7 +299,7 @@ class VehicleMovementServiceImplTest {
                 .id(photoId)
                 .photoKey("vieja.jpg")
                 .build());
-        when(repository.findByIdAndWorkshopId(a1.getId(), workshopAId))
+        when(repository.lockOwned(a1.getId(), workshopAId))
                 .thenReturn(Optional.of(a1));
         when(repository.save(a1)).thenReturn(a1);
         when(s3Service.uploadImage(any())).thenReturn("nueva-key.jpg");
@@ -313,7 +316,7 @@ class VehicleMovementServiceImplTest {
     @Test
     void updateRejectsPhotosThatBelongToAnotherMovement() {
         VehicleMovement a1 = movement(workshopA);
-        when(repository.findByIdAndWorkshopId(a1.getId(), workshopAId))
+        when(repository.lockOwned(a1.getId(), workshopAId))
                 .thenReturn(Optional.of(a1));
 
         UUID foreignPhotoId = UUID.randomUUID();
@@ -334,7 +337,7 @@ class VehicleMovementServiceImplTest {
     @Test
     void registerExitClosesTheOwnMovement() {
         VehicleMovement a1 = movement(workshopA);
-        when(repository.findByIdAndWorkshopId(a1.getId(), workshopAId))
+        when(repository.lockOwned(a1.getId(), workshopAId))
                 .thenReturn(Optional.of(a1));
         when(repository.save(a1)).thenReturn(a1);
 
@@ -346,7 +349,7 @@ class VehicleMovementServiceImplTest {
     @Test
     void registerExitDoesNotCloseMovementsOfAnotherWorkshop() {
         VehicleMovement b1 = movement(workshopB);
-        when(repository.findByIdAndWorkshopId(b1.getId(), workshopAId))
+        when(repository.lockOwned(b1.getId(), workshopAId))
                 .thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.registerExit(b1.getId()))
@@ -361,7 +364,7 @@ class VehicleMovementServiceImplTest {
     void registerExitRejectsAnAlreadyClosedMovement() {
         VehicleMovement a1 = movement(workshopA);
         a1.setExit(LocalDateTime.now());
-        when(repository.findByIdAndWorkshopId(a1.getId(), workshopAId))
+        when(repository.lockOwned(a1.getId(), workshopAId))
                 .thenReturn(Optional.of(a1));
 
         assertThatThrownBy(() -> service.registerExit(a1.getId()))
@@ -521,7 +524,7 @@ class VehicleMovementServiceImplTest {
                 .limit(3)
                 .map(VehicleMovementPhoto::getId)
                 .toList();
-        when(repository.findByIdAndWorkshopId(a1.getId(), workshopAId))
+        when(repository.lockOwned(a1.getId(), workshopAId))
                 .thenReturn(Optional.of(a1));
         when(repository.save(a1)).thenReturn(a1);
         when(s3Service.uploadImage(any())).thenReturn("nueva.jpg");
@@ -540,7 +543,7 @@ class VehicleMovementServiceImplTest {
                 .limit(1)
                 .map(VehicleMovementPhoto::getId)
                 .toList();
-        when(repository.findByIdAndWorkshopId(a1.getId(), workshopAId))
+        when(repository.lockOwned(a1.getId(), workshopAId))
                 .thenReturn(Optional.of(a1));
 
         assertThatThrownBy(() -> service.update(
@@ -557,7 +560,7 @@ class VehicleMovementServiceImplTest {
     @Test
     void updateOnAFullMovementRejectsOneMorePhotoWithoutTouchingS3() {
         VehicleMovement a1 = movementWithPhotos(10);
-        when(repository.findByIdAndWorkshopId(a1.getId(), workshopAId))
+        when(repository.lockOwned(a1.getId(), workshopAId))
                 .thenReturn(Optional.of(a1));
 
         assertThatThrownBy(() -> service.update(
@@ -578,7 +581,7 @@ class VehicleMovementServiceImplTest {
                 .limit(2)
                 .map(VehicleMovementPhoto::getId)
                 .toList();
-        when(repository.findByIdAndWorkshopId(a1.getId(), workshopAId))
+        when(repository.lockOwned(a1.getId(), workshopAId))
                 .thenReturn(Optional.of(a1));
         when(repository.save(a1)).thenReturn(a1);
         when(s3Service.uploadImage(any())).thenReturn("nueva.jpg");
@@ -593,7 +596,7 @@ class VehicleMovementServiceImplTest {
     @Test
     void updateRejectsNinePlusTwoBeforeUploadingAnything() {
         VehicleMovement a1 = movementWithPhotos(9);
-        when(repository.findByIdAndWorkshopId(a1.getId(), workshopAId))
+        when(repository.lockOwned(a1.getId(), workshopAId))
                 .thenReturn(Optional.of(a1));
 
         assertThatThrownBy(() -> service.update(

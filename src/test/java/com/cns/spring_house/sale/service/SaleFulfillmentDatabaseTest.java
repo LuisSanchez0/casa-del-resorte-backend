@@ -73,6 +73,7 @@ import com.cns.spring_house.product.entity.Product;
 import com.cns.spring_house.product.repository.ProductRepository;
 import com.cns.spring_house.role.entity.Role;
 import com.cns.spring_house.role.repository.RoleRepository;
+import com.cns.spring_house.sale.dto.NoChargeEligibility;
 import com.cns.spring_house.sale.dto.AddSaleDetailRequestDTO;
 import com.cns.spring_house.sale.dto.BlockFulfillmentRequestDTO;
 import com.cns.spring_house.sale.dto.CancelSaleRequestDTO;
@@ -84,6 +85,13 @@ import com.cns.spring_house.sale.dto.FulfillmentSaleProgressDTO;
 import com.cns.spring_house.sale.dto.FulfillmentSourceDTO;
 import com.cns.spring_house.sale.dto.FulfillmentTaskResponseDTO;
 import com.cns.spring_house.sale.dto.ReleaseFulfillmentRequestDTO;
+import com.cns.spring_house.sale.dto.ReverseSaleRequestDTO;
+import com.cns.spring_house.sale.dto.PriceReferenceDTO;
+import com.cns.spring_house.sale.dto.PriceReferenceSource;
+import com.cns.spring_house.sale.dto.PriceStatus;
+import com.cns.spring_house.sale.dto.SaleLineGuidanceDTO;
+import com.cns.spring_house.sale.dto.SaleLineGuidanceRequestDTO;
+import com.cns.spring_house.shared.exception.PriceConflictException;
 import com.cns.spring_house.sale.dto.RequestSpecificationDTO;
 import com.cns.spring_house.sale.dto.SaleDashboardStatsDTO;
 import com.cns.spring_house.sale.dto.SaleDetailResponseDTO;
@@ -265,7 +273,7 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         SaleResponseDTO sale = openUnresolvedSale("Carlos");
-        sale = saleService.addDetail(sale.id(), specialRequest(leaf, 1, "Revisar que no este oxidada"));
+        sale = addSeen(sale.id(), specialRequest(leaf, 1, "Revisar que no este oxidada"));
 
         // Agregar la reserva: la unidad ya es de esta venta, aunque no se haya
         // enviado. Reservada con la regla de siempre: SOLD, fuera del stock y
@@ -356,7 +364,7 @@ class SaleFulfillmentDatabaseTest {
         as(shop.seller());
         SaleResponseDTO sale = openUnresolvedSale("Ana");
         // Sin stock sigue siendo elegible.
-        sale = saleService.addDetail(sale.id(), specialRequest(target, 1, null));
+        sale = addSeen(sale.id(), specialRequest(target, 1, null));
         sale = saleService.dispatch(sale.id(), new DispatchSaleRequestDTO(null));
         SaleDetailResponseDTO line = onlyLine(sale);
         assertThat(line.fulfillment().type()).isEqualTo(FulfillmentType.TRANSFORMATION);
@@ -424,7 +432,7 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         SaleResponseDTO sale = openUnresolvedSale("Luis");
-        sale = saleService.requestSpecification(sale.id(), new RequestSpecificationDTO(
+        sale = specSeen(sale.id(), new RequestSpecificationDTO(
                 hoja.getId(), shop.model().getId(), wanted, 1, PRICE, "Hoja de resorte", null));
         SaleDetailResponseDTO line = onlyLine(sale);
         UUID requested = line.product().id();
@@ -436,7 +444,7 @@ class SaleFulfillmentDatabaseTest {
         assertThat(inventoryCount(requested)).isZero();
 
         // Pedir lo mismo otra vez no duplica el catalogo.
-        sale = saleService.requestSpecification(sale.id(), new RequestSpecificationDTO(
+        sale = specSeen(sale.id(), new RequestSpecificationDTO(
                 hoja.getId(), shop.model().getId(), wanted, 1, PRICE, null, null));
         assertThat(productWith(hoja, shop.model(), wanted)).isEqualTo(1);
         UUID duplicate = sale.details().stream()
@@ -473,27 +481,27 @@ class SaleFulfillmentDatabaseTest {
         SaleResponseDTO sale = openUnresolvedSale("Mario");
 
         // Tipo equivocado.
-        assertThatThrownBy(() -> saleService.requestSpecification(sale.id(), new RequestSpecificationDTO(
+        assertThatThrownBy(() -> specSeen(sale.id(), new RequestSpecificationDTO(
                 hoja.getId(), shop.model().getId(),
                 attributes("largo", "mucho", "tieneOrificio", false), 1, PRICE, null, null)))
                 .isInstanceOf(ValidationException.class);
         // Caracteristica que la familia no declara.
-        assertThatThrownBy(() -> saleService.requestSpecification(sale.id(), new RequestSpecificationDTO(
+        assertThatThrownBy(() -> specSeen(sale.id(), new RequestSpecificationDTO(
                 hoja.getId(), shop.model().getId(),
                 attributes("largo", 90, "tieneOrificio", false, "color", "rojo"), 1, PRICE, null, null)))
                 .isInstanceOf(ValidationException.class);
         // Falta una obligatoria.
-        assertThatThrownBy(() -> saleService.requestSpecification(sale.id(), new RequestSpecificationDTO(
+        assertThatThrownBy(() -> specSeen(sale.id(), new RequestSpecificationDTO(
                 hoja.getId(), shop.model().getId(), attributes("largo", 90), 1, PRICE, null, null)))
                 .isInstanceOf(ValidationException.class);
         // Medidas con orificio que no suman el largo.
-        assertThatThrownBy(() -> saleService.requestSpecification(sale.id(), new RequestSpecificationDTO(
+        assertThatThrownBy(() -> specSeen(sale.id(), new RequestSpecificationDTO(
                 hoja.getId(), shop.model().getId(),
                 attributes("largo", 90, "tieneOrificio", true, "largoIzquierdo", 40, "largoDerecho", 40),
                 1, PRICE, null, null)))
                 .isInstanceOf(ValidationException.class);
         // La hoja exige modelo.
-        assertThatThrownBy(() -> saleService.requestSpecification(sale.id(), new RequestSpecificationDTO(
+        assertThatThrownBy(() -> specSeen(sale.id(), new RequestSpecificationDTO(
                 hoja.getId(), null, attributes("largo", 90, "tieneOrificio", false), 1, PRICE, null, null)))
                 .isInstanceOf(ValidationException.class);
 
@@ -511,7 +519,7 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         SaleResponseDTO sale = openUnresolvedSale("Pedro");
-        sale = saleService.addDetail(sale.id(), specialRequest(leaf, 3, null));
+        sale = addSeen(sale.id(), specialRequest(leaf, 3, null));
         assertThat(sale.details()).hasSize(3);
         assertThat(sale.total()).isEqualByComparingTo(PRICE.multiply(BigDecimal.valueOf(3)));
 
@@ -536,7 +544,7 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         SaleResponseDTO sale = openUnresolvedSale("Rosa");
-        sale = saleService.addDetail(sale.id(), new AddSaleDetailRequestDTO(
+        sale = addSeen(sale.id(), new AddSaleDetailRequestDTO(
                 installation.getId(), null, null, 1, new BigDecimal("150.00"), null,
                 "Instalar del lado izquierdo"));
         SaleDetailResponseDTO line = onlyLine(sale);
@@ -589,9 +597,9 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         SaleResponseDTO sale = openUnresolvedSale("Juan Perez");
-        sale = saleService.addDetail(sale.id(), specialRequest(stockedLeaf, 1, null));
-        sale = saleService.addDetail(sale.id(), specialRequest(missingLeaf, 1, null));
-        sale = saleService.addDetail(sale.id(), new AddSaleDetailRequestDTO(
+        sale = addSeen(sale.id(), specialRequest(stockedLeaf, 1, null));
+        sale = addSeen(sale.id(), specialRequest(missingLeaf, 1, null));
+        sale = addSeen(sale.id(), new AddSaleDetailRequestDTO(
                 installation.getId(), null, null, 1, new BigDecimal("150.00"), null, null));
         sale = saleService.dispatch(sale.id(), new DispatchSaleRequestDTO(null));
         UUID saleId = sale.id();
@@ -651,7 +659,7 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         SaleResponseDTO sale = openUnresolvedSale("Mesa 4");
-        sale = saleService.addDetail(sale.id(), new AddSaleDetailRequestDTO(
+        sale = addSeen(sale.id(), new AddSaleDetailRequestDTO(
                 target.getId(), null, null, 1, price, "Hoja de resorte Toyota Tundra 120", null));
 
         // En la cuenta en cuanto se pide, sin nada fisico todavia.
@@ -734,7 +742,7 @@ class SaleFulfillmentDatabaseTest {
         InventoryItem source = stocked(shop, leaf(shop, 220, 2), 1).get(0);
 
         as(shop.seller());
-        SaleResponseDTO sale = saleService.addDetail(openUnresolvedSale("Equivalente").id(),
+        SaleResponseDTO sale = addSeen(openUnresolvedSale("Equivalente").id(),
                 curlRequest(target, true, 2));
         UUID lineId = onlyLine(sale).id();
         assertThat(onlyLine(sale).invoiceDescription()).isNull();
@@ -775,7 +783,7 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         UUID saleId = openUnresolvedSale("Persistencia").id();
-        UUID lineId = onlyLine(saleService.addDetail(saleId, new AddSaleDetailRequestDTO(
+        UUID lineId = onlyLine(addSeen(saleId, new AddSaleDetailRequestDTO(
                 target.getId(), null, null, 1, new BigDecimal("320.00"), "Hoja especial", null))).id();
 
         // En la base antes de enviar, sin nada fisico todavia.
@@ -907,11 +915,11 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         SaleResponseDTO sale = openUnresolvedSale("Elena");
-        sale = saleService.addDetail(sale.id(), specialRequest(first, 1, null));
+        sale = addSeen(sale.id(), specialRequest(first, 1, null));
         sale = saleService.dispatch(sale.id(), new DispatchSaleRequestDTO(null));
         SaleDetailResponseDTO firstLine = onlyLine(sale);
 
-        sale = saleService.addDetail(sale.id(), new AddSaleDetailRequestDTO(
+        sale = addSeen(sale.id(), new AddSaleDetailRequestDTO(
                 installation.getId(), null, null, 1, new BigDecimal("80.00"), null, null));
         SaleDetailResponseDTO added = sale.details().stream()
                 .filter(detail -> !detail.id().equals(firstLine.id())).findFirst().orElseThrow();
@@ -945,7 +953,7 @@ class SaleFulfillmentDatabaseTest {
         as(shop.seller());
         SaleResponseDTO sale = saleService.create(
                 new CreateSaleRequestDTO(null, PLATE, TaxMode.UNRESOLVED, null));
-        sale = saleService.addDetail(sale.id(), new AddSaleDetailRequestDTO(
+        sale = addSeen(sale.id(), new AddSaleDetailRequestDTO(
                 installation.getId(), null, null, 1, new BigDecimal("50.00"), null, null));
         UUID saleId = sale.id();
 
@@ -974,8 +982,8 @@ class SaleFulfillmentDatabaseTest {
         // Los dos vendedores vieron una unidad libre y confirman a la vez: la
         // reserva se decide bajo el cerrojo del inventario, no con lo que vieron.
         List<Boolean> outcomes = concurrently(shop.seller(),
-                () -> saleService.addDetail(first, specialRequest(leaf, 1, null)),
-                () -> saleService.addDetail(second, specialRequest(leaf, 1, null)));
+                () -> addSeen(first, specialRequest(leaf, 1, null)),
+                () -> addSeen(second, specialRequest(leaf, 1, null)));
         assertThat(outcomes).containsOnly(true);
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM sale_detail WHERE item_id = ?", Long.class, unit)).isEqualTo(1L);
@@ -1006,7 +1014,7 @@ class SaleFulfillmentDatabaseTest {
         List<InventoryItem> units = stocked(shop, leaf, 3);
 
         as(shop.seller());
-        SaleResponseDTO sale = saleService.addDetail(
+        SaleResponseDTO sale = addSeen(
                 openUnresolvedSale("Doble").id(), specialRequest(leaf, 1, null));
         sale = saleService.dispatch(sale.id(), new DispatchSaleRequestDTO(null));
         UUID line = onlyLine(sale).id();
@@ -1037,9 +1045,9 @@ class SaleFulfillmentDatabaseTest {
         stocked(shop, leaf, 2);
 
         as(shop.seller());
-        SaleResponseDTO a = saleService.dispatch(saleService.addDetail(
+        SaleResponseDTO a = saleService.dispatch(addSeen(
                 openUnresolvedSale("A").id(), specialRequest(leaf, 1, null)).id(), new DispatchSaleRequestDTO(null));
-        SaleResponseDTO b = saleService.dispatch(saleService.addDetail(
+        SaleResponseDTO b = saleService.dispatch(addSeen(
                 openUnresolvedSale("B").id(), specialRequest(leaf, 1, null)).id(), new DispatchSaleRequestDTO(null));
         UUID reservedForB = onlyLine(b).item().id();
 
@@ -1058,7 +1066,7 @@ class SaleFulfillmentDatabaseTest {
         Product installation = job(shop, "SOLDADURA");
 
         as(shop.seller());
-        SaleResponseDTO sale = saleService.addDetail(openUnresolvedSale("Toma").id(),
+        SaleResponseDTO sale = addSeen(openUnresolvedSale("Toma").id(),
                 new AddSaleDetailRequestDTO(installation.getId(), null, null, 1,
                         new BigDecimal("90.00"), null, null));
         UUID line = onlyLine(saleService.dispatch(sale.id(), new DispatchSaleRequestDTO(null))).id();
@@ -1088,10 +1096,10 @@ class SaleFulfillmentDatabaseTest {
         InventoryItem source = stocked(shop, leaf(shop, 200, 2), 1).get(0);
 
         as(shop.seller());
-        UUID first = onlyLine(saleService.dispatch(saleService.addDetail(
+        UUID first = onlyLine(saleService.dispatch(addSeen(
                 openUnresolvedSale("X").id(), specialRequest(target, 1, null)).id(),
                 new DispatchSaleRequestDTO(null))).id();
-        UUID second = onlyLine(saleService.dispatch(saleService.addDetail(
+        UUID second = onlyLine(saleService.dispatch(addSeen(
                 openUnresolvedSale("Y").id(), specialRequest(target, 1, null)).id(),
                 new DispatchSaleRequestDTO(null))).id();
 
@@ -1112,7 +1120,7 @@ class SaleFulfillmentDatabaseTest {
         emptyInventory(shop, target);
 
         as(shop.seller());
-        SaleResponseDTO sale = saleService.dispatch(saleService.addDetail(
+        SaleResponseDTO sale = saleService.dispatch(addSeen(
                 openUnresolvedSale("Bloq").id(), specialRequest(target, 1, null)).id(),
                 new DispatchSaleRequestDTO(null));
         UUID line = onlyLine(sale).id();
@@ -1151,9 +1159,9 @@ class SaleFulfillmentDatabaseTest {
         Product installation = job(shop, "LIMPIEZA");
 
         as(shop.seller());
-        SaleResponseDTO sale = saleService.addDetail(openUnresolvedSale("Anula").id(),
+        SaleResponseDTO sale = addSeen(openUnresolvedSale("Anula").id(),
                 specialRequest(leaf, 1, null));
-        sale = saleService.addDetail(sale.id(), new AddSaleDetailRequestDTO(
+        sale = addSeen(sale.id(), new AddSaleDetailRequestDTO(
                 installation.getId(), null, null, 1, new BigDecimal("40.00"), null, null));
         sale = saleService.dispatch(sale.id(), new DispatchSaleRequestDTO(null));
         UUID reserved = lineByType(sale, FulfillmentType.STOCK_RELEASE).item().id();
@@ -1179,7 +1187,7 @@ class SaleFulfillmentDatabaseTest {
         Product installation = job(shop, "PINTURA");
 
         as(shop.seller());
-        UUID saleId = saleService.addDetail(openUnresolvedSale("Curso").id(),
+        UUID saleId = addSeen(openUnresolvedSale("Curso").id(),
                 new AddSaleDetailRequestDTO(installation.getId(), null, null, 1,
                         new BigDecimal("70.00"), null, null)).id();
         UUID line = onlyLine(saleService.dispatch(saleId, new DispatchSaleRequestDTO(null))).id();
@@ -1204,7 +1212,7 @@ class SaleFulfillmentDatabaseTest {
         InventoryItem source = stocked(shop, leaf(shop, 200, 2), 1).get(0);
 
         as(shop.seller());
-        UUID saleId = saleService.dispatch(saleService.addDetail(openUnresolvedSale("Hecho").id(),
+        UUID saleId = saleService.dispatch(addSeen(openUnresolvedSale("Hecho").id(),
                 specialRequest(target, 1, null)).id(), new DispatchSaleRequestDTO(null)).id();
         UUID line = onlyLine(saleService.get(saleId)).id();
 
@@ -1258,7 +1266,7 @@ class SaleFulfillmentDatabaseTest {
 
         // 1-4. Venta, envio, fabricacion: el trabajo nace hecho y ligado a la linea.
         as(shop.seller());
-        UUID firstSale = saleService.dispatch(saleService.addDetail(openUnresolvedSale("Primero").id(),
+        UUID firstSale = saleService.dispatch(addSeen(openUnresolvedSale("Primero").id(),
                 specialRequest(target, 1, null)).id(), new DispatchSaleRequestDTO(null)).id();
         UUID firstLine = onlyLine(saleService.get(firstSale)).id();
         as(shop.operator());
@@ -1300,14 +1308,14 @@ class SaleFulfillmentDatabaseTest {
                 .contains(workResult);
         // La puerta antigua —elegir el trabajo o la unidad desde la caja— sigue cerrada.
         UUID direct = openUnresolvedSale("Directo").id();
-        assertThatThrownBy(() -> saleService.addDetail(direct, new AddSaleDetailRequestDTO(
+        assertThatThrownBy(() -> addSeen(direct, new AddSaleDetailRequestDTO(
                 target.getId(), output, workResult, null, PRICE, null, null)))
                 .isInstanceOf(ValidationException.class);
 
         // 11. Dos clientes la piden a la vez: solo uno se queda la pieza y su trabajo.
-        UUID saleA = saleService.addDetail(openUnresolvedSale("Cliente A").id(),
+        UUID saleA = addSeen(openUnresolvedSale("Cliente A").id(),
                 specialRequest(target, 1, null)).id();
-        UUID saleB = saleService.addDetail(openUnresolvedSale("Cliente B").id(),
+        UUID saleB = addSeen(openUnresolvedSale("Cliente B").id(),
                 specialRequest(target, 1, null)).id();
         assertThat(concurrently(shop.seller(),
                 () -> saleService.dispatch(saleA, new DispatchSaleRequestDTO(null)),
@@ -1351,7 +1359,7 @@ class SaleFulfillmentDatabaseTest {
         UUID unit = stocked(shop, leaf, 1).get(0).getId();
 
         as(shop.seller());
-        SaleResponseDTO sale = saleService.addDetail(openUnresolvedSale("Quita").id(),
+        SaleResponseDTO sale = addSeen(openUnresolvedSale("Quita").id(),
                 specialRequest(leaf, 1, null));
         assertThat(onlyLine(sale).item().id()).isEqualTo(unit);
         assertThat(stockOf(leaf, shop)).isZero();
@@ -1375,7 +1383,7 @@ class SaleFulfillmentDatabaseTest {
         stocked(shop, leaf, 1);
 
         as(shop.seller());
-        SaleResponseDTO sale = saleService.dispatch(saleService.addDetail(
+        SaleResponseDTO sale = saleService.dispatch(addSeen(
                 openUnresolvedSale("Propio").id(), specialRequest(leaf, 1, null)).id(),
                 new DispatchSaleRequestDTO(null));
         UUID line = onlyLine(sale).id();
@@ -1407,7 +1415,7 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         UUID saleId = openUnresolvedSale("Diez").id();
-        SaleResponseDTO sale = saleService.addDetail(saleId, specialRequest(leaf, 10, null));
+        SaleResponseDTO sale = addSeen(saleId, specialRequest(leaf, 10, null));
 
         assertThat(sale.details()).hasSize(10);
         assertThat(sale.total()).isEqualByComparingTo(PRICE.multiply(BigDecimal.valueOf(10)));
@@ -1424,7 +1432,7 @@ class SaleFulfillmentDatabaseTest {
         assertThat(lotRemaining(leaf, shop)).isZero();
 
         // Otra venta pide la misma pieza: no hay unidad terminada que prometerle.
-        SaleResponseDTO other = saleService.addDetail(openUnresolvedSale("Otra").id(), specialRequest(leaf, 3, null));
+        SaleResponseDTO other = addSeen(openUnresolvedSale("Otra").id(), specialRequest(leaf, 3, null));
         assertThat(other.details()).allSatisfy(detail -> {
             assertThat(detail.fulfillment().type()).isEqualTo(FulfillmentType.TRANSFORMATION);
             assertThat(detail.item()).isNull();
@@ -1459,8 +1467,8 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         UUID saleId = openUnresolvedSale("Sin stock").id();
-        saleService.addDetail(saleId, specialRequest(emptied, 10, null));
-        SaleResponseDTO sale = saleService.addDetail(saleId, specialRequest(neverStocked, 2, null));
+        addSeen(saleId, specialRequest(emptied, 10, null));
+        SaleResponseDTO sale = addSeen(saleId, specialRequest(neverStocked, 2, null));
 
         assertThat(sale.details()).hasSize(12).allSatisfy(detail -> {
             assertThat(detail.fulfillment().type()).isEqualTo(FulfillmentType.TRANSFORMATION);
@@ -1486,7 +1494,7 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         UUID saleId = openUnresolvedSale("Una vez").id();
-        UUID line = onlyLine(saleService.addDetail(saleId, specialRequest(leaf, 1, null))).id();
+        UUID line = onlyLine(addSeen(saleId, specialRequest(leaf, 1, null))).id();
         UUID reserved = onlyLine(saleService.get(saleId)).item().id();
         stock.put("reserved", stockOf(leaf, shop));
         saleService.dispatch(saleId, new DispatchSaleRequestDTO(null));
@@ -1524,7 +1532,7 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         UUID saleId = openUnresolvedSale("Suelta").id();
-        SaleResponseDTO sale = saleService.addDetail(saleId, specialRequest(leaf, 5, null));
+        SaleResponseDTO sale = addSeen(saleId, specialRequest(leaf, 5, null));
         assertThat(stockOf(leaf, shop)).isZero();
 
         saleService.removeDetail(sale.details().get(0).id());
@@ -1535,9 +1543,9 @@ class SaleFulfillmentDatabaseTest {
         assertThat(sale.total()).isEqualByComparingTo(PRICE.multiply(BigDecimal.valueOf(3)));
 
         // Subir: una mas, que hay; despues dos mas con una sola libre.
-        sale = saleService.addDetail(saleId, specialRequest(leaf, 1, null));
+        sale = addSeen(saleId, specialRequest(leaf, 1, null));
         assertThat(stockOf(leaf, shop)).isEqualTo(1);
-        sale = saleService.addDetail(saleId, specialRequest(leaf, 2, null));
+        sale = addSeen(saleId, specialRequest(leaf, 2, null));
         assertThat(sale.details()).hasSize(6);
         assertThat(sale.details()).filteredOn(detail -> detail.item() != null).hasSize(5);
         assertThat(stockOf(leaf, shop)).isZero();
@@ -1551,7 +1559,7 @@ class SaleFulfillmentDatabaseTest {
                 .isEqualTo(5L);
 
         // Libres de verdad: otra venta las reserva todas.
-        SaleResponseDTO again = saleService.addDetail(openUnresolvedSale("Otra vez").id(), specialRequest(leaf, 5, null));
+        SaleResponseDTO again = addSeen(openUnresolvedSale("Otra vez").id(), specialRequest(leaf, 5, null));
         assertThat(again.details()).allSatisfy(detail -> assertThat(detail.item()).isNotNull());
         assertThat(stockOf(leaf, shop)).isZero();
         assertNoUnitIsOwnedTwice();
@@ -1573,21 +1581,21 @@ class SaleFulfillmentDatabaseTest {
         UUID second = openSaleWithoutPlate("B").id();
         UUID third = openSaleWithoutPlate("C").id();
 
-        saleService.addDetail(first, normalRequest(screw, 8));
+        addSeen(first, normalRequest(screw, 8));
         assertThat(stockOf(screw, shop)).isEqualTo(2);
-        assertThatThrownBy(() -> saleService.addDetail(second, normalRequest(screw, 3)))
+        assertThatThrownBy(() -> addSeen(second, normalRequest(screw, 3)))
                 .isInstanceOf(ValidationException.class)
                 .hasMessage("Solo hay 2 unidades disponibles");
         assertThat(saleService.get(second).details()).isEmpty();
-        saleService.addDetail(second, normalRequest(screw, 2));
+        addSeen(second, normalRequest(screw, 2));
         assertThat(stockOf(screw, shop)).isZero();
-        assertThatThrownBy(() -> saleService.addDetail(third, normalRequest(screw, 1)))
+        assertThatThrownBy(() -> addSeen(third, normalRequest(screw, 1)))
                 .isInstanceOf(ValidationException.class)
                 .hasMessage("No hay unidades disponibles de este producto");
 
         saleService.cancel(first, new CancelSaleRequestDTO("Cliente desistio"));
         assertThat(stockOf(screw, shop)).isEqualTo(8);
-        saleService.addDetail(third, normalRequest(screw, 1));
+        addSeen(third, normalRequest(screw, 1));
         assertThat(stockOf(screw, shop)).isEqualTo(7);
     }
 
@@ -1602,8 +1610,8 @@ class SaleFulfillmentDatabaseTest {
         UUID first = openSaleWithoutPlate("Uno").id();
         UUID second = openSaleWithoutPlate("Dos").id();
         List<Boolean> outcomes = concurrently(shop.seller(),
-                () -> saleService.addDetail(first, normalRequest(screw, 1)),
-                () -> saleService.addDetail(second, normalRequest(screw, 1)));
+                () -> addSeen(first, normalRequest(screw, 1)),
+                () -> addSeen(second, normalRequest(screw, 1)));
 
         assertThat(outcomes).containsExactlyInAnyOrder(true, false);
         assertThat(stockOf(screw, shop)).isZero();
@@ -1623,7 +1631,7 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         UUID saleId = openUnresolvedSale("Anterior").id();
-        UUID line = onlyLine(saleService.addDetail(saleId, specialRequest(leaf, 1, null))).id();
+        UUID line = onlyLine(addSeen(saleId, specialRequest(leaf, 1, null))).id();
         // Como quedaron las lineas pedidas antes de este cambio.
         jdbc.update("UPDATE sale_detail SET fulfillment_type = NULL WHERE id = ?", line);
         UUID unit = stocked(shop, leaf, 1).get(0).getId();
@@ -1650,8 +1658,8 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         UUID saleId = openUnresolvedSale("Guardada").id();
-        saleService.addDetail(saleId, specialRequest(leaf, 2, null));
-        saleService.addDetail(saleId, normalRequest(screw, 3));
+        addSeen(saleId, specialRequest(leaf, 2, null));
+        addSeen(saleId, normalRequest(screw, 3));
         Map<UUID, UUID> held = unitsByLine(saleService.get(saleId));
         assertThat(held).hasSize(2);
         assertThat(stockOf(leaf, shop)).isEqualTo(1);
@@ -1686,7 +1694,7 @@ class SaleFulfillmentDatabaseTest {
         assertThat(held.values()).allSatisfy(unit -> assertThat(itemStatus(unit)).isEqualTo("AVAILABLE"));
 
         // Las MISMAS unidades, libres de verdad: otra venta las toma.
-        SaleResponseDTO other = saleService.addDetail(openUnresolvedSale("Otra").id(), specialRequest(leaf, 3, null));
+        SaleResponseDTO other = addSeen(openUnresolvedSale("Otra").id(), specialRequest(leaf, 3, null));
         assertThat(other.details()).extracting(detail -> detail.item().id())
                 .containsAll(held.values());
         assertNoUnitIsOwnedTwice();
@@ -1707,8 +1715,8 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         UUID saleId = openUnresolvedSale("Apartado").id();
-        UUID line = onlyLine(saleService.addDetail(saleId, specialRequest(leaf, 1, null))).id();
-        SaleResponseDTO open = saleService.addDetail(saleId, normalRequest(screw, 2));
+        UUID line = onlyLine(addSeen(saleId, specialRequest(leaf, 1, null))).id();
+        SaleResponseDTO open = addSeen(saleId, normalRequest(screw, 2));
         assertThat(stockOf(leaf, shop)).isEqualTo(1);
         assertThat(stockOf(screw, shop)).isEqualTo(3);
         assertThat(open.status()).isEqualTo(SaleStatus.PENDING);
@@ -1802,7 +1810,7 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         UUID saleId = openUnresolvedSale("Ultima").id();
-        SaleDetailResponseDTO line = onlyLine(saleService.addDetail(saleId, specialRequest(leaf, 1, null)));
+        SaleDetailResponseDTO line = onlyLine(addSeen(saleId, specialRequest(leaf, 1, null)));
         assertThat(line.item().id()).isEqualTo(unit);
         assertThat(itemStatus(unit)).isEqualTo("SOLD");
         assertThat(stockOf(leaf, shop)).isZero();
@@ -1828,7 +1836,7 @@ class SaleFulfillmentDatabaseTest {
         assertThat(lotRemaining(leaf, shop)).isZero();
 
         as(shop.seller());
-        SaleDetailResponseDTO other = onlyLine(saleService.addDetail(
+        SaleDetailResponseDTO other = onlyLine(addSeen(
                 openUnresolvedSale("Otra").id(), specialRequest(leaf, 1, null)));
         assertThat(other.item()).isNull();
         assertThat(other.fulfillment().type()).isEqualTo(FulfillmentType.TRANSFORMATION);
@@ -1850,8 +1858,8 @@ class SaleFulfillmentDatabaseTest {
         UUID first = openUnresolvedSale("Uno").id();
         UUID second = openUnresolvedSale("Dos").id();
         List<Boolean> outcomes = concurrently(shop.seller(),
-                () -> saleService.requestSpecification(first, request),
-                () -> saleService.requestSpecification(second, request));
+                () -> specSeen(first, request),
+                () -> specSeen(second, request));
 
         assertThat(outcomes).containsOnly(true);
         assertThat(productWith(hoja, shop.model(), wanted)).isEqualTo(1);
@@ -1879,8 +1887,8 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         UUID saleId = openUnresolvedSale("Mixta").id();
-        saleService.addDetail(saleId, specialRequest(leaf, 1, null));
-        SaleResponseDTO sale = saleService.requestSpecification(saleId, new RequestSpecificationDTO(
+        addSeen(saleId, specialRequest(leaf, 1, null));
+        SaleResponseDTO sale = specSeen(saleId, new RequestSpecificationDTO(
                 hoja.getId(), shop.model().getId(), wanted, 1, newPrice, null, null));
 
         SaleDetailResponseDTO fromStock = lineByType(sale, FulfillmentType.STOCK_RELEASE);
@@ -1936,11 +1944,11 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         UUID saleId = openSaleWithoutPlate("Sin placa").id();
-        assertThatThrownBy(() -> saleService.addDetail(saleId, serviceRequest(installation, null)))
+        assertThatThrownBy(() -> addSeen(saleId, serviceRequest(installation, null)))
                 .isInstanceOf(ValidationException.class)
                 .hasMessageContaining("placa del vehiculo es obligatoria");
         // En blanco es lo mismo que nada.
-        assertThatThrownBy(() -> saleService.addDetail(saleId, serviceRequest(installation, "   ")))
+        assertThatThrownBy(() -> addSeen(saleId, serviceRequest(installation, "   ")))
                 .isInstanceOf(ValidationException.class)
                 .hasMessageContaining("placa del vehiculo es obligatoria");
 
@@ -1958,7 +1966,7 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         UUID saleId = openSaleWithoutPlate("Placa nueva").id();
-        SaleResponseDTO sale = saleService.addDetail(saleId, serviceRequest(installation, "  p512klm "));
+        SaleResponseDTO sale = addSeen(saleId, serviceRequest(installation, "  p512klm "));
         assertThat(sale.plate()).isEqualTo("P512KLM");
         UUID line = onlyLine(sale).id();
         assertThat(onlyLine(sale).fulfillment().type()).isEqualTo(FulfillmentType.SERVICE);
@@ -1966,11 +1974,11 @@ class SaleFulfillmentDatabaseTest {
                 .isEqualTo("P512KLM");
 
         // Con la placa registrada, el siguiente servicio no la pide ni la cambia.
-        sale = saleService.addDetail(saleId, serviceRequest(installation, null));
+        sale = addSeen(saleId, serviceRequest(installation, null));
         assertThat(sale.details()).hasSize(2);
-        sale = saleService.addDetail(saleId, serviceRequest(installation, "P512KLM"));
+        sale = addSeen(saleId, serviceRequest(installation, "P512KLM"));
         assertThat(sale.details()).hasSize(3);
-        assertThatThrownBy(() -> saleService.addDetail(saleId, serviceRequest(installation, "C999XYZ")))
+        assertThatThrownBy(() -> addSeen(saleId, serviceRequest(installation, "C999XYZ")))
                 .isInstanceOf(ValidationException.class)
                 .hasMessageContaining("P512KLM");
         assertThat(saleService.get(saleId).plate()).isEqualTo("P512KLM");
@@ -1996,9 +2004,9 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         UUID saleId = openSaleWithoutPlate("Mostrador").id();
-        saleService.addDetail(saleId, new AddSaleDetailRequestDTO(
+        addSeen(saleId, new AddSaleDetailRequestDTO(
                 screw.getId(), null, null, 2, null, null, null));
-        saleService.addDetail(saleId, specialRequest(leaf, 1, null));
+        addSeen(saleId, specialRequest(leaf, 1, null));
         SaleResponseDTO sale = saleService.dispatch(saleId, new DispatchSaleRequestDTO(null));
 
         assertThat(sale.plate()).isNull();
@@ -2018,7 +2026,7 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         UUID saleId = openUnresolvedSale("Anterior").id();
-        UUID line = onlyLine(saleService.addDetail(saleId, serviceRequest(installation, null))).id();
+        UUID line = onlyLine(addSeen(saleId, serviceRequest(installation, null))).id();
         // Como quedaron las ventas abiertas de antes de la regla.
         jdbc.update("UPDATE sale SET plate = NULL WHERE id = ?", saleId);
 
@@ -2044,11 +2052,11 @@ class SaleFulfillmentDatabaseTest {
         as(shop.seller());
         UUID emptySale = openSaleWithoutPlate("Nuestra").id();
         UUID servedSale = openSaleWithoutPlate("Atendida").id();
-        UUID line = onlyLine(saleService.addDetail(servedSale, serviceRequest(ours, "P100AAA"))).id();
+        UUID line = onlyLine(addSeen(servedSale, serviceRequest(ours, "P100AAA"))).id();
         saleService.dispatch(servedSale, new DispatchSaleRequestDTO(null));
 
         as(neighbour.seller());
-        assertThatThrownBy(() -> saleService.addDetail(emptySale, serviceRequest(theirs, "H000AAA")))
+        assertThatThrownBy(() -> addSeen(emptySale, serviceRequest(theirs, "H000AAA")))
                 .isInstanceOf(EntityNotFoundException.class);
         assertThatThrownBy(() -> saleService.dispatch(emptySale, new DispatchSaleRequestDTO(null, "H000AAA")))
                 .isInstanceOf(EntityNotFoundException.class);
@@ -2081,10 +2089,10 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         UUID saleId = openUnresolvedSale("Directo").id();
-        assertThatThrownBy(() -> saleService.addDetail(saleId,
+        assertThatThrownBy(() -> addSeen(saleId,
                 new AddSaleDetailRequestDTO(leaf.getId(), unit.getId(), null, null, PRICE, null)))
                 .isInstanceOf(ValidationException.class)
-                .hasMessageContaining("Control entrega la unidad");
+                .hasMessageContaining("el Operador entrega la unidad");
 
         assertThat(itemStatus(unit.getId())).isEqualTo("AVAILABLE");
         assertThat(stockOf(leaf, shop)).isEqualTo(1);
@@ -2092,7 +2100,7 @@ class SaleFulfillmentDatabaseTest {
 
         // Por la comanda si: la misma unidad la entrega Control.
         UUID line = onlyLine(saleService.dispatch(
-                saleService.addDetail(saleId, specialRequest(leaf, 1, null)).id(),
+                addSeen(saleId, specialRequest(leaf, 1, null)).id(),
                 new DispatchSaleRequestDTO(null))).id();
         assertThat(onlyLine(saleService.get(saleId)).fulfillment().area()).isEqualTo(FulfillmentArea.CONTROL);
         as(shop.control());
@@ -2108,7 +2116,7 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         UUID saleId = openUnresolvedSale("Instr").id();
-        assertThatThrownBy(() -> saleService.addDetail(saleId,
+        assertThatThrownBy(() -> addSeen(saleId,
                 new AddSaleDetailRequestDTO(screw.getId(), null, null, 1, null, null, "algo")))
                 .isInstanceOf(ValidationException.class)
                 .hasMessageContaining("solo aplican");
@@ -2124,7 +2132,7 @@ class SaleFulfillmentDatabaseTest {
         Product installation = job(shop, "CAMBIO");
 
         as(shop.seller());
-        UUID saleId = saleService.addDetail(openUnresolvedSale("Cola").id(),
+        UUID saleId = addSeen(openUnresolvedSale("Cola").id(),
                 new AddSaleDetailRequestDTO(installation.getId(), null, null, 1,
                         new BigDecimal("80.00"), null, null)).id();
         saleService.dispatch(saleId, new DispatchSaleRequestDTO(null));
@@ -2150,7 +2158,7 @@ class SaleFulfillmentDatabaseTest {
         Product installation = job(shop, "ALINEADO");
 
         as(shop.seller());
-        UUID saleId = saleService.addDetail(openUnresolvedSale("Curso2").id(),
+        UUID saleId = addSeen(openUnresolvedSale("Curso2").id(),
                 new AddSaleDetailRequestDTO(installation.getId(), null, null, 1,
                         new BigDecimal("80.00"), null, null)).id();
         UUID line = onlyLine(saleService.dispatch(saleId, new DispatchSaleRequestDTO(null))).id();
@@ -2180,8 +2188,8 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         UUID saleId = openUnresolvedSale("Hecho2").id();
-        saleService.addDetail(saleId, specialRequest(leaf, 1, null));
-        saleService.addDetail(saleId, new AddSaleDetailRequestDTO(
+        addSeen(saleId, specialRequest(leaf, 1, null));
+        addSeen(saleId, new AddSaleDetailRequestDTO(
                 installation.getId(), null, null, 1, new BigDecimal("90.00"), null, null));
         SaleResponseDTO dispatched = saleService.dispatch(saleId, new DispatchSaleRequestDTO(null));
         UUID serviceLine = lineOf(dispatched, FulfillmentType.SERVICE);
@@ -2221,7 +2229,7 @@ class SaleFulfillmentDatabaseTest {
 
     private UUID fabricationRequest(Shop shop, Product target) {
         as(shop.seller());
-        SaleResponseDTO sale = saleService.addDetail(openUnresolvedSale("Precio").id(),
+        SaleResponseDTO sale = addSeen(openUnresolvedSale("Precio").id(),
                 new AddSaleDetailRequestDTO(target.getId(), null, null, 1, AUTHORIZED, null, null));
         return onlyLine(saleService.dispatch(sale.id(), new DispatchSaleRequestDTO(null))).id();
     }
@@ -2309,12 +2317,12 @@ class SaleFulfillmentDatabaseTest {
         assertThatThrownBy(() -> completeAsCf(sale.id())).isInstanceOf(ValidationException.class);
 
         // Bajo el minimo no se acepta.
-        assertThatThrownBy(() -> saleService.updateRequestPrice(line, new UpdateRequestPriceDTO(new BigDecimal("250.00"))))
+        assertThatThrownBy(() -> saleService.updateRequestPrice(line, new UpdateRequestPriceDTO(new BigDecimal("250.00"), AUTHORIZED)))
                 .isInstanceOf(ValidationException.class)
                 .hasMessageContaining("260.00");
 
         // E/F. Con un precio que lo cubre, vuelve a la cola del Operador.
-        SaleResponseDTO revised = saleService.updateRequestPrice(line, new UpdateRequestPriceDTO(new BigDecimal("320.00")));
+        SaleResponseDTO revised = saleService.updateRequestPrice(line, new UpdateRequestPriceDTO(new BigDecimal("320.00"), AUTHORIZED));
         assertThat(onlyLine(revised).id()).isEqualTo(line);
         assertThat(onlyLine(revised).price()).isEqualByComparingTo("320.00");
         assertThat(onlyLine(revised).subTotal()).isEqualByComparingTo("320.00");
@@ -2344,7 +2352,7 @@ class SaleFulfillmentDatabaseTest {
         UUID line = fabricationRequest(shop, target);
 
         as(shop.seller());
-        assertThatThrownBy(() -> saleService.updateRequestPrice(line, new UpdateRequestPriceDTO(new BigDecimal("300.00"))))
+        assertThatThrownBy(() -> saleService.updateRequestPrice(line, new UpdateRequestPriceDTO(new BigDecimal("300.00"), AUTHORIZED)))
                 .isInstanceOf(ValidationException.class)
                 .hasMessageContaining("revision de precio");
         assertThat(onlyLine(saleService.get(saleIdOf(line))).price()).isEqualByComparingTo(AUTHORIZED);
@@ -2358,13 +2366,13 @@ class SaleFulfillmentDatabaseTest {
         emptyInventory(shop, leaf);
 
         as(shop.seller());
-        SaleResponseDTO sale = saleService.addDetail(openUnresolvedSale("Corrige").id(),
+        SaleResponseDTO sale = addSeen(openUnresolvedSale("Corrige").id(),
                 new AddSaleDetailRequestDTO(leaf.getId(), null, null, 2, AUTHORIZED, null, null));
         UUID first = sale.details().get(0).id();
-        SaleResponseDTO corrected = saleService.updateRequestPrice(first, new UpdateRequestPriceDTO(new BigDecimal("210.00")));
+        SaleResponseDTO corrected = saleService.updateRequestPrice(first, new UpdateRequestPriceDTO(new BigDecimal("210.00"), AUTHORIZED));
         assertThat(corrected.total()).isEqualByComparingTo("410.00");
         // Nunca por debajo del costo del inventario pedido (Q100).
-        assertThatThrownBy(() -> saleService.updateRequestPrice(first, new UpdateRequestPriceDTO(new BigDecimal("90.00"))))
+        assertThatThrownBy(() -> saleService.updateRequestPrice(first, new UpdateRequestPriceDTO(new BigDecimal("90.00"), new BigDecimal("210.00"))))
                 .isInstanceOf(ValidationException.class);
     }
 
@@ -2375,7 +2383,7 @@ class SaleFulfillmentDatabaseTest {
         InventoryItem expensive = stockedAtCost(shop, leaf(shop, 200, 3), 1, new BigDecimal("400.00")).get(0);
 
         as(shop.seller());
-        SaleResponseDTO sale = saleService.requestSpecification(openUnresolvedSale("Nueva").id(),
+        SaleResponseDTO sale = specSeen(openUnresolvedSale("Nueva").id(),
                 new RequestSpecificationDTO(seededFamily("HR").getId(), shop.model().getId(),
                         attributes("largo", 77, "tieneOrificio", false, "cantidadColochos", 1),
                         1, AUTHORIZED, null, null));
@@ -2398,7 +2406,7 @@ class SaleFulfillmentDatabaseTest {
         InventoryItem expensive = stockedAtCost(shop, leaf(shop, 191, 2), 1, new BigDecimal("700.00")).get(0);
 
         as(shop.seller());
-        SaleResponseDTO sale = saleService.addDetail(openUnresolvedSale("Parcial").id(),
+        SaleResponseDTO sale = addSeen(openUnresolvedSale("Parcial").id(),
                 new AddSaleDetailRequestDTO(target.getId(), null, null, 3, PRICE, null, null));
         sale = saleService.dispatch(sale.id(), new DispatchSaleRequestDTO(null));
         List<UUID> toFabricate = sale.details().stream()
@@ -2441,7 +2449,7 @@ class SaleFulfillmentDatabaseTest {
 
         List<Boolean> outcomes = concurrentlyAs(List.of(
                 Map.entry(shop.seller(), () -> saleService.updateRequestPrice(
-                        line, new UpdateRequestPriceDTO(new BigDecimal("300.00")))),
+                        line, new UpdateRequestPriceDTO(new BigDecimal("300.00"), AUTHORIZED))),
                 Map.entry(shop.operator(), () -> fulfillmentService.transform(
                         line, new FulfillTransformationRequestDTO(expensive.getId(), null)))));
         assertThat(outcomes).containsOnly(true);
@@ -2475,7 +2483,7 @@ class SaleFulfillmentDatabaseTest {
         as(shop.operator());
         fulfillmentService.transform(line, new FulfillTransformationRequestDTO(expensive.getId(), null));
         as(shop.seller());
-        saleService.updateRequestPrice(line, new UpdateRequestPriceDTO(new BigDecimal("300.00")));
+        saleService.updateRequestPrice(line, new UpdateRequestPriceDTO(new BigDecimal("300.00"), AUTHORIZED));
 
         List<Boolean> outcomes = concurrentlyAs(List.of(
                 Map.entry(shop.operator(), () -> fulfillmentService.transform(
@@ -2929,7 +2937,7 @@ class SaleFulfillmentDatabaseTest {
         as(shop.seller());
         SaleResponseDTO sale = openUnresolvedSale("Plan " + lines);
         for (int line = 0; line < lines; line++) {
-            sale = saleService.addDetail(sale.id(), new AddSaleDetailRequestDTO(
+            sale = addSeen(sale.id(), new AddSaleDetailRequestDTO(
                     installation.getId(), null, null, 1, new BigDecimal("10.00"), null, null));
         }
         sale = saleService.dispatch(sale.id(), new DispatchSaleRequestDTO(null));
@@ -2941,8 +2949,8 @@ class SaleFulfillmentDatabaseTest {
     private void queueRequests(Shop shop, Product installation, Product leaf, int count) {
         for (int index = 0; index < count; index++) {
             SaleResponseDTO sale = openUnresolvedSale("Cola " + index);
-            sale = saleService.addDetail(sale.id(), specialRequest(leaf, 1, null));
-            sale = saleService.addDetail(sale.id(), new AddSaleDetailRequestDTO(
+            sale = addSeen(sale.id(), specialRequest(leaf, 1, null));
+            sale = addSeen(sale.id(), new AddSaleDetailRequestDTO(
                     installation.getId(), null, null, 1, new BigDecimal("10.00"), null, null));
             saleService.dispatch(sale.id(), new DispatchSaleRequestDTO(null));
         }
@@ -2964,13 +2972,13 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         UUID saleId = openUnresolvedSale("Colochos").id();
-        assertThatThrownBy(() -> saleService.addDetail(saleId, curlRequest(target, false, null)))
+        assertThatThrownBy(() -> addSeen(saleId, curlRequest(target, false, null)))
                 .isInstanceOf(ValidationException.class)
                 .hasMessageContaining("lleva 4 colochos");
-        assertThatThrownBy(() -> saleService.addDetail(saleId, curlRequest(target, true, 3)))
+        assertThatThrownBy(() -> addSeen(saleId, curlRequest(target, true, 3)))
                 .isInstanceOf(ValidationException.class)
                 .hasMessageContaining("lleva 4 colochos");
-        SaleResponseDTO sale = saleService.addDetail(saleId, specialRequest(target, 1, null));
+        SaleResponseDTO sale = addSeen(saleId, specialRequest(target, 1, null));
         UUID line = onlyLine(sale).id();
         assertThat(onlyLine(sale).requestedCurls()).isTrue();
         assertThat(onlyLine(sale).requestedCurlCount()).isEqualTo(4);
@@ -3006,7 +3014,7 @@ class SaleFulfillmentDatabaseTest {
         InventoryItem source = stocked(shop, leaf(shop, 180, 2), 1).get(0);
 
         as(shop.seller());
-        SaleResponseDTO sale = saleService.addDetail(
+        SaleResponseDTO sale = addSeen(
                 openUnresolvedSale("Cuatro").id(), curlRequest(target, true, 4));
         UUID line = onlyLine(sale).id();
         saleService.dispatch(sale.id(), new DispatchSaleRequestDTO(null));
@@ -3045,7 +3053,7 @@ class SaleFulfillmentDatabaseTest {
         InventoryItem source = stocked(shop, leaf(shop, 180, 2), 1).get(0);
 
         as(shop.seller());
-        SaleResponseDTO sale = saleService.addDetail(
+        SaleResponseDTO sale = addSeen(
                 openUnresolvedSale("Abierta").id(), curlRequest(target, true, 4));
         UUID line = onlyLine(sale).id();
         saleService.dispatch(sale.id(), new DispatchSaleRequestDTO(null));
@@ -3092,7 +3100,7 @@ class SaleFulfillmentDatabaseTest {
         InventoryItem source = stocked(shop, leaf(shop, 200, 3), 1).get(0);
 
         as(shop.seller());
-        SaleResponseDTO sale = saleService.addDetail(
+        SaleResponseDTO sale = addSeen(
                 openUnresolvedSale("Sin cantidad").id(), curlRequest(target, true, 2));
         UUID line = onlyLine(sale).id();
         saleService.dispatch(sale.id(), new DispatchSaleRequestDTO(null));
@@ -3123,30 +3131,30 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         UUID saleId = openUnresolvedSale("Cuantos").id();
-        assertThatThrownBy(() -> saleService.addDetail(saleId, curlRequest(stockedLeaf, true, null)))
+        assertThatThrownBy(() -> addSeen(saleId, curlRequest(stockedLeaf, true, null)))
                 .isInstanceOf(ValidationException.class)
                 .hasMessageContaining("Indique cuántos colochos lleva la pieza");
-        assertThatThrownBy(() -> saleService.addDetail(saleId, curlRequest(stockedLeaf, true, 0)))
+        assertThatThrownBy(() -> addSeen(saleId, curlRequest(stockedLeaf, true, 0)))
                 .isInstanceOf(ValidationException.class)
                 .hasMessageContaining("de 1 en adelante");
-        assertThatThrownBy(() -> saleService.addDetail(saleId, curlRequest(stockedLeaf, true, -2)))
+        assertThatThrownBy(() -> addSeen(saleId, curlRequest(stockedLeaf, true, -2)))
                 .isInstanceOf(ValidationException.class);
 
-        assertThatThrownBy(() -> saleService.requestSpecification(saleId, new RequestSpecificationDTO(
+        assertThatThrownBy(() -> specSeen(saleId, new RequestSpecificationDTO(
                 hoja.getId(), shop.model().getId(), wanted, 1, PRICE, null, null, true, null)))
                 .isInstanceOf(ValidationException.class)
                 .hasMessageContaining("Indique cuántos colochos lleva la pieza");
         for (Object impossible : List.of(3.5, -2)) {
             Map<String, Object> bad = new HashMap<>(wanted);
             bad.put("cantidadColochos", impossible);
-            assertThatThrownBy(() -> saleService.requestSpecification(saleId, new RequestSpecificationDTO(
+            assertThatThrownBy(() -> specSeen(saleId, new RequestSpecificationDTO(
                     hoja.getId(), shop.model().getId(), bad, 1, PRICE, null, null, true, null)))
                     .isInstanceOf(ValidationException.class)
                     .hasMessageContaining("entero");
         }
         Map<String, Object> zero = new HashMap<>(wanted);
         zero.put("cantidadColochos", 0);
-        assertThatThrownBy(() -> saleService.requestSpecification(saleId, new RequestSpecificationDTO(
+        assertThatThrownBy(() -> specSeen(saleId, new RequestSpecificationDTO(
                 hoja.getId(), shop.model().getId(), zero, 1, PRICE, null, null, true, null)))
                 .isInstanceOf(ValidationException.class);
 
@@ -3156,10 +3164,10 @@ class SaleFulfillmentDatabaseTest {
         assertThat(products()).isEqualTo(productsBefore);
 
         // Con la cantidad, los dos caminos aceptan.
-        SaleResponseDTO sale = saleService.addDetail(saleId, curlRequest(stockedLeaf, true, 4));
+        SaleResponseDTO sale = addSeen(saleId, curlRequest(stockedLeaf, true, 4));
         Map<String, Object> withCount = new HashMap<>(wanted);
         withCount.put("cantidadColochos", 4);
-        sale = saleService.requestSpecification(saleId, new RequestSpecificationDTO(
+        sale = specSeen(saleId, new RequestSpecificationDTO(
                 hoja.getId(), shop.model().getId(), withCount, 1, PRICE, null, null, true, null));
         assertThat(sale.details()).extracting(SaleDetailResponseDTO::requestedCurlCount).containsExactly(4, 4);
         assertThat(sale.details()).extracting(SaleDetailResponseDTO::requestedCurls).containsExactly(true, true);
@@ -3174,10 +3182,10 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         SaleResponseDTO sale = openUnresolvedSale("Sin colochos, cero");
-        sale = saleService.addDetail(sale.id(), curlRequest(target, false, null));
-        sale = saleService.addDetail(sale.id(), curlRequest(target, false, 0));
+        sale = addSeen(sale.id(), curlRequest(target, false, null));
+        sale = addSeen(sale.id(), curlRequest(target, false, 0));
         UUID saleId = sale.id();
-        assertThatThrownBy(() -> saleService.addDetail(saleId, curlRequest(target, false, 3)))
+        assertThatThrownBy(() -> addSeen(saleId, curlRequest(target, false, 3)))
                 .isInstanceOf(ValidationException.class);
 
         assertThat(sale.details()).extracting(SaleDetailResponseDTO::requestedCurls).containsExactly(false, false);
@@ -3197,7 +3205,7 @@ class SaleFulfillmentDatabaseTest {
         stocked(shop, target, 1);
 
         as(shop.seller());
-        SaleResponseDTO sale = saleService.addDetail(
+        SaleResponseDTO sale = addSeen(
                 openUnresolvedSale("Tres de cuatro").id(),
                 new AddSaleDetailRequestDTO(target.getId(), null, null, 3, PRICE, null, null, null, true, 4));
         sale = saleService.dispatch(sale.id(), new DispatchSaleRequestDTO(null));
@@ -3232,9 +3240,9 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         UUID saleId = openUnresolvedSale("Sin colochos").id();
-        assertThatThrownBy(() -> saleService.addDetail(saleId, curlRequest(target, false, 2)))
+        assertThatThrownBy(() -> addSeen(saleId, curlRequest(target, false, 2)))
                 .isInstanceOf(ValidationException.class);
-        SaleResponseDTO sale = saleService.addDetail(saleId, curlRequest(target, false, null));
+        SaleResponseDTO sale = addSeen(saleId, curlRequest(target, false, null));
         UUID line = onlyLine(sale).id();
         saleService.dispatch(saleId, new DispatchSaleRequestDTO(null));
 
@@ -3278,19 +3286,19 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         UUID saleId = openUnresolvedSale("Incompleta").id();
-        assertThatThrownBy(() -> saleService.addDetail(saleId, specialRequest(target, 1, null)))
+        assertThatThrownBy(() -> addSeen(saleId, specialRequest(target, 1, null)))
                 .isInstanceOf(ValidationException.class)
                 .hasMessageContaining("Indique si la pieza lleva colochos");
-        assertThatThrownBy(() -> saleService.requestSpecification(saleId, new RequestSpecificationDTO(
+        assertThatThrownBy(() -> specSeen(saleId, new RequestSpecificationDTO(
                 hoja.getId(), shop.model().getId(), wanted, 1, PRICE, null, null)))
                 .isInstanceOf(ValidationException.class)
                 .hasMessageContaining("Indique si la pieza lleva colochos");
         assertThat(productWith(hoja, shop.model(), wanted)).isZero();
-        assertThatThrownBy(() -> saleService.addDetail(saleId, curlRequest(target, true, 0)))
+        assertThatThrownBy(() -> addSeen(saleId, curlRequest(target, true, 0)))
                 .isInstanceOf(ValidationException.class);
-        assertThatThrownBy(() -> saleService.addDetail(saleId, curlRequest(target, true, -1)))
+        assertThatThrownBy(() -> addSeen(saleId, curlRequest(target, true, -1)))
                 .isInstanceOf(ValidationException.class);
-        assertThatThrownBy(() -> saleService.addDetail(saleId, new AddSaleDetailRequestDTO(
+        assertThatThrownBy(() -> addSeen(saleId, new AddSaleDetailRequestDTO(
                 screw.getId(), null, null, 1, null, null, null, null, true, null)))
                 .isInstanceOf(ValidationException.class);
         assertThat(linesOfSale(saleId)).isZero();
@@ -3309,7 +3317,7 @@ class SaleFulfillmentDatabaseTest {
         InventoryItem source = stocked(shop, leaf(shop, 180, 2), 1).get(0);
 
         as(shop.seller());
-        SaleResponseDTO sale = saleService.addDetail(
+        SaleResponseDTO sale = addSeen(
                 openUnresolvedSale("Historica").id(), curlRequest(target, true, 3));
         UUID line = onlyLine(sale).id();
         saleService.dispatch(sale.id(), new DispatchSaleRequestDTO(null));
@@ -3341,8 +3349,8 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         SaleResponseDTO sale = openUnresolvedSale("Dos lineas");
-        sale = saleService.addDetail(sale.id(), curlRequest(target, true, 4));
-        sale = saleService.addDetail(sale.id(), curlRequest(target, false, null));
+        sale = addSeen(sale.id(), curlRequest(target, true, 4));
+        sale = addSeen(sale.id(), curlRequest(target, false, null));
         sale = saleService.dispatch(sale.id(), new DispatchSaleRequestDTO(null));
         UUID four = sale.details().get(0).id();
         UUID none = sale.details().get(1).id();
@@ -3365,7 +3373,7 @@ class SaleFulfillmentDatabaseTest {
         InventoryItem theirs = stocked(neighbour, leaf(neighbour, 180, 2), 1).get(0);
 
         as(shop.seller());
-        UUID line = onlyLine(saleService.dispatch(saleService.addDetail(
+        UUID line = onlyLine(saleService.dispatch(addSeen(
                 openUnresolvedSale("Nuestra").id(), curlRequest(target, false, null)).id(),
                 new DispatchSaleRequestDTO(null))).id();
 
@@ -3385,10 +3393,10 @@ class SaleFulfillmentDatabaseTest {
         Product leaf = leaf(shop, 120, 2);
         stocked(shop, leaf, 3);
         as(shop.seller());
-        SaleResponseDTO sale = saleService.dispatch(saleService.addDetail(
+        SaleResponseDTO sale = saleService.dispatch(addSeen(
                 openUnresolvedSale("Mismo cliente").id(), specialRequest(leaf, 5, null)).id(),
                 new DispatchSaleRequestDTO(null));
-        SaleResponseDTO other = saleService.dispatch(saleService.addDetail(
+        SaleResponseDTO other = saleService.dispatch(addSeen(
                 openUnresolvedSale("Mismo cliente").id(), specialRequest(leaf, 1, null)).id(),
                 new DispatchSaleRequestDTO(null));
         as(shop.control());
@@ -3465,12 +3473,12 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         SaleResponseDTO sale = openUnresolvedSale("Grupo");
-        sale = saleService.addDetail(sale.id(), specialRequest(leaf, 2, null));
-        sale = saleService.addDetail(sale.id(), new AddSaleDetailRequestDTO(
+        sale = addSeen(sale.id(), specialRequest(leaf, 2, null));
+        sale = addSeen(sale.id(), new AddSaleDetailRequestDTO(
                 installation.getId(), null, null, 1, new BigDecimal("150.00"), null, null));
         sale = saleService.dispatch(sale.id(), new DispatchSaleRequestDTO(null));
         UUID saleId = sale.id();
-        SaleResponseDTO other = saleService.dispatch(saleService.addDetail(
+        SaleResponseDTO other = saleService.dispatch(addSeen(
                 openUnresolvedSale("Otra").id(), specialRequest(leaf, 1, null)).id(),
                 new DispatchSaleRequestDTO(null));
         List<UUID> lines = sale.details().stream().map(SaleDetailResponseDTO::id).toList();
@@ -3525,7 +3533,7 @@ class SaleFulfillmentDatabaseTest {
         stocked(shop, leaf, 3);
 
         as(shop.seller());
-        SaleResponseDTO sale = saleService.dispatch(saleService.addDetail(
+        SaleResponseDTO sale = saleService.dispatch(addSeen(
                 openUnresolvedSale("Parcial").id(), specialRequest(leaf, 3, null)).id(),
                 new DispatchSaleRequestDTO(null));
         UUID saleId = sale.id();
@@ -3583,7 +3591,7 @@ class SaleFulfillmentDatabaseTest {
         List<InventoryItem> sources = stocked(shop, leaf(shop, 300, 2), 2);
 
         as(shop.seller());
-        SaleResponseDTO sale = saleService.dispatch(saleService.addDetail(
+        SaleResponseDTO sale = saleService.dispatch(addSeen(
                 openUnresolvedSale("Mixta").id(), specialRequest(leaf, 3, null)).id(),
                 new DispatchSaleRequestDTO(null));
         UUID saleId = sale.id();
@@ -3641,9 +3649,9 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         SaleResponseDTO sale = openUnresolvedSale("Ids");
-        sale = saleService.addDetail(sale.id(), specialRequest(stockedLeaf, 1, null));
-        sale = saleService.addDetail(sale.id(), specialRequest(missing, 1, null));
-        sale = saleService.addDetail(sale.id(), normalRequest(screw, 1));
+        sale = addSeen(sale.id(), specialRequest(stockedLeaf, 1, null));
+        sale = addSeen(sale.id(), specialRequest(missing, 1, null));
+        sale = addSeen(sale.id(), normalRequest(screw, 1));
         sale = saleService.dispatch(sale.id(), new DispatchSaleRequestDTO(null));
         UUID controlLine = lineOf(sale, FulfillmentType.STOCK_RELEASE);
         UUID operatorLine = lineOf(sale, FulfillmentType.TRANSFORMATION);
@@ -3700,9 +3708,9 @@ class SaleFulfillmentDatabaseTest {
         InventoryItem reserved = stocked(shop, reservedLeaf, 1).get(0);
 
         as(shop.seller());
-        saleService.addDetail(openUnresolvedSale("Aparta").id(), specialRequest(reservedLeaf, 1, null));
+        addSeen(openUnresolvedSale("Aparta").id(), specialRequest(reservedLeaf, 1, null));
         assertThat(itemStatus(reserved.getId())).isEqualTo("SOLD");
-        SaleResponseDTO sale = saleService.dispatch(saleService.addDetail(
+        SaleResponseDTO sale = saleService.dispatch(addSeen(
                 openUnresolvedSale("Busca").id(), specialRequest(target, 1, null)).id(),
                 new DispatchSaleRequestDTO(null));
         UUID line = onlyLine(sale).id();
@@ -3737,11 +3745,11 @@ class SaleFulfillmentDatabaseTest {
         emptyInventory(neighbour, theirTarget);
 
         as(shop.seller());
-        UUID ourLine = onlyLine(saleService.dispatch(saleService.addDetail(
+        UUID ourLine = onlyLine(saleService.dispatch(addSeen(
                 openUnresolvedSale("Nuestra").id(), specialRequest(target, 1, null)).id(),
                 new DispatchSaleRequestDTO(null))).id();
         as(neighbour.seller());
-        UUID theirLine = onlyLine(saleService.dispatch(saleService.addDetail(
+        UUID theirLine = onlyLine(saleService.dispatch(addSeen(
                 openUnresolvedSale("Vecina").id(), specialRequest(theirTarget, 1, null)).id(),
                 new DispatchSaleRequestDTO(null))).id();
 
@@ -3817,7 +3825,7 @@ class SaleFulfillmentDatabaseTest {
         stocked(shop, leaf, 2);
 
         as(shop.seller());
-        SaleResponseDTO sale = saleService.addDetail(
+        SaleResponseDTO sale = addSeen(
                 openUnresolvedSale("Historial").id(), specialRequest(leaf, 1, null));
         UUID line = onlyLine(sale).id();
         saleService.dispatch(sale.id(), new DispatchSaleRequestDTO(null));
@@ -3852,13 +3860,13 @@ class SaleFulfillmentDatabaseTest {
         assertThat(document.product().model().brand().name()).isEqualTo(shop.model().getBrand().getName());
         assertThat(document.product().model().brand().deleted()).isTrue();
 
-        SaleResponseDTO next = saleService.addDetail(
+        SaleResponseDTO next = addSeen(
                 openUnresolvedSale("Stock").id(), specialRequest(leaf, 1, null));
         assertThat(onlyLine(next).product().id()).isEqualTo(leaf.getId());
 
         UUID nextId = next.id();
         long catalog = products();
-        assertThatThrownBy(() -> saleService.requestSpecification(nextId, new RequestSpecificationDTO(
+        assertThatThrownBy(() -> specSeen(nextId, new RequestSpecificationDTO(
                 seededFamily("HR").getId(), shop.model().getId(),
                 attributes("largo", 91, "tieneOrificio", false, "cantidadColochos", 1),
                 1, PRICE, null, null)))
@@ -4030,7 +4038,7 @@ class SaleFulfillmentDatabaseTest {
 
         as(shop.seller());
         SaleResponseDTO sale = openUnresolvedSale("Prisa");
-        sale = saleService.addDetail(sale.id(), new AddSaleDetailRequestDTO(
+        sale = addSeen(sale.id(), new AddSaleDetailRequestDTO(
                 installation.getId(), null, null, 1, new BigDecimal("150.00"), null, null));
         UUID saleId = saleService.dispatch(sale.id(), new DispatchSaleRequestDTO(null)).id();
 
@@ -4082,8 +4090,8 @@ class SaleFulfillmentDatabaseTest {
         Product installation = job(shop, "INSTALACION");
 
         as(shop.seller());
-        saleService.addDetail(open.id(), specialRequest(leaf, 1, null));
-        saleService.addDetail(open.id(), new AddSaleDetailRequestDTO(
+        addSeen(open.id(), specialRequest(leaf, 1, null));
+        addSeen(open.id(), new AddSaleDetailRequestDTO(
                 installation.getId(), null, null, 1, new BigDecimal("150.00"), null, null));
         SaleResponseDTO dispatched = saleService.dispatch(open.id(), new DispatchSaleRequestDTO(null));
 
@@ -4168,6 +4176,2294 @@ class SaleFulfillmentDatabaseTest {
 
     // ── Datos de partida ─────────────────────────────────────────
 
+    // ── Guia de precio de la caja ────────────────────────────────
+    //
+    // La caja pide guia antes de agregar: precio de catalogo, ultimo precio
+    // cobrado o pieza comparable, con su procedencia. Nada de eso se aplica
+    // solo: el precio lo confirma el vendedor al agregar, y el servidor lo
+    // revalida bajo cerrojo contra el catalogo que el vendedor vio.
+
+    @Autowired
+    private SaleLineGuidanceService guidanceService;
+
+    private SaleLineGuidanceDTO guideProduct(Product product) {
+        return guidanceService.guide(new SaleLineGuidanceRequestDTO(product.getId(), null, null, null));
+    }
+
+    private SaleLineGuidanceDTO guideSpecification(Shop shop, Map<String, Object> attributes) {
+        return guidanceService.guide(new SaleLineGuidanceRequestDTO(
+                null, seededFamily("HR").getId(), shop.model().getId(), attributes));
+    }
+
+    /** Inventario del taller SIN precio de catalogo (cero) y sin existencias. */
+    private void unpricedInventory(Shop shop, Product product, BigDecimal cost) {
+        inventoryRepository.save(Inventory.builder()
+                .product(product)
+                .workshop(shop.workshop())
+                .price(BigDecimal.ZERO)
+                .cost(cost)
+                .stock(0)
+                .minStock(0)
+                .build());
+    }
+
+    /** Inventario con un precio de catalogo concreto y sin existencias. */
+    private void pricedInventory(Shop shop, Product product, BigDecimal price) {
+        inventoryRepository.save(Inventory.builder()
+                .product(product)
+                .workshop(shop.workshop())
+                .price(price)
+                .cost(COST)
+                .stock(0)
+                .minStock(0)
+                .build());
+    }
+
+    /**
+     * Otro registro del catalogo con EXACTAMENTE las mismas caracteristicas,
+     * familia y modelo que `product`, con otro nombre: una pieza equivalente.
+     */
+    private Product equivalentOf(Product product) {
+        return productRepository.save(Product.builder()
+                .family(product.getFamily())
+                .model(product.getModel())
+                .name("EQUIVALENTE " + unique())
+                .sku("SKU-" + unique())
+                .attributes(new HashMap<>(product.getAttributes()))
+                .build());
+    }
+
+    private BigDecimal catalogPriceOf(Shop shop, Product product) {
+        return jdbc.queryForObject(
+                "SELECT price FROM inventory WHERE product_id = ? AND workshop_id = ?",
+                BigDecimal.class, product.getId(), shop.workshop().getId());
+    }
+
+    private Integer stockOf(Shop shop, Product product) {
+        return jdbc.queryForObject(
+                "SELECT stock FROM inventory WHERE product_id = ? AND workshop_id = ?",
+                Integer.class, product.getId(), shop.workshop().getId());
+    }
+
+    /** Linea de pieza especial con precio confirmado y el catalogo que vio el vendedor. */
+    private AddSaleDetailRequestDTO confirmed(
+            Product product, int quantity, BigDecimal price, BigDecimal seenCatalog) {
+        return new AddSaleDetailRequestDTO(
+                product.getId(), null, null, quantity, price, null, null, null, null, null, seenCatalog);
+    }
+
+    /** Vende de stock una unidad, Control la entrega y la venta se completa. */
+    private void sellAndComplete(Shop shop, Product product, BigDecimal price) {
+        as(shop.seller());
+        SaleResponseDTO sale = addSeen(openUnresolvedSale("Cobrada").id(),
+                new AddSaleDetailRequestDTO(product.getId(), null, null, 1, price, null, null));
+        UUID line = onlyLine(saleService.dispatch(sale.id(), new DispatchSaleRequestDTO(null))).id();
+        as(shop.control());
+        fulfillmentService.release(line, new ReleaseFulfillmentRequestDTO(null));
+        as(shop.seller());
+        completeAsCf(sale.id());
+    }
+
+    /** A. Pieza con precio de catalogo: es el precio vigente, sin sugerencias. */
+    @Test
+    void guidanceReportsTheCatalogPriceOfAPricedPiece() {
+        Shop shop = shop();
+        Product leaf = leaf(shop, 90, 2);
+        stocked(shop, leaf, 2);
+
+        as(shop.seller());
+        SaleLineGuidanceDTO guidance = guideProduct(leaf);
+
+        assertThat(guidance.priceStatus()).isEqualTo(PriceStatus.AVAILABLE);
+        assertThat(guidance.catalogPrice()).isEqualByComparingTo(PRICE);
+        assertThat(guidance.minimumPrice()).isEqualByComparingTo(COST);
+        assertThat(guidance.suggestion()).isNull();
+        assertThat(guidance.references()).isEmpty();
+        assertThat(guidance.becomesCatalogPrice()).isFalse();
+        assertThat(guidance.availableUnits()).isEqualTo(2);
+        assertThat(guidance.productId()).isEqualTo(leaf.getId());
+    }
+
+    /**
+     * B. Una pieza SIMILAR (una medida distinta) no es la misma pieza: sin
+     * porcentaje que valga, se muestra como contexto —la mas cercana por
+     * debajo y la mas cercana por encima, con la diferencia a la vista— y
+     * nunca pasa a ser la sugerencia.
+     */
+    @Test
+    void aSimilarPieceIsOnlyContextAndNeverTheSuggestion() {
+        Shop shop = shop();
+        Product requested = leaf(shop, 100, 2);
+        unpricedInventory(shop, requested, BigDecimal.ZERO);
+        Product shorter = leaf(shop, 95, 2);
+        pricedInventory(shop, shorter, new BigDecimal("340.00"));
+        pricedInventory(shop, leaf(shop, 60, 2), new BigDecimal("200.00"));
+        Product longer = leaf(shop, 130, 2);
+        pricedInventory(shop, longer, new BigDecimal("900.00"));
+        pricedInventory(shop, leaf(shop, 300, 2), new BigDecimal("1900.00"));
+
+        as(shop.seller());
+        SaleLineGuidanceDTO guidance = guideProduct(requested);
+
+        assertThat(guidance.priceStatus()).isEqualTo(PriceStatus.REQUIRED);
+        assertThat(guidance.suggestion()).isNull();
+        assertThat(guidance.catalogPrice()).isNull();
+        assertThat(guidance.becomesCatalogPrice()).isTrue();
+        // Solo la mas cercana de cada lado: 95 por debajo y 130 por encima.
+        assertThat(guidance.references())
+                .extracting(PriceReferenceDTO::productId)
+                .containsExactly(shorter.getId(), longer.getId());
+        assertThat(guidance.references()).allSatisfy(reference ->
+                assertThat(reference.source()).isEqualTo(PriceReferenceSource.SIMILAR_PIECE));
+        assertThat(guidance.references().get(0).differences()).singleElement().satisfies(difference -> {
+            assertThat(difference.attribute()).isEqualTo("largo");
+            assertThat(((Number) difference.requested()).intValue()).isEqualTo(100);
+            assertThat(((Number) difference.reference()).intValue()).isEqualTo(95);
+        });
+
+        UUID saleId = openUnresolvedSale("Similar").id();
+        assertThatThrownBy(() -> addSeen(saleId,
+                new AddSaleDetailRequestDTO(requested.getId(), null, null, 1, null, null, null)))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("no tiene un precio de venta asignado");
+        assertThat(linesOfSale(saleId)).isZero();
+        assertThat(catalogPriceOf(shop, requested)).isEqualByComparingTo("0.00");
+    }
+
+    /**
+     * B. Una pieza EQUIVALENTE —mismas caracteristicas, otro registro— si se
+     * propone, rotulada; pero agregar la linea no la aplica sola.
+     */
+    @Test
+    void anEquivalentPieceIsSuggestedButNeverAppliedByItself() {
+        Shop shop = shop();
+        Product requested = leaf(shop, 100, 2);
+        unpricedInventory(shop, requested, BigDecimal.ZERO);
+        Product twin = equivalentOf(requested);
+        pricedInventory(shop, twin, new BigDecimal("355.00"));
+        pricedInventory(shop, leaf(shop, 95, 2), new BigDecimal("340.00"));
+
+        as(shop.seller());
+        SaleLineGuidanceDTO guidance = guideProduct(requested);
+
+        assertThat(guidance.priceStatus()).isEqualTo(PriceStatus.SUGGESTED);
+        assertThat(guidance.suggestion().source()).isEqualTo(PriceReferenceSource.EQUIVALENT_PIECE);
+        assertThat(guidance.suggestion().productId()).isEqualTo(twin.getId());
+        assertThat(guidance.suggestion().price()).isEqualByComparingTo("355.00");
+        assertThat(guidance.suggestion().differences()).isEmpty();
+        // La similar sigue a la vista, detras, como contexto.
+        assertThat(guidance.references()).extracting(PriceReferenceDTO::source)
+                .containsExactly(PriceReferenceSource.EQUIVALENT_PIECE, PriceReferenceSource.SIMILAR_PIECE);
+
+        UUID saleId = openUnresolvedSale("Equivalente").id();
+        assertThatThrownBy(() -> addSeen(saleId,
+                new AddSaleDetailRequestDTO(requested.getId(), null, null, 1, null, null, null)))
+                .isInstanceOf(ValidationException.class);
+        assertThat(linesOfSale(saleId)).isZero();
+    }
+
+    /**
+     * B. El ultimo precio cobrado de ESTA pieza en una venta completada de
+     * ESTE taller, con su fecha. Ni una venta abierta ni otro taller cuentan.
+     */
+    @Test
+    void theLastPriceChargedInThisWorkshopIsSuggestedWithItsDate() {
+        Shop shop = shop();
+        Shop neighbour = shop();
+        Product leaf = leaf(shop, 90, 2);
+        stocked(shop, leaf, 1);
+        stockedAtCost(neighbour, leaf, 1, COST);
+        sellAndComplete(shop, leaf, new BigDecimal("520.00"));
+        sellAndComplete(neighbour, leaf, new BigDecimal("999.00"));
+        // Una venta abierta todavia puede cambiar o anularse: no es precio cobrado.
+        as(shop.seller());
+        addSeen(openUnresolvedSale("Abierta").id(),
+                new AddSaleDetailRequestDTO(leaf.getId(), null, null, 1, new BigDecimal("777.00"), null, null));
+        // El catalogo queda sin precio en los dos talleres.
+        jdbc.update("UPDATE inventory SET price = 0 WHERE product_id = ?", leaf.getId());
+
+        as(shop.seller());
+        SaleLineGuidanceDTO guidance = guideProduct(leaf);
+        assertThat(guidance.priceStatus()).isEqualTo(PriceStatus.SUGGESTED);
+        assertThat(guidance.suggestion().source()).isEqualTo(PriceReferenceSource.LAST_SALE);
+        assertThat(guidance.suggestion().price()).isEqualByComparingTo("520.00");
+        assertThat(guidance.suggestion().recordedAt()).isNotNull();
+        assertThat(guidance.suggestion().differences()).isEmpty();
+        assertThat(guidance.references()).extracting(PriceReferenceDTO::price)
+                .noneMatch(price -> price.compareTo(new BigDecimal("999.00")) == 0
+                        || price.compareTo(new BigDecimal("777.00")) == 0);
+
+        as(neighbour.seller());
+        assertThat(guideProduct(leaf).suggestion().price()).isEqualByComparingTo("999.00");
+    }
+
+    /** C. Sin ninguna referencia confiable no se propone ninguna cifra. */
+    @Test
+    void withoutAnyTrustworthyReferenceNothingIsSuggested() {
+        Shop shop = shop();
+        Product lonely = leaf(shop, 90, 2);
+        unpricedInventory(shop, lonely, BigDecimal.ZERO);
+        // Una con otra medida (solo contexto) y una con orificio (otra pieza).
+        Product longer = leaf(shop, 135, 2);
+        pricedInventory(shop, longer, new BigDecimal("700.00"));
+        Product holed = productRepository.save(Product.builder()
+                .family(seededFamily("HR"))
+                .model(shop.model())
+                .name("HOJA ORIFICIO " + unique())
+                .sku("SKU-" + unique())
+                .attributes(attributes("largo", 90, "tieneOrificio", true, "cantidadColochos", 2))
+                .build());
+        pricedInventory(shop, holed, new BigDecimal("650.00"));
+
+        as(shop.seller());
+        SaleLineGuidanceDTO guidance = guideProduct(lonely);
+        assertThat(guidance.priceStatus()).isEqualTo(PriceStatus.REQUIRED);
+        assertThat(guidance.catalogPrice()).isNull();
+        assertThat(guidance.suggestion()).isNull();
+        // La de orificio no aparece; la de otra medida solo como contexto.
+        assertThat(guidance.references()).singleElement().satisfies(reference -> {
+            assertThat(reference.productId()).isEqualTo(longer.getId());
+            assertThat(reference.source()).isEqualTo(PriceReferenceSource.SIMILAR_PIECE);
+        });
+        assertThat(guidance.becomesCatalogPrice()).isTrue();
+
+        // Una especificacion nueva sin parecidas tampoco: y su precio no
+        // quedara en ningun catalogo, porque el taller no la tiene.
+        SaleLineGuidanceDTO brandNew = guideSpecification(shop, attributes("largo", 300, "tieneOrificio", false));
+        assertThat(brandNew.priceStatus()).isEqualTo(PriceStatus.REQUIRED);
+        // Las del taller llevan colochos y la pedida no los dice: ninguna es
+        // equivalente ni similar.
+        assertThat(brandNew.references()).isEmpty();
+        assertThat(brandNew.productId()).isNull();
+        assertThat(brandNew.becomesCatalogPrice()).isFalse();
+        assertThat(brandNew.availableUnits()).isZero();
+    }
+
+    /**
+     * D/F. El vendedor confirma la sugerencia: una linea por unidad a ese
+     * precio, y en la MISMA transaccion queda como precio del taller.
+     */
+    @Test
+    void aConfirmedSuggestionIsChargedOncePerUnitAndBecomesTheCatalogPrice() {
+        Shop shop = shop();
+        Product requested = leaf(shop, 100, 2);
+        unpricedInventory(shop, requested, new BigDecimal("80.00"));
+        pricedInventory(shop, equivalentOf(requested), new BigDecimal("340.00"));
+
+        as(shop.seller());
+        BigDecimal suggested = guideProduct(requested).suggestion().price();
+        SaleResponseDTO sale = addSeen(openUnresolvedSale("Confirma").id(),
+                confirmed(requested, 3, suggested, BigDecimal.ZERO));
+
+        assertThat(sale.details()).hasSize(3).allSatisfy(detail -> {
+            assertThat(detail.price()).isEqualByComparingTo("340.00");
+            assertThat(detail.subTotal()).isEqualByComparingTo("340.00");
+        });
+        assertThat(sale.total()).isEqualByComparingTo("1020.00");
+        assertThat(catalogPriceOf(shop, requested)).isEqualByComparingTo("340.00");
+        assertThat(guideProduct(requested).priceStatus()).isEqualTo(PriceStatus.AVAILABLE);
+    }
+
+    /**
+     * D/E. Un precio invalido sobre una pieza sin precio —cero, bajo el costo,
+     * negativo— no deja linea, ni reserva, ni precio de catalogo.
+     */
+    @Test
+    void anInvalidConfirmedPriceWritesNothing() {
+        Shop shop = shop();
+        Product requested = leaf(shop, 100, 2);
+        List<InventoryItem> units = stockedAtCost(shop, requested, 1, new BigDecimal("80.00"));
+        jdbc.update("UPDATE inventory SET price = 0 WHERE product_id = ?", requested.getId());
+
+        as(shop.seller());
+        UUID saleId = openUnresolvedSale("Invalido").id();
+        for (BigDecimal invalid : List.of(BigDecimal.ZERO, new BigDecimal("79.99"), new BigDecimal("-5.00"))) {
+            assertThatThrownBy(() -> addSeen(saleId, confirmed(requested, 1, invalid, BigDecimal.ZERO)))
+                    .as("precio %s", invalid)
+                    .isInstanceOf(ValidationException.class);
+        }
+        assertThat(linesOfSale(saleId)).isZero();
+        assertThat(catalogPriceOf(shop, requested)).isEqualByComparingTo("0.00");
+        assertThat(stockOf(shop, requested)).isEqualTo(1);
+        assertThat(itemStatus(units.get(0).getId())).isEqualTo("AVAILABLE");
+        assertThat(saleService.get(saleId).total()).isEqualByComparingTo("0.00");
+    }
+
+    /**
+     * G. Un precio propio sobre una pieza con precio es un precio especial de
+     * esta venta: se cobra ese, el catalogo no cambia y el costo sigue siendo
+     * el minimo.
+     */
+    @Test
+    void aManualPriceOnAPricedPieceIsASpecialPriceThatKeepsTheCatalog() {
+        Shop shop = shop();
+        Product leaf = leaf(shop, 90, 2);
+        stocked(shop, leaf, 1);
+
+        as(shop.seller());
+        SaleResponseDTO sale = addSeen(openUnresolvedSale("Especial").id(),
+                confirmed(leaf, 1, new BigDecimal("450.00"), PRICE));
+        assertThat(onlyLine(sale).price()).isEqualByComparingTo("450.00");
+        assertThat(sale.total()).isEqualByComparingTo("450.00");
+        assertThat(catalogPriceOf(shop, leaf)).isEqualByComparingTo(PRICE);
+
+        assertThatThrownBy(() -> addSeen(sale.id(),
+                confirmed(leaf, 1, new BigDecimal("99.99"), PRICE)))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("costo");
+        assertThat(saleService.get(sale.id()).details()).hasSize(1);
+    }
+
+    /**
+     * H. Cambiar las caracteristicas cambia la referencia: nada se arrastra.
+     * Con los colochos dichos, la especificacion encuentra su equivalente; con
+     * otro largo, solo similares como contexto y ninguna sugerencia.
+     */
+    @Test
+    void changingTheCharacteristicsRecomputesTheReference() {
+        Shop shop = shop();
+        Product hundred = leaf(shop, 100, 2);
+        pricedInventory(shop, hundred, new BigDecimal("300.00"));
+        Product hundredFifty = leaf(shop, 150, 2);
+        pricedInventory(shop, hundredFifty, new BigDecimal("450.00"));
+
+        as(shop.seller());
+        // Mismas caracteristicas que una pieza existente: es ESA pieza.
+        SaleLineGuidanceDTO same = guideSpecification(shop,
+                attributes("largo", 100, "tieneOrificio", false, "cantidadColochos", 2));
+        assertThat(same.priceStatus()).isEqualTo(PriceStatus.AVAILABLE);
+        assertThat(same.productId()).isEqualTo(hundred.getId());
+
+        SaleLineGuidanceDTO between = guideSpecification(shop,
+                attributes("largo", 120, "tieneOrificio", false, "cantidadColochos", 2));
+        assertThat(between.priceStatus()).isEqualTo(PriceStatus.REQUIRED);
+        assertThat(between.suggestion()).isNull();
+        assertThat(between.references()).extracting(PriceReferenceDTO::productId)
+                .containsExactly(hundred.getId(), hundredFifty.getId());
+
+        SaleLineGuidanceDTO otherCurls = guideSpecification(shop,
+                attributes("largo", 150, "tieneOrificio", false, "cantidadColochos", 0));
+        assertThat(otherCurls.priceStatus()).isEqualTo(PriceStatus.REQUIRED);
+        assertThat(otherCurls.references()).singleElement().satisfies(reference -> {
+            assertThat(reference.productId()).isEqualTo(hundredFifty.getId());
+            assertThat(reference.differences().get(0).attribute()).isEqualTo("cantidadColochos");
+        });
+    }
+
+    /** Una especificacion invalida no recibe guia: la misma regla del catalogo. */
+    @Test
+    void guidanceUsesTheSameRulesAsTheRequest() {
+        Shop shop = shop();
+        as(shop.seller());
+
+        assertThatThrownBy(() -> guidanceService.guide(new SaleLineGuidanceRequestDTO(
+                null, seededFamily("HR").getId(), null, attributes("largo", 90, "tieneOrificio", false))))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("modelo");
+        assertThatThrownBy(() -> guideSpecification(shop, attributes("largo", 90)))
+                .isInstanceOf(ValidationException.class);
+        assertThatThrownBy(() -> guidanceService.guide(new SaleLineGuidanceRequestDTO(
+                leaf(shop, 90, 2).getId(), seededFamily("HR").getId(), null, null)))
+                .isInstanceOf(ValidationException.class);
+        assertThatThrownBy(() -> guidanceService.guide(new SaleLineGuidanceRequestDTO(
+                UUID.randomUUID(), null, null, null)))
+                .isInstanceOf(EntityNotFoundException.class);
+    }
+
+    /**
+     * I. Tres pedidas con una terminada: la guia dice 1 libre, y al agregar
+     * quedan 1 de stock y 2 por fabricar, cada una cobrada una vez.
+     */
+    @Test
+    void theAvailabilityMatchesTheStockAndFabricationSplitOfThreeUnits() {
+        Shop shop = shop();
+        Product leaf = leaf(shop, 90, 2);
+        stocked(shop, leaf, 1);
+
+        as(shop.seller());
+        assertThat(guideProduct(leaf).availableUnits()).isEqualTo(1);
+        SaleResponseDTO sale = addSeen(openUnresolvedSale("Tres").id(),
+                confirmed(leaf, 3, PRICE, PRICE));
+
+        assertThat(sale.details()).hasSize(3);
+        assertThat(sale.details())
+                .filteredOn(detail -> detail.fulfillment().type() == FulfillmentType.STOCK_RELEASE)
+                .hasSize(1);
+        assertThat(sale.details())
+                .filteredOn(detail -> detail.fulfillment().type() == FulfillmentType.TRANSFORMATION)
+                .hasSize(2);
+        assertThat(sale.total()).isEqualByComparingTo(PRICE.multiply(BigDecimal.valueOf(3)));
+        // Lo reservado ya no esta libre para la siguiente venta.
+        assertThat(guideProduct(leaf).availableUnits()).isZero();
+    }
+
+    /**
+     * J/K/L. De la sugerencia a la factura: el vendedor confirma la
+     * referencia, el Operador elige una pieza de origen mas cara, la MISMA
+     * linea vuelve a revision, el vendedor aprueba el nuevo precio y la
+     * factura lo cobra una sola vez.
+     */
+    @Test
+    void aSuggestedPriceGoesThroughPriceReviewOnTheSameLineAndIsChargedOnce() {
+        Shop shop = shop();
+        Product target = leaf(shop, 90, 2);
+        unpricedInventory(shop, target, BigDecimal.ZERO);
+        pricedInventory(shop, equivalentOf(target), new BigDecimal("200.00"));
+        InventoryItem expensive = stockedAtCost(shop, leaf(shop, 180, 2), 1, new BigDecimal("260.00")).get(0);
+
+        as(shop.seller());
+        SaleLineGuidanceDTO guidance = guideProduct(target);
+        assertThat(guidance.suggestion().price()).isEqualByComparingTo("200.00");
+        SaleResponseDTO sale = addSeen(openUnresolvedSale("Revision").id(),
+                confirmed(target, 1, guidance.suggestion().price(), BigDecimal.ZERO));
+        UUID line = onlyLine(saleService.dispatch(sale.id(), new DispatchSaleRequestDTO(null))).id();
+        assertThat(saleService.get(sale.id()).total()).isEqualByComparingTo("200.00");
+
+        as(shop.operator());
+        assertThat(fulfillmentService.transform(line,
+                new FulfillTransformationRequestDTO(expensive.getId(), null)).blockReason())
+                .isEqualTo(FulfillmentBlockReason.PRICE_REVIEW);
+
+        as(shop.seller());
+        SaleResponseDTO revised = saleService.updateRequestPrice(line,
+                new UpdateRequestPriceDTO(new BigDecimal("300.00"), new BigDecimal("200.00")));
+        assertThat(onlyLine(revised).id()).isEqualTo(line);
+        assertThat(revised.total()).isEqualByComparingTo("300.00");
+
+        as(shop.operator());
+        assertThat(fulfillmentService.transform(line,
+                new FulfillTransformationRequestDTO(expensive.getId(), null)).status())
+                .isEqualTo(FulfillmentStatus.FULFILLED);
+
+        as(shop.seller());
+        SaleResponseDTO completed = completeAsCf(sale.id());
+        assertThat(completed.details()).singleElement().satisfies(detail -> {
+            assertThat(detail.id()).isEqualTo(line);
+            assertThat(detail.price()).isEqualByComparingTo("300.00");
+            assertThat(detail.subTotal()).isEqualByComparingTo("300.00");
+        });
+        assertThat(completed.total()).isEqualByComparingTo("300.00");
+    }
+
+    /**
+     * M. Control cambia el precio mientras el vendedor decide: lo confirmado
+     * sobre el precio viejo se rechaza con conflicto, sin escribir nada, y
+     * reconfirmado entra una vez.
+     */
+    @Test
+    void aPriceConfirmedOverAStaleCatalogIsRejectedWithoutWritingAnything() {
+        Shop shop = shop();
+        Product leaf = leaf(shop, 90, 2);
+        List<InventoryItem> units = stocked(shop, leaf, 1);
+
+        as(shop.seller());
+        UUID saleId = openUnresolvedSale("Cambio").id();
+        jdbc.update("UPDATE inventory SET price = 560.00 WHERE product_id = ?", leaf.getId());
+
+        assertThatThrownBy(() -> addSeen(saleId, confirmed(leaf, 1, PRICE, PRICE)))
+                .isInstanceOf(PriceConflictException.class)
+                .hasMessageContaining("560.00");
+        assertThat(linesOfSale(saleId)).isZero();
+        assertThat(itemStatus(units.get(0).getId())).isEqualTo("AVAILABLE");
+        assertThat(stockOf(shop, leaf)).isEqualTo(1);
+        assertThat(catalogPriceOf(shop, leaf)).isEqualByComparingTo("560.00");
+
+        BigDecimal current = new BigDecimal("560.00");
+        SaleResponseDTO sale = addSeen(saleId, confirmed(leaf, 1, current, current));
+        assertThat(onlyLine(sale).price()).isEqualByComparingTo("560.00");
+    }
+
+    /** M. La especificacion resuelta a una pieza que YA tiene precio tambien se reconfirma. */
+    @Test
+    void aSpecificationThatAlreadyHasACatalogPriceMustBeReconfirmed() {
+        Shop shop = shop();
+        Map<String, Object> wanted = attributes("largo", 91, "tieneOrificio", false, "cantidadColochos", 0);
+        Product existing = productRepository.save(Product.builder()
+                .family(seededFamily("HR"))
+                .model(shop.model())
+                .name("HOJA 91 " + unique())
+                .sku("SKU-" + unique())
+                .attributes(wanted)
+                .build());
+        pricedInventory(shop, existing, new BigDecimal("330.00"));
+
+        as(shop.seller());
+        SaleLineGuidanceDTO guidance = guideSpecification(shop, wanted);
+        assertThat(guidance.priceStatus()).isEqualTo(PriceStatus.AVAILABLE);
+        assertThat(guidance.productId()).isEqualTo(existing.getId());
+        assertThat(guidance.catalogPrice()).isEqualByComparingTo("330.00");
+
+        UUID saleId = openUnresolvedSale("Spec").id();
+        assertThatThrownBy(() -> specSeen(saleId, new RequestSpecificationDTO(
+                seededFamily("HR").getId(), shop.model().getId(), wanted, 1,
+                new BigDecimal("300.00"), null, null, null, null, BigDecimal.ZERO)))
+                .isInstanceOf(PriceConflictException.class);
+        assertThat(linesOfSale(saleId)).isZero();
+
+        SaleResponseDTO sale = specSeen(saleId, new RequestSpecificationDTO(
+                seededFamily("HR").getId(), shop.model().getId(), wanted, 1,
+                new BigDecimal("330.00"), null, null, null, null, new BigDecimal("330.00")));
+        assertThat(onlyLine(sale).product().id()).isEqualTo(existing.getId());
+    }
+
+    /** N. Los precios de otro taller nunca son referencia. */
+    @Test
+    void anotherWorkshopsPricesAreNeverAReference() {
+        Shop shop = shop();
+        Shop neighbour = shop();
+        Product requested = leaf(shop, 100, 2);
+        unpricedInventory(shop, requested, BigDecimal.ZERO);
+        // La equivalente esta, pero en el inventario del vecino.
+        pricedInventory(neighbour, equivalentOf(requested), new BigDecimal("310.00"));
+
+        as(shop.seller());
+        assertThat(guideProduct(requested).priceStatus()).isEqualTo(PriceStatus.REQUIRED);
+        assertThat(guideProduct(requested).references()).isEmpty();
+
+        as(neighbour.seller());
+        SaleLineGuidanceDTO theirs = guideProduct(requested);
+        assertThat(theirs.priceStatus()).isEqualTo(PriceStatus.SUGGESTED);
+        assertThat(theirs.suggestion().price()).isEqualByComparingTo("310.00");
+        // El vecino no tiene inventario de la pieza: su precio no iria a ningun catalogo.
+        assertThat(theirs.becomesCatalogPrice()).isFalse();
+    }
+
+    /** Una referencia por debajo del costo se informa, pero no se sugiere. */
+    @Test
+    void aReferenceBelowTheMinimumIsShownButNotSuggested() {
+        Shop shop = shop();
+        Product requested = leaf(shop, 100, 2);
+        unpricedInventory(shop, requested, new BigDecimal("400.00"));
+        pricedInventory(shop, equivalentOf(requested), new BigDecimal("350.00"));
+
+        as(shop.seller());
+        SaleLineGuidanceDTO guidance = guideProduct(requested);
+        assertThat(guidance.priceStatus()).isEqualTo(PriceStatus.REQUIRED);
+        assertThat(guidance.suggestion()).isNull();
+        assertThat(guidance.minimumPrice()).isEqualByComparingTo("400.00");
+        assertThat(guidance.references()).singleElement().satisfies(reference -> {
+            assertThat(reference.source()).isEqualTo(PriceReferenceSource.EQUIVALENT_PIECE);
+            assertThat(reference.belowMinimum()).isTrue();
+        });
+    }
+
+    /** Un servicio se orienta por su propio precio de catalogo, sin costo ni stock. */
+    @Test
+    void aServiceIsGuidedByItsOwnCatalogPrice() {
+        Shop shop = shop();
+        Product service = job(shop, "ALINEADO");
+
+        as(shop.seller());
+        SaleLineGuidanceDTO guidance = guideProduct(service);
+        assertThat(guidance.priceStatus()).isEqualTo(PriceStatus.AVAILABLE);
+        assertThat(guidance.catalogPrice()).isEqualByComparingTo("150.00");
+        assertThat(guidance.minimumPrice()).isNull();
+        assertThat(guidance.availableUnits()).isNull();
+    }
+
+    /** O (V44). El stock historico de un modelo eliminado conserva su precio y se sigue vendiendo. */
+    @Test
+    void historicalStockOfADeletedModelKeepsItsCatalogPrice() {
+        Shop shop = shop();
+        Product leaf = leaf(shop, 90, 2);
+        stocked(shop, leaf, 1);
+        as(shop.seller());
+        modelService.delete(shop.model().getId());
+
+        SaleLineGuidanceDTO guidance = guideProduct(leaf);
+        assertThat(guidance.priceStatus()).isEqualTo(PriceStatus.AVAILABLE);
+        assertThat(guidance.catalogPrice()).isEqualByComparingTo(PRICE);
+        assertThat(guidance.availableUnits()).isEqualTo(1);
+        SaleResponseDTO sale = addSeen(openUnresolvedSale("Historico").id(),
+                confirmed(leaf, 1, PRICE, PRICE));
+        assertThat(onlyLine(sale).product().id()).isEqualTo(leaf.getId());
+    }
+
+    /** Las lecturas de la guia no crecen con el numero de piezas comparables. */
+    @Test
+    void theGuidanceReadsDoNotGrowWithTheCatalog() {
+        Shop shop = shop();
+        Product requested = leaf(shop, 100, 2);
+        unpricedInventory(shop, requested, BigDecimal.ZERO);
+        for (int length = 95; length < 98; length++) {
+            pricedInventory(shop, leaf(shop, length, 2), new BigDecimal("300.00"));
+        }
+        as(shop.seller());
+        STATEMENTS.clear();
+        guideProduct(requested);
+        int few = STATEMENTS.size();
+
+        for (int length = 60; length < 85; length++) {
+            pricedInventory(shop, leaf(shop, length, 2), new BigDecimal("300.00"));
+        }
+        STATEMENTS.clear();
+        guideProduct(requested);
+        int many = STATEMENTS.size();
+
+        assertThat(many).isLessThanOrEqualTo(few + CONSTANT_TOLERANCE);
+    }
+
+    // ── Concurrencia real, edicion antes de enviar y caminos alternos ──
+    //
+    // Las carreras se fuerzan con transacciones que se SOLAPAN de verdad: una
+    // transaccion toma el cerrojo y lo retiene (`holding`), la otra arranca en
+    // otro hilo y la prueba espera a verla BLOQUEADA en PostgreSQL
+    // (`pg_stat_activity.wait_event_type = 'Lock'`) antes de soltar la primera.
+
+    /** Espera a que alguna sesion de esta base este esperando un cerrojo. */
+    private void awaitBlockedOnALock() throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            Long waiting = jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM pg_stat_activity WHERE datname = current_database() "
+                            + "AND wait_event_type = 'Lock'",
+                    Long.class);
+            if (waiting != null && waiting > 0) {
+                return;
+            }
+            Thread.sleep(25);
+        }
+        throw new IllegalStateException("La segunda transaccion nunca llego a esperar el cerrojo");
+    }
+
+    /** Corre `call` como `token` en otro hilo. */
+    private <T> Future<T> inAnotherThread(ExecutorService executor, Jwt token, Callable<T> call) {
+        return executor.submit(() -> {
+            as(token);
+            try {
+                return call.call();
+            } finally {
+                SecurityContextHolder.clearContext();
+            }
+        });
+    }
+
+    private Throwable failureOf(Future<?> future) throws InterruptedException {
+        try {
+            future.get(30, TimeUnit.SECONDS);
+            return null;
+        } catch (java.util.concurrent.ExecutionException failure) {
+            return failure.getCause();
+        } catch (java.util.concurrent.TimeoutException timeout) {
+            throw new IllegalStateException("La llamada concurrente no termino", timeout);
+        }
+    }
+
+    /**
+     * 1. Dos vendedores ponen A LA VEZ el primer precio de la misma pieza. El
+     * primero retiene el inventario con su precio sin confirmar; el segundo
+     * queda bloqueado en el cerrojo y, al soltarse, ve el precio nuevo: 409,
+     * sin linea, sin reserva y sin pisar el catalogo.
+     */
+    @Test
+    void twoSellersPricingTheSameUnpricedPieceAtTheSameTimeAreSerialized() throws Exception {
+        Shop shop = shop();
+        Product leaf = leaf(shop, 90, 2);
+        List<InventoryItem> units = stockedAtCost(shop, leaf, 2, BigDecimal.ZERO);
+        jdbc.update("UPDATE inventory SET price = 0 WHERE product_id = ?", leaf.getId());
+        as(shop.seller());
+        UUID first = openUnresolvedSale("Primero").id();
+        UUID second = openUnresolvedSale("Segundo").id();
+
+        ExecutorService other = Executors.newSingleThreadExecutor();
+        Future<SaleResponseDTO> secondSeller;
+        try {
+            try (AutoCloseable firstSeller = holding(() -> {
+                as(shop.seller());
+                addSeen(first, confirmed(leaf, 1, new BigDecimal("410.00"), BigDecimal.ZERO));
+            })) {
+                secondSeller = inAnotherThread(other, shop.seller(), () ->
+                        addSeen(second, confirmed(leaf, 1, new BigDecimal("380.00"), BigDecimal.ZERO)));
+                awaitBlockedOnALock();
+                assertThat(secondSeller.isDone()).isFalse();
+            }
+            assertThat(failureOf(secondSeller))
+                    .isInstanceOf(PriceConflictException.class)
+                    .hasMessageContaining("410.00");
+        } finally {
+            other.shutdownNow();
+        }
+
+        assertThat(catalogPriceOf(shop, leaf)).isEqualByComparingTo("410.00");
+        assertThat(linesOfSale(first)).isEqualTo(1);
+        assertThat(linesOfSale(second)).isZero();
+        assertThat(stockOf(shop, leaf)).isEqualTo(1);
+        assertThat(units).extracting(unit -> itemStatus(unit.getId()))
+                .containsExactlyInAnyOrder("SOLD", "AVAILABLE");
+    }
+
+    /**
+     * 2. Control cambia el precio de catalogo en una transaccion abierta
+     * mientras el vendedor confirma sobre el precio viejo: el vendedor espera
+     * el cerrojo, ve el precio nuevo y recibe 409 sin ninguna escritura.
+     */
+    @Test
+    void aCatalogChangeRacingTheSellerIsAConflictWithZeroWrites() throws Exception {
+        Shop shop = shop();
+        Product leaf = leaf(shop, 90, 2);
+        List<InventoryItem> units = stocked(shop, leaf, 1);
+        as(shop.seller());
+        UUID saleId = openUnresolvedSale("Carrera").id();
+
+        ExecutorService other = Executors.newSingleThreadExecutor();
+        Future<SaleResponseDTO> seller;
+        try {
+            try (AutoCloseable control = holding(() -> jdbc.update(
+                    "UPDATE inventory SET price = 560.00 WHERE product_id = ?", leaf.getId()))) {
+                seller = inAnotherThread(other, shop.seller(), () ->
+                        addSeen(saleId, confirmed(leaf, 1, PRICE, PRICE)));
+                awaitBlockedOnALock();
+            }
+            assertThat(failureOf(seller)).isInstanceOf(PriceConflictException.class).hasMessageContaining("560.00");
+        } finally {
+            other.shutdownNow();
+        }
+
+        assertThat(linesOfSale(saleId)).isZero();
+        assertThat(saleService.get(saleId).total()).isEqualByComparingTo("0.00");
+        assertThat(itemStatus(units.get(0).getId())).isEqualTo("AVAILABLE");
+        assertThat(stockOf(shop, leaf)).isEqualTo(1);
+        assertThat(lotRemaining(leaf, shop)).isEqualTo(1);
+    }
+
+    /** Una solicitud de 1 sin enviar, al precio PRICE, sobre una pieza sin stock. */
+    private UUID pendingRequestLine(Shop shop, Product leaf, UUID saleId) {
+        as(shop.seller());
+        return onlyLine(addSeen(saleId, confirmed(leaf, 1, PRICE, PRICE))).id();
+    }
+
+    /**
+     * 3a. El vendedor edita el precio de una linea SIN ENVIAR: la misma fila,
+     * el subtotal y el total cambian, el catalogo no. Cancelar es no llamar,
+     * y un precio invalido se rechaza sin tocar nada.
+     */
+    @Test
+    void aPendingLineIsRepricedOnTheSameRowWithoutTouchingTheCatalog() {
+        Shop shop = shop();
+        Product leaf = leaf(shop, 90, 2);
+        emptyInventory(shop, leaf);
+        as(shop.seller());
+        UUID saleId = openUnresolvedSale("Editar").id();
+        UUID line = pendingRequestLine(shop, leaf, saleId);
+
+        assertThatThrownBy(() -> saleService.updateRequestPrice(line,
+                new UpdateRequestPriceDTO(new BigDecimal("99.99"), PRICE)))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("costo");
+        assertThat(onlyLine(saleService.get(saleId)).price()).isEqualByComparingTo(PRICE);
+
+        SaleResponseDTO edited = saleService.updateRequestPrice(line,
+                new UpdateRequestPriceDTO(new BigDecimal("525.00"), PRICE));
+        assertThat(onlyLine(edited).id()).isEqualTo(line);
+        assertThat(onlyLine(edited).price()).isEqualByComparingTo("525.00");
+        assertThat(onlyLine(edited).subTotal()).isEqualByComparingTo("525.00");
+        assertThat(edited.total()).isEqualByComparingTo("525.00");
+        assertThat(onlyLine(edited).fulfillment().status()).isEqualTo(FulfillmentStatus.PENDING);
+        assertThat(catalogPriceOf(shop, leaf)).isEqualByComparingTo(PRICE);
+        assertThat(linesOfSale(saleId)).isEqualTo(1);
+    }
+
+    /** 3b. Dos pestanas editan la misma linea: la segunda no pisa lo que no vio (409). */
+    @Test
+    void aSecondTabEditingAStalePriceIsRejectedInsteadOfLosingTheUpdate() throws Exception {
+        Shop shop = shop();
+        Product leaf = leaf(shop, 90, 2);
+        emptyInventory(shop, leaf);
+        as(shop.seller());
+        UUID saleId = openUnresolvedSale("Pestanas").id();
+        UUID line = pendingRequestLine(shop, leaf, saleId);
+
+        ExecutorService other = Executors.newSingleThreadExecutor();
+        Future<SaleResponseDTO> secondTab;
+        try {
+            try (AutoCloseable firstTab = holding(() -> {
+                as(shop.seller());
+                saleService.updateRequestPrice(line, new UpdateRequestPriceDTO(new BigDecimal("550.00"), PRICE));
+            })) {
+                secondTab = inAnotherThread(other, shop.seller(), () ->
+                        saleService.updateRequestPrice(line, new UpdateRequestPriceDTO(new BigDecimal("600.00"), PRICE)));
+                awaitBlockedOnALock();
+            }
+            assertThat(failureOf(secondTab))
+                    .isInstanceOf(PriceConflictException.class)
+                    .hasMessageContaining("550.00");
+        } finally {
+            other.shutdownNow();
+        }
+        as(shop.seller());
+        SaleResponseDTO after = saleService.get(saleId);
+        assertThat(onlyLine(after).id()).isEqualTo(line);
+        assertThat(onlyLine(after).price()).isEqualByComparingTo("550.00");
+        assertThat(after.total()).isEqualByComparingTo("550.00");
+    }
+
+    /**
+     * 3c. El vendedor envia la comanda mientras otra pestana edita el precio:
+     * la edicion espera el cerrojo de la venta y, ya enviada la linea, se
+     * rechaza. Nada cambia y no aparece otra linea.
+     */
+    @Test
+    void anEditRacingTheDispatchCannotChangeASentLine() throws Exception {
+        Shop shop = shop();
+        Product leaf = leaf(shop, 90, 2);
+        emptyInventory(shop, leaf);
+        as(shop.seller());
+        UUID saleId = openUnresolvedSale("Envio").id();
+        UUID line = pendingRequestLine(shop, leaf, saleId);
+
+        ExecutorService other = Executors.newSingleThreadExecutor();
+        Future<SaleResponseDTO> edit;
+        try {
+            try (AutoCloseable dispatch = holding(() -> {
+                as(shop.seller());
+                saleService.dispatch(saleId, new DispatchSaleRequestDTO(null));
+            })) {
+                edit = inAnotherThread(other, shop.seller(), () ->
+                        saleService.updateRequestPrice(line, new UpdateRequestPriceDTO(new BigDecimal("700.00"), PRICE)));
+                awaitBlockedOnALock();
+            }
+            assertThat(failureOf(edit))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("sin enviar");
+        } finally {
+            other.shutdownNow();
+        }
+        as(shop.seller());
+        SaleResponseDTO after = saleService.get(saleId);
+        assertThat(after.details()).singleElement().satisfies(detail -> {
+            assertThat(detail.id()).isEqualTo(line);
+            assertThat(detail.price()).isEqualByComparingTo(PRICE);
+            assertThat(detail.fulfillment().status()).isEqualTo(FulfillmentStatus.QUEUED);
+        });
+        assertThat(after.total()).isEqualByComparingTo(PRICE);
+    }
+
+    /** 3d. Al reves: la edicion gana el cerrojo y la comanda sale con el precio nuevo. */
+    @Test
+    void aDispatchRacingAnEditSendsTheEditedPriceOnce() throws Exception {
+        Shop shop = shop();
+        Product leaf = leaf(shop, 90, 2);
+        emptyInventory(shop, leaf);
+        as(shop.seller());
+        UUID saleId = openUnresolvedSale("Envio2").id();
+        UUID line = pendingRequestLine(shop, leaf, saleId);
+
+        ExecutorService other = Executors.newSingleThreadExecutor();
+        Future<SaleResponseDTO> dispatch;
+        try {
+            try (AutoCloseable edit = holding(() -> {
+                as(shop.seller());
+                saleService.updateRequestPrice(line, new UpdateRequestPriceDTO(new BigDecimal("640.00"), PRICE));
+            })) {
+                dispatch = inAnotherThread(other, shop.seller(), () ->
+                        saleService.dispatch(saleId, new DispatchSaleRequestDTO(null)));
+                awaitBlockedOnALock();
+            }
+            assertThat(failureOf(dispatch)).isNull();
+        } finally {
+            other.shutdownNow();
+        }
+        as(shop.seller());
+        SaleResponseDTO after = saleService.get(saleId);
+        assertThat(after.details()).singleElement().satisfies(detail -> {
+            assertThat(detail.id()).isEqualTo(line);
+            assertThat(detail.price()).isEqualByComparingTo("640.00");
+            assertThat(detail.fulfillment().status()).isEqualTo(FulfillmentStatus.QUEUED);
+        });
+        assertThat(after.total()).isEqualByComparingTo("640.00");
+    }
+
+    /** 4. Otro taller no puede editar ni ver la linea; el precio no cambia. */
+    @Test
+    void anotherWorkshopCannotRepriceOurLine() {
+        Shop shop = shop();
+        Shop neighbour = shop();
+        Product leaf = leaf(shop, 90, 2);
+        emptyInventory(shop, leaf);
+        as(shop.seller());
+        UUID saleId = openUnresolvedSale("Ajena").id();
+        UUID line = pendingRequestLine(shop, leaf, saleId);
+
+        as(neighbour.seller());
+        assertThatThrownBy(() -> saleService.updateRequestPrice(line,
+                new UpdateRequestPriceDTO(new BigDecimal("1.00"), PRICE)))
+                .isInstanceOf(EntityNotFoundException.class);
+        assertThatThrownBy(() -> addSeen(saleId, confirmed(leaf, 1, PRICE, PRICE)))
+                .isInstanceOf(EntityNotFoundException.class);
+        as(shop.seller());
+        assertThat(onlyLine(saleService.get(saleId)).price()).isEqualByComparingTo(PRICE);
+    }
+
+    /**
+     * 5. Inventario con precio cero y una falla a MITAD de la operacion —la
+     * unidad libre no tiene lote que la respalde, asi que el consumo FIFO
+     * falla DESPUES de fijar el precio y reservar—: se deshace todo, precio
+     * de catalogo incluido.
+     */
+    @Test
+    void aFailureAfterPricingRollsBackTheCatalogPriceAndTheReservation() {
+        Shop shop = shop();
+        Product leaf = leaf(shop, 90, 2);
+        Inventory inventory = inventoryRepository.save(Inventory.builder()
+                .product(leaf).workshop(shop.workshop())
+                .price(BigDecimal.ZERO).cost(BigDecimal.ZERO).stock(1).minStock(0).build());
+        InventoryItem unit = itemRepository.save(InventoryItem.builder()
+                .inventory(inventory).status(InventoryItemStatus.AVAILABLE).build());
+
+        as(shop.seller());
+        UUID saleId = openUnresolvedSale("Falla").id();
+        assertThatThrownBy(() -> addSeen(saleId,
+                confirmed(leaf, 1, new BigDecimal("300.00"), BigDecimal.ZERO)))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("lotes");
+
+        assertThat(catalogPriceOf(shop, leaf)).isEqualByComparingTo("0.00");
+        assertThat(itemStatus(unit.getId())).isEqualTo("AVAILABLE");
+        assertThat(stockOf(shop, leaf)).isEqualTo(1);
+        assertThat(linesOfSale(saleId)).isZero();
+        assertThat(saleService.get(saleId).total()).isEqualByComparingTo("0.00");
+    }
+
+    /**
+     * 6. Sin inventario en el taller: la linea guarda su precio y NADA mas; no
+     * se crea inventario ni catalogo, y la guia lo sigue diciendo asi.
+     */
+    @Test
+    void withoutAnInventoryRowThePriceLivesOnlyOnTheLine() {
+        Shop shop = shop();
+        Product leaf = leaf(shop, 90, 2);
+
+        as(shop.seller());
+        assertThat(guideProduct(leaf).becomesCatalogPrice()).isFalse();
+        UUID saleId = openUnresolvedSale("SinInventario").id();
+        SaleResponseDTO sale = addSeen(saleId,
+                confirmed(leaf, 2, new BigDecimal("410.00"), BigDecimal.ZERO));
+
+        assertThat(sale.details()).hasSize(2).allSatisfy(detail ->
+                assertThat(detail.price()).isEqualByComparingTo("410.00"));
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM inventory WHERE product_id = ? AND workshop_id = ?",
+                Long.class, leaf.getId(), shop.workshop().getId())).isZero();
+        SaleLineGuidanceDTO after = guideProduct(leaf);
+        assertThat(after.catalogPrice()).isNull();
+        assertThat(after.becomesCatalogPrice()).isFalse();
+    }
+
+    /**
+     * 8. Los otros caminos de la caja pasan por la MISMA regla: la maleta
+     * (unidad elegida) y el servicio rechazan un catalogo visto que ya cambio,
+     * y una maleta sin precio exige uno y lo fija en la misma transaccion.
+     */
+    @Test
+    void theBoxAndTheServicePathsApplyTheSamePriceRules() {
+        Shop shop = shop();
+        Product box = productRepository.save(Product.builder()
+                .family(seededFamily("MAL"))
+                .model(shop.model())
+                .name("MALETA " + unique())
+                .sku("SKU-" + unique())
+                .attributes(new HashMap<>())
+                .build());
+        List<InventoryItem> boxes = stockedAtCost(shop, box, 2, new BigDecimal("150.00"));
+        Product service = job(shop, "ALINEADO");
+
+        as(shop.seller());
+        UUID saleId = openUnresolvedSale("Caminos").id();
+        UUID boxUnit = boxes.get(0).getId();
+        assertThatThrownBy(() -> addSeen(saleId, new AddSaleDetailRequestDTO(
+                box.getId(), boxUnit, null, null, PRICE, null, null, null, null, null, new BigDecimal("450.00"))))
+                .isInstanceOf(PriceConflictException.class);
+        assertThatThrownBy(() -> addSeen(saleId, new AddSaleDetailRequestDTO(
+                service.getId(), null, null, 1, new BigDecimal("150.00"), null, null, null, null, null,
+                new BigDecimal("140.00"))))
+                .isInstanceOf(PriceConflictException.class);
+        assertThat(linesOfSale(saleId)).isZero();
+        assertThat(itemStatus(boxUnit)).isEqualTo("AVAILABLE");
+
+        jdbc.update("UPDATE inventory SET price = 0 WHERE product_id = ?", box.getId());
+        assertThatThrownBy(() -> addSeen(saleId, new AddSaleDetailRequestDTO(
+                box.getId(), boxUnit, null, null, null, null, null, null, null, null, BigDecimal.ZERO)))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("no tiene un precio de venta asignado");
+        SaleResponseDTO sale = addSeen(saleId, new AddSaleDetailRequestDTO(
+                box.getId(), boxUnit, null, null, new BigDecimal("620.00"), null, null, null, null, null,
+                BigDecimal.ZERO));
+        assertThat(onlyLine(sale).price()).isEqualByComparingTo("620.00");
+        assertThat(catalogPriceOf(shop, box)).isEqualByComparingTo("620.00");
+        assertThat(itemStatus(boxUnit)).isEqualTo("SOLD");
+    }
+
+    /**
+     * 7. Tres pedidas con una terminada, y la fabricada mas cara de lo
+     * autorizado: las MISMAS tres filas de principio a fin, la revisada con
+     * su pieza fabricada y su trabajo, y un total que cambia solo por lo que
+     * el vendedor aprobo.
+     */
+    @Test
+    void mixedStockAndAPriceReviewKeepTheSameLinesAndTotals() {
+        Shop shop = shop();
+        Product target = leaf(shop, 90, 2);
+        stocked(shop, target, 1);
+        InventoryItem cheap = stockedAtCost(shop, leaf(shop, 180, 2), 1, new BigDecimal("120.00")).get(0);
+        InventoryItem expensive = stockedAtCost(shop, leaf(shop, 181, 2), 1, new BigDecimal("650.00")).get(0);
+
+        as(shop.seller());
+        SaleResponseDTO added = addSeen(openUnresolvedSale("Mixta").id(),
+                confirmed(target, 3, PRICE, PRICE));
+        List<UUID> lineIds = added.details().stream().map(SaleDetailResponseDTO::id).sorted().toList();
+        assertThat(added.total()).isEqualByComparingTo("1500.00");
+        SaleResponseDTO sent = saleService.dispatch(added.id(), new DispatchSaleRequestDTO(null));
+        UUID stockLine = sent.details().stream()
+                .filter(d -> d.fulfillment().type() == FulfillmentType.STOCK_RELEASE).findFirst().orElseThrow().id();
+        List<UUID> toFabricate = sent.details().stream()
+                .filter(d -> d.fulfillment().type() == FulfillmentType.TRANSFORMATION)
+                .map(SaleDetailResponseDTO::id).toList();
+        assertThat(toFabricate).hasSize(2);
+
+        as(shop.control());
+        fulfillmentService.release(stockLine, new ReleaseFulfillmentRequestDTO(null));
+        as(shop.operator());
+        fulfillmentService.transform(toFabricate.get(0), new FulfillTransformationRequestDTO(cheap.getId(), null));
+        assertThat(fulfillmentService.transform(toFabricate.get(1),
+                new FulfillTransformationRequestDTO(expensive.getId(), null)).blockReason())
+                .isEqualTo(FulfillmentBlockReason.PRICE_REVIEW);
+
+        as(shop.seller());
+        assertThat(saleService.get(added.id()).total()).isEqualByComparingTo("1500.00");
+        assertThatThrownBy(() -> completeAsCf(added.id())).isInstanceOf(ValidationException.class);
+        SaleResponseDTO reviewed = saleService.updateRequestPrice(toFabricate.get(1),
+                new UpdateRequestPriceDTO(new BigDecimal("700.00"), PRICE));
+        assertThat(reviewed.total()).isEqualByComparingTo("1700.00");
+        as(shop.operator());
+        fulfillmentService.transform(toFabricate.get(1), new FulfillTransformationRequestDTO(expensive.getId(), null));
+
+        as(shop.seller());
+        SaleResponseDTO completed = completeAsCf(added.id());
+        assertThat(completed.details().stream().map(SaleDetailResponseDTO::id).sorted().toList())
+                .isEqualTo(lineIds);
+        assertThat(completed.total()).isEqualByComparingTo("1700.00");
+        Map<String, Object> reviewedRow = jdbc.queryForMap(
+                "SELECT d.price, d.item_id, d.work_result_id, i.status AS item_status "
+                        + "FROM sale_detail d JOIN inventory_item i ON i.id = d.item_id WHERE d.id = ?",
+                toFabricate.get(1));
+        assertThat((BigDecimal) reviewedRow.get("price")).isEqualByComparingTo("700.00");
+        assertThat(reviewedRow.get("work_result_id")).isNotNull();
+        assertThat(reviewedRow.get("item_status")).isEqualTo("SOLD");
+        // Ni la pieza de origen ni el sobrante son lineas de la venta.
+        assertThat(linesWithItem(expensive.getId())).isZero();
+        assertThat(linesOfSale(added.id())).isEqualTo(3);
+    }
+
+    // ── Corregir el precio de cualquier linea de una venta abierta ───────
+    //
+    // Lineas directas (pieza normal de stock, maleta) mientras la venta esta
+    // abierta; solicitudes antes de enviarlas o en revision de precio. Q0 solo
+    // con "sin cargo" expreso. `expectedPrice` obligatorio y comparado bajo el
+    // cerrojo de la venta.
+
+    /** Una pieza normal con `units` en stock al costo `cost` y catalogo PRICE. */
+    private Product normalStocked(Shop shop, int units, BigDecimal cost) {
+        Product screw = normalProduct(shop, "RESORTE");
+        stockedAtCost(shop, screw, units, cost);
+        return screw;
+    }
+
+    /** Un producto de la familia maleta con `units` unidades fisicas al costo `cost`. */
+    private List<InventoryItem> maletaUnits(Shop shop, int units, BigDecimal cost) {
+        Product box = productRepository.save(Product.builder()
+                .family(seededFamily("MAL"))
+                .model(shop.model())
+                .name("MALETA " + unique())
+                .sku("SKU-" + unique())
+                .attributes(new HashMap<>())
+                .build());
+        return stockedAtCost(shop, box, units, cost);
+    }
+
+    private AddSaleDetailRequestDTO maletaRequest(InventoryItem unit) {
+        return new AddSaleDetailRequestDTO(
+                productOfItem(unit.getId()), unit.getId(), null, null, null, null, null);
+    }
+
+    private AddSaleDetailRequestDTO freeLine(Product product, int quantity, BigDecimal seenCatalog) {
+        return new AddSaleDetailRequestDTO(product.getId(), null, null, quantity, BigDecimal.ZERO,
+                null, null, null, null, null, seenCatalog, true);
+    }
+
+    private SaleResponseDTO reprice(UUID line, String price, BigDecimal seen) {
+        return saleService.updateRequestPrice(line, new UpdateRequestPriceDTO(new BigDecimal(price), seen));
+    }
+
+    private SaleResponseDTO repriceFree(UUID line, BigDecimal seen) {
+        return saleService.updateRequestPrice(line, new UpdateRequestPriceDTO(BigDecimal.ZERO, seen, true));
+    }
+
+    /**
+     * Todo lo que una correccion de precio podria tocar en el taller de la
+     * venta: la venta, sus lineas, el inventario, las unidades, los lotes y lo
+     * que cada linea consumio de ellos. Para "nada cambio" se compara entero.
+     */
+    private Map<String, Object> stateOf(UUID saleId) {
+        UUID workshop = jdbc.queryForObject("SELECT workshop_id FROM sale WHERE id = ?", UUID.class, saleId);
+        Map<String, Object> state = new HashMap<>();
+        state.put("sale", jdbc.queryForMap("SELECT * FROM sale WHERE id = ?", saleId));
+        state.put("lines", jdbc.queryForList("SELECT * FROM sale_detail WHERE sale_id = ? ORDER BY id", saleId));
+        state.put("inventory", jdbc.queryForList(
+                "SELECT * FROM inventory WHERE workshop_id = ? ORDER BY id", workshop));
+        state.put("items", jdbc.queryForList(
+                "SELECT item.* FROM inventory_item item JOIN inventory i ON i.id = item.inventory_id "
+                        + "WHERE i.workshop_id = ? ORDER BY item.id", workshop));
+        state.put("lots", jdbc.queryForList(
+                "SELECT * FROM inventory_acquisition WHERE workshop_id = ? ORDER BY id", workshop));
+        state.put("allocations", jdbc.queryForList(
+                "SELECT a.* FROM sale_detail_cost_allocation a JOIN sale_detail d ON d.id = a.sale_detail_id "
+                        + "WHERE d.sale_id = ? ORDER BY a.id", saleId));
+        state.put("transformations", transformations());
+        return state;
+    }
+
+    /** Lo mismo que {@link #stateOf} pero sin lo que la correccion SI debe cambiar. */
+    private Map<String, Object> stateApartFromPrices(UUID saleId) {
+        Map<String, Object> state = stateOf(saleId);
+        Map<String, Object> sale = new HashMap<>(castMap(state.get("sale")));
+        sale.remove("total");
+        sale.remove("updated_at");
+        state.put("sale", sale);
+        List<Map<String, Object>> lines = new ArrayList<>();
+        for (Map<String, Object> line : castList(state.get("lines"))) {
+            Map<String, Object> copy = new HashMap<>(line);
+            copy.remove("price");
+            copy.remove("sub_total");
+            lines.add(copy);
+        }
+        state.put("lines", lines);
+        return state;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> castMap(Object value) {
+        return (Map<String, Object>) value;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> castList(Object value) {
+        return (List<Map<String, Object>>) value;
+    }
+
+    /**
+     * A. Una pieza normal tomada del stock se corrige en el carrito: la MISMA
+     * fila, producto, cantidad, lotes consumidos y costo; el stock y el
+     * catalogo no se mueven; el subtotal es cantidad x precio y el total se
+     * ajusta una sola vez.
+     */
+    @Test
+    void aNormalStockLineIsRepricedInPlaceWithoutTouchingStock() {
+        Shop shop = shop();
+        Product screw = normalStocked(shop, 5, COST);
+        Product other = normalStocked(shop, 3, COST);
+
+        as(shop.seller());
+        UUID saleId = openSaleWithoutPlate("Directa").id();
+        addSeen(saleId, normalRequest(other, 1));
+        SaleResponseDTO added = addSeen(saleId, normalRequest(screw, 2));
+        UUID line = added.details().stream()
+                .filter(detail -> detail.product().id().equals(screw.getId()))
+                .findFirst().orElseThrow().id();
+        assertThat(lineById(added, line).fulfillment()).isNull();
+        assertThat(added.total()).isEqualByComparingTo("1500.00");
+        Map<String, Object> before = stateApartFromPrices(saleId);
+
+        SaleResponseDTO edited = reprice(line, "250.00", PRICE);
+
+        SaleDetailResponseDTO after = lineById(edited, line);
+        assertThat(edited.details()).hasSize(2);
+        assertThat(after.quantity()).isEqualTo(2);
+        assertThat(after.price()).isEqualByComparingTo("250.00");
+        assertThat(after.subTotal()).isEqualByComparingTo("500.00");
+        assertThat(edited.total()).isEqualByComparingTo("1000.00");
+        assertThat(stateApartFromPrices(saleId)).isEqualTo(before);
+        assertThat(stockOf(screw, shop)).isEqualTo(3);
+        assertThat(catalogPriceOf(shop, screw)).isEqualByComparingTo(PRICE);
+
+        // Bajo el costo vigente, no.
+        assertThatThrownBy(() -> reprice(line, "99.99", new BigDecimal("250.00")))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("Q 100.00");
+
+        // La factura lleva la misma linea, una vez, al precio corregido.
+        SaleResponseDTO completed = completeAsCf(saleId);
+        assertThat(lineById(completed, line).price()).isEqualByComparingTo("250.00");
+        assertThat(completed.total()).isEqualByComparingTo("1000.00");
+        assertThat(linesOfSale(saleId)).isEqualTo(2);
+    }
+
+    /**
+     * B. Una unidad de maleta se corrige en el carrito: la misma linea con la
+     * MISMA unidad fisica, sin otra reserva y sin mover existencias.
+     */
+    @Test
+    void aMaletaUnitIsRepricedKeepingItsPhysicalUnit() {
+        Shop shop = shop();
+        List<InventoryItem> units = maletaUnits(shop, 2, new BigDecimal("150.00"));
+        InventoryItem unit = units.get(0);
+
+        as(shop.seller());
+        UUID saleId = openUnresolvedSale("Maleta").id();
+        UUID line = onlyLine(addSeen(saleId, maletaRequest(unit))).id();
+        assertThat(itemStatus(unit.getId())).isEqualTo("SOLD");
+        Map<String, Object> before = stateApartFromPrices(saleId);
+
+        SaleDetailResponseDTO after = onlyLine(reprice(line, "400.00", PRICE));
+
+        assertThat(after.id()).isEqualTo(line);
+        assertThat(after.item().id()).isEqualTo(unit.getId());
+        assertThat(after.price()).isEqualByComparingTo("400.00");
+        assertThat(after.subTotal()).isEqualByComparingTo("400.00");
+        assertThat(stateApartFromPrices(saleId)).isEqualTo(before);
+        assertThat(linesWithItem(unit.getId())).isEqualTo(1);
+        assertThat(itemStatus(units.get(1).getId())).isEqualTo("AVAILABLE");
+        assertThat(catalogPriceOf(shop, productOf(unit))).isEqualByComparingTo(PRICE);
+        assertThatThrownBy(() -> reprice(line, "149.99", new BigDecimal("400.00")))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("Q 150.00");
+    }
+
+    private Product productOf(InventoryItem unit) {
+        return productRepository.findById(productOfItem(unit.getId())).orElseThrow();
+    }
+
+    /**
+     * C + mezcla. Una venta con pieza normal, maleta y una pieza pedida: las
+     * tres se corrigen antes de enviar; tras enviar, las directas se siguen
+     * pudiendo corregir (nadie del taller interviene en ellas) y la pedida ya
+     * no. Ninguna linea nueva, ningun cobro doble.
+     */
+    @Test
+    void aMixedSaleRepricesEachEligibleLineAndOnlyThoseOnce() {
+        Shop shop = shop();
+        Product screw = normalStocked(shop, 4, COST);
+        InventoryItem unit = maletaUnits(shop, 1, new BigDecimal("150.00")).get(0);
+        Product leaf = leaf(shop, 90, 2);
+        emptyInventory(shop, leaf);
+
+        as(shop.seller());
+        UUID saleId = openUnresolvedSale("Mezcla").id();
+        UUID normal = onlyLine(addSeen(saleId, normalRequest(screw, 2))).id();
+        addSeen(saleId, maletaRequest(unit));
+        UUID maleta = jdbc.queryForObject("SELECT id FROM sale_detail WHERE item_id = ?", UUID.class, unit.getId());
+        SaleResponseDTO withRequest = addSeen(saleId, confirmed(leaf, 1, PRICE, PRICE));
+        UUID special = lineByType(withRequest, FulfillmentType.TRANSFORMATION).id();
+        assertThat(withRequest.total()).isEqualByComparingTo("2000.00");
+
+        reprice(normal, "300.00", PRICE);
+        reprice(maleta, "450.00", PRICE);
+        SaleResponseDTO edited = reprice(special, "355.00", PRICE);
+        assertThat(edited.total()).isEqualByComparingTo("1405.00");
+        assertThat(lineById(edited, special).fulfillment().status()).isEqualTo(FulfillmentStatus.PENDING);
+
+        SaleResponseDTO sent = saleService.dispatch(saleId, new DispatchSaleRequestDTO(null));
+        assertThat(lineById(sent, special).price()).isEqualByComparingTo("355.00");
+        assertThatThrownBy(() -> reprice(special, "360.00", new BigDecimal("355.00")))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("sin enviar");
+        SaleResponseDTO afterSend = reprice(normal, "320.00", new BigDecimal("300.00"));
+        assertThat(afterSend.total()).isEqualByComparingTo("1445.00");
+        assertThat(afterSend.details()).hasSize(3);
+        assertThat(afterSend.details().stream().map(SaleDetailResponseDTO::id))
+                .containsExactlyInAnyOrder(normal, maleta, special);
+    }
+
+    /** D. Otro taller no ve ni corrige una linea directa: 404, sin escribir. */
+    @Test
+    void anotherWorkshopCannotRepriceADirectLine() {
+        Shop shop = shop();
+        Shop neighbour = shop();
+        Product screw = normalStocked(shop, 2, COST);
+        as(shop.seller());
+        UUID saleId = openSaleWithoutPlate("Ajena").id();
+        UUID line = onlyLine(addSeen(saleId, normalRequest(screw, 1))).id();
+        Map<String, Object> before = stateOf(saleId);
+
+        as(neighbour.seller());
+        assertThatThrownBy(() -> reprice(line, "120.00", PRICE))
+                .isInstanceOf(EntityNotFoundException.class)
+                .hasMessage("No existe el detalle especificado");
+        assertThat(stateOf(saleId)).isEqualTo(before);
+    }
+
+    /**
+     * E. Emitida, anulada o revertida: la venta ya no esta abierta y ninguna
+     * linea cambia de precio. Nada se escribe.
+     */
+    @Test
+    void aClosedSaleRejectsEveryPriceCorrection() {
+        Shop shop = shop();
+        Product screw = normalStocked(shop, 6, COST);
+        as(shop.seller());
+
+        UUID completed = openSaleWithoutPlate("Emitida").id();
+        UUID completedLine = onlyLine(addSeen(completed, normalRequest(screw, 1))).id();
+        completeAsCf(completed);
+
+        UUID cancelled = openSaleWithoutPlate("Anulada").id();
+        UUID cancelledLine = onlyLine(addSeen(cancelled, normalRequest(screw, 1))).id();
+        saleService.cancel(cancelled, new CancelSaleRequestDTO("Cliente desistio"));
+
+        UUID reversed = openSaleWithoutPlate("Revertida").id();
+        UUID reversedLine = onlyLine(addSeen(reversed, normalRequest(screw, 1))).id();
+        completeAsCf(reversed);
+        saleService.reverse(reversed, new ReverseSaleRequestDTO("Error de cobro"));
+
+        for (Map.Entry<UUID, UUID> closed : Map.of(
+                completed, completedLine, cancelled, cancelledLine, reversed, reversedLine).entrySet()) {
+            Map<String, Object> before = stateOf(closed.getKey());
+            assertThatThrownBy(() -> reprice(closed.getValue(), "200.00", PRICE))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessage("La venta no se encuentra abierta");
+            assertThatThrownBy(() -> repriceFree(closed.getValue(), PRICE))
+                    .isInstanceOf(ValidationException.class);
+            assertThat(stateOf(closed.getKey())).isEqualTo(before);
+        }
+    }
+
+    /** F. Dos lineas del mismo producto: solo cambia la que se corrige. */
+    @Test
+    void twoLinesOfTheSameProductAreRepricedIndependently() {
+        Shop shop = shop();
+        Product screw = normalStocked(shop, 5, COST);
+        as(shop.seller());
+        UUID saleId = openSaleWithoutPlate("Gemelas").id();
+        UUID first = onlyLine(addSeen(saleId, normalRequest(screw, 1))).id();
+        SaleResponseDTO both = addSeen(saleId, normalRequest(screw, 2));
+        UUID second = both.details().stream().map(SaleDetailResponseDTO::id)
+                .filter(id -> !id.equals(first)).findFirst().orElseThrow();
+
+        SaleResponseDTO edited = reprice(second, "200.00", PRICE);
+
+        assertThat(lineById(edited, first).price()).isEqualByComparingTo(PRICE);
+        assertThat(lineById(edited, first).subTotal()).isEqualByComparingTo(PRICE);
+        assertThat(lineById(edited, second).subTotal()).isEqualByComparingTo("400.00");
+        assertThat(edited.total()).isEqualByComparingTo("900.00");
+        assertThat(stockOf(screw, shop)).isEqualTo(2);
+    }
+
+    /**
+     * G + K. La revision de precio conserva su propia regla: el minimo es el
+     * costo de la pieza de origen, y ni el editor general ni un "sin cargo"
+     * lo saltan. Una solicitud bloqueada por OTRO motivo no se edita.
+     *
+     * (Ronda 4: una solicitud ya no puede NACER sin cargo —su costo se conoce
+     * al cumplirla—; esa parte la cubre
+     * {@code aWorkshopRequestNeverGoesForFreeNorBypassesThePriceReview}.)
+     */
+    @Test
+    void thePriceReviewKeepsItsMinimumAgainstAnyEditOrNoCharge() {
+        Shop shop = shop();
+        Product target = leaf(shop, 90, 2);
+        inventoryRepository.save(Inventory.builder().product(target).workshop(shop.workshop())
+                .price(PRICE).cost(BigDecimal.ZERO).stock(0).minStock(0).build());
+        InventoryItem expensive = stockedAtCost(shop, leaf(shop, 180, 2), 1, new BigDecimal("260.00")).get(0);
+
+        as(shop.seller());
+        UUID saleId = openUnresolvedSale("Revision").id();
+        SaleResponseDTO cheap = addSeen(saleId, new AddSaleDetailRequestDTO(
+                target.getId(), null, null, 1, new BigDecimal("100.00"), null, null));
+        assertThat(onlyLine(cheap).fulfillment().type()).isEqualTo(FulfillmentType.TRANSFORMATION);
+        UUID line = onlyLine(saleService.dispatch(saleId, new DispatchSaleRequestDTO(null))).id();
+
+        // El Operador fabrica desde una pieza que costo mas: revision, sin fabricar.
+        as(shop.operator());
+        assertThat(fulfillmentService.transform(line,
+                new FulfillTransformationRequestDTO(expensive.getId(), null)).blockReason())
+                .isEqualTo(FulfillmentBlockReason.PRICE_REVIEW);
+        assertThat(itemStatus(expensive.getId())).isEqualTo("AVAILABLE");
+
+        as(shop.seller());
+        Map<String, Object> before = stateOf(saleId);
+        assertThatThrownBy(() -> repriceFree(line, new BigDecimal("100.00")))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("Q 260.00");
+        assertThatThrownBy(() -> reprice(line, "259.99", new BigDecimal("100.00")))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("Q 260.00");
+        assertThat(stateOf(saleId)).isEqualTo(before);
+
+        SaleDetailResponseDTO reviewed = onlyLine(reprice(line, "260.00", new BigDecimal("100.00")));
+        assertThat(reviewed.fulfillment().status()).isEqualTo(FulfillmentStatus.QUEUED);
+        assertThat(reviewed.fulfillment().blockReason()).isNull();
+
+        // Bloqueada por falta de material: no es una revision de precio.
+        as(shop.operator());
+        fulfillmentService.block(line, new BlockFulfillmentRequestDTO("Sin material"));
+        as(shop.seller());
+        assertThatThrownBy(() -> reprice(line, "300.00", new BigDecimal("260.00")))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("revision de precio");
+    }
+
+    /**
+     * H. Sin precio de catalogo, ni un precio vacio ni un cero (con o sin
+     * "sin cargo") se convierten en una venta gratis. Nada se reserva.
+     */
+    @Test
+    void aMissingCatalogPriceIsNeverTreatedAsNoCharge() {
+        Shop shop = shop();
+        Product screw = normalStocked(shop, 3, BigDecimal.ZERO);
+        jdbc.update("UPDATE inventory SET price = 0 WHERE product_id = ?", screw.getId());
+        as(shop.seller());
+        UUID saleId = openSaleWithoutPlate("SinPrecio").id();
+        Map<String, Object> before = stateOf(saleId);
+
+        assertThatThrownBy(() -> addSeen(saleId, normalRequest(screw, 1)))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("no tiene un precio de venta asignado");
+        assertThatThrownBy(() -> addSeen(saleId, new AddSaleDetailRequestDTO(
+                screw.getId(), null, null, 1, BigDecimal.ZERO, null, null)))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("no tiene un precio de venta asignado");
+        assertThatThrownBy(() -> addSeen(saleId, freeLine(screw, 1, BigDecimal.ZERO)))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("no tiene precio de catalogo");
+        assertThat(stateOf(saleId)).isEqualTo(before);
+        assertThat(catalogPriceOf(shop, screw)).isEqualByComparingTo("0.00");
+
+        // Y una linea ya agregada (el precio se fijo al agregarla) no puede
+        // pasar a "sin cargo" si el catalogo vuelve a quedar sin precio.
+        UUID line = onlyLine(addSeen(saleId, new AddSaleDetailRequestDTO(
+                screw.getId(), null, null, 1, new BigDecimal("80.00"), null, null))).id();
+        jdbc.update("UPDATE inventory SET price = 0 WHERE product_id = ?", screw.getId());
+        assertThatThrownBy(() -> repriceFree(line, new BigDecimal("80.00")))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("no tiene precio de catalogo");
+    }
+
+    /**
+     * I. Sin cargo expreso al agregar, y la ida y vuelta al corregir: de
+     * positivo a cero, de cero a positivo y de cero a cero (que no escribe
+     * nada). Los totales siguen a la linea.
+     */
+    @Test
+    void anExplicitNoChargeLineRoundTripsThroughEdits() {
+        Shop shop = shop();
+        Product washer = normalStocked(shop, 4, BigDecimal.ZERO);
+        as(shop.seller());
+        UUID saleId = openSaleWithoutPlate("Cortesia").id();
+
+        SaleResponseDTO added = addSeen(saleId, freeLine(washer, 2, PRICE));
+        UUID line = onlyLine(added).id();
+        assertThat(onlyLine(added).price()).isEqualByComparingTo("0.00");
+        assertThat(onlyLine(added).subTotal()).isEqualByComparingTo("0.00");
+        assertThat(stockOf(washer, shop)).isEqualTo(2);
+
+        assertThat(reprice(line, "120.00", BigDecimal.ZERO).total()).isEqualByComparingTo("240.00");
+        SaleResponseDTO backToFree = repriceFree(line, new BigDecimal("120.00"));
+        assertThat(onlyLine(backToFree).price()).isEqualByComparingTo("0.00");
+        assertThat(backToFree.total()).isEqualByComparingTo("0.00");
+
+        Map<String, Object> before = stateOf(saleId);
+        assertThat(repriceFree(line, new BigDecimal("0.00")).total()).isEqualByComparingTo("0.00");
+        assertThat(stateOf(saleId)).isEqualTo(before);
+
+        assertThat(completeAsCf(saleId).total()).isEqualByComparingTo("0.00");
+        assertThat(stockOf(washer, shop)).isEqualTo(2);
+    }
+
+    /**
+     * J. Un cero fabricado sin "sin cargo", un "sin cargo" con importe, o un
+     * cero sobre una pieza que costo: rechazados, sin escribir.
+     */
+    @Test
+    void aCraftedZeroIsRejectedWithoutWriting() {
+        Shop shop = shop();
+        Product screw = normalStocked(shop, 2, COST);
+        Product washer = normalStocked(shop, 2, BigDecimal.ZERO);
+        as(shop.seller());
+        UUID saleId = openSaleWithoutPlate("Forjada").id();
+        UUID priced = onlyLine(addSeen(saleId, normalRequest(screw, 1))).id();
+        SaleResponseDTO both = addSeen(saleId, normalRequest(washer, 1));
+        UUID free = both.details().stream().map(SaleDetailResponseDTO::id)
+                .filter(id -> !id.equals(priced)).findFirst().orElseThrow();
+        Map<String, Object> before = stateOf(saleId);
+
+        assertThatThrownBy(() -> saleService.updateRequestPrice(free,
+                new UpdateRequestPriceDTO(BigDecimal.ZERO, PRICE)))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("sin cargo");
+        assertThatThrownBy(() -> saleService.updateRequestPrice(free,
+                new UpdateRequestPriceDTO(new BigDecimal("10.00"), PRICE, true)))
+                .isInstanceOf(ValidationException.class);
+        assertThatThrownBy(() -> repriceFree(priced, PRICE))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("Q 100.00");
+        assertThatThrownBy(() -> addSeen(saleId, new AddSaleDetailRequestDTO(
+                washer.getId(), null, null, 1, BigDecimal.ZERO, null, null)))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("sin cargo");
+        assertThat(stateOf(saleId)).isEqualTo(before);
+    }
+
+    /** L. Negativo o con mas de dos decimales: rechazado en el servicio, sin escribir. */
+    @Test
+    void anInvalidAmountIsRejectedWithoutWriting() {
+        Shop shop = shop();
+        Product screw = normalStocked(shop, 2, COST);
+        as(shop.seller());
+        UUID saleId = openSaleWithoutPlate("Importe").id();
+        UUID line = onlyLine(addSeen(saleId, normalRequest(screw, 1))).id();
+        Map<String, Object> before = stateOf(saleId);
+
+        assertThatThrownBy(() -> reprice(line, "-1.00", PRICE)).isInstanceOf(ValidationException.class);
+        assertThatThrownBy(() -> reprice(line, "120.005", PRICE)).isInstanceOf(ValidationException.class);
+        assertThat(stateOf(saleId)).isEqualTo(before);
+    }
+
+    /** M. Sin el precio que el vendedor tenia a la vista no hay escritura a ciegas. */
+    @Test
+    void anEditWithoutTheSeenPriceIsRejectedWithoutWriting() {
+        Shop shop = shop();
+        Product screw = normalStocked(shop, 2, COST);
+        Product leaf = leaf(shop, 90, 2);
+        emptyInventory(shop, leaf);
+        as(shop.seller());
+        UUID saleId = openUnresolvedSale("Ciega").id();
+        UUID direct = onlyLine(addSeen(saleId, normalRequest(screw, 1))).id();
+        UUID request = lineByType(addSeen(saleId, confirmed(leaf, 1, PRICE, PRICE)),
+                FulfillmentType.TRANSFORMATION).id();
+        Map<String, Object> before = stateOf(saleId);
+
+        for (UUID line : List.of(direct, request)) {
+            assertThatThrownBy(() -> saleService.updateRequestPrice(line,
+                    new UpdateRequestPriceDTO(new BigDecimal("540.00"), null)))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("precio que tenia a la vista");
+        }
+        assertThat(stateOf(saleId)).isEqualTo(before);
+    }
+
+    /**
+     * N. Un precio visto que ya no es el de la linea: 409 con el precio
+     * vigente, y la base queda identica.
+     */
+    @Test
+    void aStaleSeenPriceIsAConflictAndWritesNothing() {
+        Shop shop = shop();
+        Product screw = normalStocked(shop, 2, COST);
+        as(shop.seller());
+        UUID saleId = openSaleWithoutPlate("Vieja").id();
+        UUID line = onlyLine(addSeen(saleId, normalRequest(screw, 1))).id();
+        reprice(line, "450.00", PRICE);
+        Map<String, Object> before = stateOf(saleId);
+
+        assertThatThrownBy(() -> reprice(line, "300.00", PRICE))
+                .isInstanceOf(PriceConflictException.class)
+                .hasMessageContaining("Q 450.00");
+        assertThat(stateOf(saleId)).isEqualTo(before);
+    }
+
+    /**
+     * O. Dos vendedores del taller corrigen la MISMA pieza normal en
+     * transacciones solapadas: el primero escribe, el segundo espera el
+     * cerrojo de la venta y, como ya no ve el precio que tenia, recibe 409.
+     */
+    @Test
+    void twoSellersRepricingTheSameDirectLineCannotLoseAnUpdate() throws Exception {
+        Shop shop = shop();
+        Jwt otherSeller = token(shop.workshop(), account(employee(shop.workshop()), "SELLER"));
+        Product screw = normalStocked(shop, 2, COST);
+        as(shop.seller());
+        UUID saleId = openSaleWithoutPlate("Dos").id();
+        UUID line = onlyLine(addSeen(saleId, normalRequest(screw, 1))).id();
+
+        ExecutorService other = Executors.newSingleThreadExecutor();
+        Future<SaleResponseDTO> second;
+        try {
+            try (AutoCloseable first = holding(() -> {
+                as(shop.seller());
+                reprice(line, "410.00", PRICE);
+            })) {
+                second = inAnotherThread(other, otherSeller, () -> reprice(line, "390.00", PRICE));
+                awaitBlockedOnALock();
+            }
+            assertThat(failureOf(second))
+                    .isInstanceOf(PriceConflictException.class)
+                    .hasMessageContaining("410.00");
+        } finally {
+            other.shutdownNow();
+        }
+        as(shop.seller());
+        SaleResponseDTO after = saleService.get(saleId);
+        assertThat(onlyLine(after).price()).isEqualByComparingTo("410.00");
+        assertThat(after.total()).isEqualByComparingTo("410.00");
+    }
+
+    /**
+     * P. Correccion contra emision, en los dos ordenes. Si la emision toma
+     * primero la venta, la correccion espera y se rechaza (la factura sale con
+     * el precio que habia). Si la correccion toma primero, la emision espera y
+     * factura el precio corregido. Nunca una mezcla.
+     */
+    @Test
+    void anEditRacingTheCompletionIsSerializedBothWays() throws Exception {
+        Shop shop = shop();
+        Product screw = normalStocked(shop, 4, COST);
+        as(shop.seller());
+        UUID first = openSaleWithoutPlate("EmiteAntes").id();
+        UUID firstLine = onlyLine(addSeen(first, normalRequest(screw, 1))).id();
+        UUID second = openSaleWithoutPlate("CorrigeAntes").id();
+        UUID secondLine = onlyLine(addSeen(second, normalRequest(screw, 1))).id();
+
+        ExecutorService other = Executors.newSingleThreadExecutor();
+        try {
+            Future<SaleResponseDTO> lateEdit;
+            try (AutoCloseable completion = holding(() -> {
+                as(shop.seller());
+                completeAsCf(first);
+            })) {
+                lateEdit = inAnotherThread(other, shop.seller(), () -> reprice(firstLine, "200.00", PRICE));
+                awaitBlockedOnALock();
+            }
+            assertThat(failureOf(lateEdit))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessage("La venta no se encuentra abierta");
+
+            Future<SaleResponseDTO> lateCompletion;
+            try (AutoCloseable edit = holding(() -> {
+                as(shop.seller());
+                reprice(secondLine, "200.00", PRICE);
+            })) {
+                lateCompletion = inAnotherThread(other, shop.seller(), () -> completeAsCf(second));
+                awaitBlockedOnALock();
+            }
+            assertThat(failureOf(lateCompletion)).isNull();
+        } finally {
+            other.shutdownNow();
+        }
+        as(shop.seller());
+        SaleResponseDTO issuedFirst = saleService.get(first);
+        assertThat(issuedFirst.status()).isEqualTo(SaleStatus.COMPLETED);
+        assertThat(onlyLine(issuedFirst).price()).isEqualByComparingTo(PRICE);
+        assertThat(issuedFirst.total()).isEqualByComparingTo(PRICE);
+        SaleResponseDTO issuedSecond = saleService.get(second);
+        assertThat(issuedSecond.status()).isEqualTo(SaleStatus.COMPLETED);
+        assertThat(onlyLine(issuedSecond).price()).isEqualByComparingTo("200.00");
+        assertThat(issuedSecond.total()).isEqualByComparingTo("200.00");
+    }
+
+    /**
+     * Q. ABA: otra pestana lleva la linea de 500 a 550 y de vuelta a 500. La
+     * primera pestana, que vio 500, puede guardar: el precio es el UNICO dato
+     * de la linea que se puede cambiar (producto, cantidad, unidad, lotes y
+     * costo son fijos desde que se agrego, y el estado del cumplimiento solo
+     * avanza —nunca vuelve a "sin enviar"— y se valida aparte bajo el mismo
+     * cerrojo). Asi que "precio igual" es "linea igual" a lo que vio: no hay
+     * decision tomada sobre un dato distinto, y no hace falta una version.
+     */
+    @Test
+    void anABAReturnToTheSeenPriceIsTheSameLineAndCanBeSaved() {
+        Shop shop = shop();
+        Product screw = normalStocked(shop, 2, COST);
+        as(shop.seller());
+        UUID saleId = openSaleWithoutPlate("ABA").id();
+        UUID line = onlyLine(addSeen(saleId, normalRequest(screw, 1))).id();
+        Map<String, Object> seen = stateApartFromPrices(saleId);
+
+        reprice(line, "550.00", PRICE);
+        reprice(line, "500.00", new BigDecimal("550.00"));
+        assertThat(stateApartFromPrices(saleId)).isEqualTo(seen);
+
+        SaleResponseDTO saved = reprice(line, "520.00", PRICE);
+        assertThat(onlyLine(saved).price()).isEqualByComparingTo("520.00");
+        assertThat(saved.total()).isEqualByComparingTo("520.00");
+        assertThat(stateApartFromPrices(saleId)).isEqualTo(seen);
+    }
+
+    /**
+     * R. Una falla forzada al CONFIRMAR —un trigger diferido de prueba que
+     * revienta despues de escribir la linea y el total— deshace todo: precio,
+     * subtotal, total, revision de precio, inventario y lotes.
+     */
+    @Test
+    void aFailureAtCommitRollsBackTheWholeCorrection() {
+        Shop shop = shop();
+        Product screw = normalStocked(shop, 3, COST);
+        Product target = leaf(shop, 90, 2);
+        emptyInventory(shop, target);
+        InventoryItem expensive = stockedAtCost(shop, leaf(shop, 180, 2), 1, new BigDecimal("260.00")).get(0);
+        UUID review = fabricationRequest(shop, target);
+        as(shop.operator());
+        fulfillmentService.transform(review, new FulfillTransformationRequestDTO(expensive.getId(), null));
+
+        as(shop.seller());
+        UUID saleId = openSaleWithoutPlate("Falla").id();
+        UUID direct = onlyLine(addSeen(saleId, normalRequest(screw, 2))).id();
+
+        for (Map.Entry<UUID, String> edit : List.of(
+                Map.entry(direct, "300.00"), Map.entry(review, "320.00"))) {
+            UUID line = edit.getKey();
+            UUID ofSale = saleIdOf(line);
+            BigDecimal seen = jdbc.queryForObject("SELECT price FROM sale_detail WHERE id = ?", BigDecimal.class, line);
+            Map<String, Object> before = stateOf(ofSale);
+            failingAtCommit(line, () -> assertThatThrownBy(() -> reprice(line, edit.getValue(), seen))
+                    .isInstanceOf(RuntimeException.class)
+                    .hasStackTraceContaining("falla forzada de prueba"));
+            assertThat(stateOf(ofSale)).isEqualTo(before);
+        }
+        assertThat(onlyLineOf(saleIdOf(review), shop).fulfillment().blockReason())
+                .isEqualTo(FulfillmentBlockReason.PRICE_REVIEW);
+    }
+
+    /** Instala, solo para esta prueba y esta linea, un trigger que falla al confirmar. */
+    private void failingAtCommit(UUID line, Runnable body) {
+        jdbc.execute("CREATE OR REPLACE FUNCTION test_fail_at_commit() RETURNS trigger "
+                + "LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'falla forzada de prueba'; END $$");
+        jdbc.execute("CREATE CONSTRAINT TRIGGER test_fail_at_commit AFTER UPDATE ON sale_detail "
+                + "DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (NEW.id = '" + line + "'::uuid) "
+                + "EXECUTE FUNCTION test_fail_at_commit()");
+        try {
+            body.run();
+        } finally {
+            jdbc.execute("DROP TRIGGER IF EXISTS test_fail_at_commit ON sale_detail");
+            jdbc.execute("DROP FUNCTION IF EXISTS test_fail_at_commit()");
+        }
+    }
+
+    /**
+     * S. 500, 500.0 y 500.00 son el mismo precio: ni conflicto falso por la
+     * escala, ni escritura cuando el precio nuevo es el mismo. (Un importe con
+     * TRES decimales escritos no llega aqui: el formato de dinero del DTO lo
+     * rechaza con 400, igual que en cualquier otro campo de dinero.)
+     */
+    @Test
+    void theSeenPriceIsComparedByValueNotByScale() {
+        Shop shop = shop();
+        Product screw = normalStocked(shop, 2, COST);
+        as(shop.seller());
+        UUID saleId = openSaleWithoutPlate("Escala").id();
+        UUID line = onlyLine(addSeen(saleId, normalRequest(screw, 1))).id();
+        Map<String, Object> before = stateOf(saleId);
+
+        assertThat(reprice(line, "500.0", new BigDecimal("500")).total()).isEqualByComparingTo(PRICE);
+        assertThat(reprice(line, "500", new BigDecimal("500.0")).total()).isEqualByComparingTo(PRICE);
+        assertThat(stateOf(saleId)).isEqualTo(before);
+
+        SaleResponseDTO edited = reprice(line, "480.5", new BigDecimal("500"));
+        assertThat(onlyLine(edited).price()).isEqualByComparingTo("480.50");
+        assertThat(reprice(line, "470.00", new BigDecimal("480.5")).total()).isEqualByComparingTo("470.00");
+    }
+
+    // ── Ronda 4: quien pide "sin cargo", costo desconocido y catalogo visto obligatorio ──
+    //
+    // Estas pruebas llaman a `saleService.addDetail` / `requestSpecification`
+    // DIRECTAMENTE (no por `addSeen`): fijan a mano el catalogo que vio el
+    // vendedor, o lo omiten a proposito.
+
+    private static final BigDecimal SEEN_250 = new BigDecimal("250.00");
+
+    /** Una pieza normal con catalogo Q250 y `units` unidades de un lote COMPRADO al costo `cost`. */
+    private Product normalAt250(Shop shop, int units, BigDecimal cost) {
+        Product screw = normalProduct(shop, "MUELLE");
+        stockedAtCost(shop, screw, units, cost);
+        jdbc.update("UPDATE inventory SET price = 250 WHERE product_id = ?", screw.getId());
+        return screw;
+    }
+
+    /**
+     * Una pieza normal con catalogo y costo de referencia 0 cuyas unidades
+     * entraron SIN compra (lote PRODUCTION, sin costo): asi queda lo que sale de
+     * una transformacion. El 0 del inventario no es un costo registrado.
+     */
+    private Product producedAt250(Shop shop, int units) {
+        Product piece = normalProduct(shop, "PRODUCIDA");
+        Inventory inventory = inventoryRepository.save(Inventory.builder()
+                .product(piece).workshop(shop.workshop())
+                .price(SEEN_250).cost(BigDecimal.ZERO).stock(units).minStock(0).build());
+        acquisitionRepository.save(InventoryAcquisition.builder()
+                .workshop(shop.workshop()).inventory(inventory)
+                .origin(AcquisitionOrigin.PRODUCTION)
+                .quantityReceived(units).quantityRemaining(units)
+                .acquiredAt(LocalDateTime.now())
+                .build());
+        return piece;
+    }
+
+    private AddSaleDetailRequestDTO line(Product product, int quantity, String price, BigDecimal seen) {
+        return new AddSaleDetailRequestDTO(product.getId(), null, null, quantity,
+                price == null ? null : new BigDecimal(price), null, null, null, null, null, seen);
+    }
+
+    private AddSaleDetailRequestDTO free(Product product, int quantity, BigDecimal seen) {
+        return new AddSaleDetailRequestDTO(product.getId(), null, null, quantity, BigDecimal.ZERO,
+                null, null, null, null, null, seen, true);
+    }
+
+    private Jwt adminOf(Shop shop) {
+        return token(shop.workshop(), account(employee(shop.workshop()), "ADMIN"));
+    }
+
+    /**
+     * I + N. Sin el catalogo que el vendedor tenia a la vista, NINGUNA puerta
+     * de alta agrega la linea: pieza normal, maleta, pieza especial (de stock o
+     * a fabricar), servicio y especificacion nueva. 400 y nada escrito.
+     */
+    @Test
+    void everyCreationPathRejectsAMissingSeenCatalog() {
+        Shop shop = shop();
+        Product screw = normalAt250(shop, 3, COST);
+        InventoryItem unit = maletaUnits(shop, 1, new BigDecimal("150.00")).get(0);
+        Product inStock = leaf(shop, 75, 2);
+        stocked(shop, inStock, 1);
+        Product toBuild = leaf(shop, 90, 2);
+        emptyInventory(shop, toBuild);
+        Product service = job(shop, "ALINEADO");
+
+        as(shop.seller());
+        UUID saleId = openUnresolvedSale("SinVisto").id();
+        Map<String, Object> before = stateOf(saleId);
+        List<Runnable> attempts = List.of(
+                () -> saleService.addDetail(saleId, line(screw, 1, null, null)),
+                () -> saleService.addDetail(saleId, line(screw, 1, "240.00", null)),
+                () -> saleService.addDetail(saleId, new AddSaleDetailRequestDTO(
+                        productOfItem(unit.getId()), unit.getId(), null, null, null, null)),
+                () -> saleService.addDetail(saleId, line(inStock, 1, "500.00", null)),
+                () -> saleService.addDetail(saleId, line(toBuild, 1, "500.00", null)),
+                () -> saleService.addDetail(saleId, line(service, 1, null, null)),
+                () -> saleService.requestSpecification(saleId, new RequestSpecificationDTO(
+                        seededFamily("HR").getId(), shop.model().getId(),
+                        attributes("largo", 311, "tieneOrificio", false, "cantidadColochos", 1),
+                        1, new BigDecimal("400.00"), null, null)));
+        for (Runnable attempt : attempts) {
+            assertThatThrownBy(attempt::run)
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("precio de catalogo que tenia a la vista");
+        }
+        assertThat(stateOf(saleId)).isEqualTo(before);
+        assertThat(linesOfSale(saleId)).isZero();
+        assertThat(itemStatus(unit.getId())).isEqualTo("AVAILABLE");
+    }
+
+    /**
+     * J + K + N. El catalogo cambio de Q250 a Q280 mientras el vendedor
+     * decidia: con lo que vio (Q250), cada puerta responde 409 con el precio
+     * vigente y no escribe nada; con lo vigente, agrega UNA linea.
+     */
+    @Test
+    void aChangedCatalogIsAConflictOnEveryCreationPath() {
+        Shop shop = shop();
+        Product screw = normalAt250(shop, 3, COST);
+        InventoryItem unit = maletaUnits(shop, 1, new BigDecimal("150.00")).get(0);
+        Product box = productOf(unit);
+        Product inStock = leaf(shop, 75, 2);
+        stocked(shop, inStock, 1);
+        Product toBuild = leaf(shop, 90, 2);
+        emptyInventory(shop, toBuild);
+        Product service = job(shop, "BALANCEO");
+        for (Product product : List.of(screw, box, inStock, toBuild)) {
+            jdbc.update("UPDATE inventory SET price = 280 WHERE product_id = ?", product.getId());
+        }
+        jdbc.update("UPDATE job SET price = 280 WHERE product_id = ?", service.getId());
+
+        as(shop.seller());
+        UUID saleId = openUnresolvedSale("Cambio").id();
+        Map<String, Object> before = stateOf(saleId);
+        List<Runnable> stale = List.of(
+                () -> saleService.addDetail(saleId, line(screw, 1, null, SEEN_250)),
+                () -> saleService.addDetail(saleId, line(screw, 1, "250.00", SEEN_250)),
+                () -> saleService.addDetail(saleId, new AddSaleDetailRequestDTO(
+                        box.getId(), unit.getId(), null, null, null, null, null, null, null, null, SEEN_250)),
+                () -> saleService.addDetail(saleId, line(inStock, 1, "250.00", SEEN_250)),
+                () -> saleService.addDetail(saleId, line(toBuild, 1, "250.00", SEEN_250)),
+                () -> saleService.addDetail(saleId, line(service, 1, null, SEEN_250)));
+        for (Runnable attempt : stale) {
+            assertThatThrownBy(attempt::run)
+                    .isInstanceOf(PriceConflictException.class)
+                    .hasMessageContaining("Q 280.00");
+        }
+        assertThat(stateOf(saleId)).isEqualTo(before);
+
+        // Reconfirmado sobre lo vigente: una linea, al precio vigente.
+        BigDecimal seen280 = new BigDecimal("280.0");
+        SaleResponseDTO added = saleService.addDetail(saleId, line(screw, 1, null, seen280));
+        assertThat(onlyLine(added).price()).isEqualByComparingTo("280.00");
+        assertThat(linesOfSale(saleId)).isEqualTo(1);
+    }
+
+    /**
+     * L + M. Sin precio de catalogo (inventario en 0, o ningun inventario) lo
+     * visto es 0: un precio manual pasa y, si hay inventario, queda como
+     * catalogo. Decir que se vio un precio que no existe es 409; Q0 no cabe.
+     */
+    @Test
+    void aManualPriceForAnUnpricedOrMissingCatalogNeedsTheSeenZero() {
+        Shop shop = shop();
+        Product unpriced = normalAt250(shop, 2, COST);
+        jdbc.update("UPDATE inventory SET price = 0 WHERE product_id = ?", unpriced.getId());
+        Product noRow = leaf(shop, 64, 2);
+
+        as(shop.seller());
+        UUID saleId = openUnresolvedSale("Manual").id();
+        Map<String, Object> before = stateOf(saleId);
+        assertThatThrownBy(() -> saleService.addDetail(saleId, line(unpriced, 1, "260.00", SEEN_250)))
+                .isInstanceOf(PriceConflictException.class)
+                .hasMessageContaining("ya no tiene precio");
+        assertThatThrownBy(() -> saleService.addDetail(saleId, free(unpriced, 1, BigDecimal.ZERO)))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("no tiene precio de catalogo");
+        assertThatThrownBy(() -> saleService.addDetail(saleId, line(unpriced, 1, null, BigDecimal.ZERO)))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("no tiene un precio de venta asignado");
+        assertThat(stateOf(saleId)).isEqualTo(before);
+
+        SaleResponseDTO manual = saleService.addDetail(saleId, line(unpriced, 1, "260.00", BigDecimal.ZERO));
+        assertThat(onlyLine(manual).price()).isEqualByComparingTo("260.00");
+        assertThat(catalogPriceOf(shop, unpriced)).isEqualByComparingTo("260.00");
+
+        // Sin inventario en el taller: se pide con lo visto (0) y no se crea ningun catalogo.
+        SaleResponseDTO requested = saleService.addDetail(saleId, line(noRow, 1, "330.00", BigDecimal.ZERO));
+        assertThat(lineByType(requested, FulfillmentType.TRANSFORMATION).price()).isEqualByComparingTo("330.00");
+        assertThat(inventoryCount(noRow.getId())).isZero();
+    }
+
+    /**
+     * M. Una especificacion que resulta ser una pieza YA existente con precio
+     * de catalogo: quien la vio "sin precio" (0) recibe 409, no un precio
+     * especial silencioso. Una pieza nueva de verdad pasa con 0.
+     */
+    @Test
+    void aSpecificationThatResolvesToAPricedPieceIsAConflict() {
+        Shop shop = shop();
+        Product existing = leaf(shop, 77, 1);
+        emptyInventory(shop, existing);
+
+        as(shop.seller());
+        UUID saleId = openUnresolvedSale("Especificacion").id();
+        Map<String, Object> before = stateOf(saleId);
+        assertThatThrownBy(() -> saleService.requestSpecification(saleId, new RequestSpecificationDTO(
+                seededFamily("HR").getId(), shop.model().getId(),
+                attributes("largo", 77, "tieneOrificio", false, "cantidadColochos", 1),
+                1, new BigDecimal("400.00"), null, null, null, null, BigDecimal.ZERO)))
+                .isInstanceOf(PriceConflictException.class)
+                .hasMessageContaining("Q 500.00");
+        assertThat(stateOf(saleId)).isEqualTo(before);
+
+        SaleResponseDTO fresh = saleService.requestSpecification(saleId, new RequestSpecificationDTO(
+                seededFamily("HR").getId(), shop.model().getId(),
+                attributes("largo", 313, "tieneOrificio", false, "cantidadColochos", 1),
+                1, new BigDecimal("400.00"), null, null, null, null, BigDecimal.ZERO));
+        assertThat(onlyLine(fresh).price()).isEqualByComparingTo("400.00");
+    }
+
+    /**
+     * O. Transacciones SOLAPADAS: Control cambia el catalogo a Q280 y retiene
+     * el inventario; el vendedor, que vio Q250, confirma a la vez. Su alta
+     * espera el cerrojo del inventario (visto en pg_stat_activity) y, al
+     * soltarse, ve Q280: 409, sin linea, sin stock tomado.
+     */
+    @Test
+    void aSellerConfirmingWhileTheCatalogChangesWaitsAndGetsAConflict() throws Exception {
+        Shop shop = shop();
+        Product screw = normalAt250(shop, 3, COST);
+        as(shop.seller());
+        UUID saleId = openSaleWithoutPlate("Solapada").id();
+        Map<String, Object> before = stateOf(saleId);
+
+        ExecutorService other = Executors.newSingleThreadExecutor();
+        Future<SaleResponseDTO> add;
+        try {
+            try (AutoCloseable control = holding(() -> inventoryRepository
+                    .findByProductIdAndWorkshopIdForUpdate(screw.getId(), shop.workshop().getId())
+                    .orElseThrow()
+                    .setPrice(new BigDecimal("280.00")))) {
+                add = inAnotherThread(other, shop.seller(),
+                        () -> saleService.addDetail(saleId, line(screw, 1, null, SEEN_250)));
+                awaitBlockedOnALock();
+            }
+            assertThat(failureOf(add))
+                    .isInstanceOf(PriceConflictException.class)
+                    .hasMessageContaining("Q 280.00");
+        } finally {
+            other.shutdownNow();
+        }
+        Map<String, Object> after = stateOf(saleId);
+        assertThat(after.get("lines")).isEqualTo(before.get("lines"));
+        assertThat(after.get("items")).isEqualTo(before.get("items"));
+        assertThat(after.get("lots")).isEqualTo(before.get("lots"));
+        assertThat(stockOf(screw, shop)).isEqualTo(3);
+        assertThat(catalogPriceOf(shop, screw)).isEqualByComparingTo("280.00");
+    }
+
+    /**
+     * O. Dos vendedores ven la misma pieza SIN precio. El primero confirma Q260
+     * (pasa a ser el catalogo) y retiene la transaccion; el segundo, que la
+     * vio sin precio, espera el cerrojo y recibe 409: su cifra no se convierte
+     * en silencio en un precio especial sobre un catalogo que no vio.
+     */
+    @Test
+    void theSecondSellerWhoSawNoCatalogCannotBecomeASilentSpecialPrice() throws Exception {
+        Shop shop = shop();
+        Product piece = normalAt250(shop, 3, COST);
+        jdbc.update("UPDATE inventory SET price = 0 WHERE product_id = ?", piece.getId());
+        Jwt secondSeller = token(shop.workshop(), account(employee(shop.workshop()), "SELLER"));
+        as(shop.seller());
+        UUID first = openSaleWithoutPlate("Primero").id();
+        UUID second = openSaleWithoutPlate("Segundo").id();
+
+        ExecutorService other = Executors.newSingleThreadExecutor();
+        Future<SaleResponseDTO> late;
+        try {
+            try (AutoCloseable firstAdd = holding(() -> {
+                as(shop.seller());
+                saleService.addDetail(first, line(piece, 1, "260.00", BigDecimal.ZERO));
+            })) {
+                late = inAnotherThread(other, secondSeller,
+                        () -> saleService.addDetail(second, line(piece, 1, "300.00", BigDecimal.ZERO)));
+                awaitBlockedOnALock();
+            }
+            assertThat(failureOf(late))
+                    .isInstanceOf(PriceConflictException.class)
+                    .hasMessageContaining("Q 260.00");
+        } finally {
+            other.shutdownNow();
+        }
+        assertThat(catalogPriceOf(shop, piece)).isEqualByComparingTo("260.00");
+        assertThat(linesOfSale(first)).isEqualTo(1);
+        assertThat(linesOfSale(second)).isZero();
+        assertThat(stockOf(piece, shop)).isEqualTo(2);
+    }
+
+    /**
+     * P. Una falla forzada al CONFIRMAR el alta —un trigger diferido de prueba
+     * sobre el INSERT de la linea— deshace todo junto: la linea, el precio que
+     * iba a quedar como catalogo, el stock tomado y los lotes consumidos.
+     */
+    @Test
+    void aFailureAtCommitRollsBackTheLineTheCatalogAndTheStock() {
+        Shop shop = shop();
+        Product piece = normalAt250(shop, 3, COST);
+        jdbc.update("UPDATE inventory SET price = 0 WHERE product_id = ?", piece.getId());
+        as(shop.seller());
+        UUID saleId = openSaleWithoutPlate("FallaAlta").id();
+        Map<String, Object> before = stateOf(saleId);
+
+        jdbc.execute("CREATE OR REPLACE FUNCTION test_fail_insert_at_commit() RETURNS trigger "
+                + "LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'falla forzada de prueba'; END $$");
+        jdbc.execute("CREATE CONSTRAINT TRIGGER test_fail_insert_at_commit AFTER INSERT ON sale_detail "
+                + "DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (NEW.product_id = '" + piece.getId() + "'::uuid) "
+                + "EXECUTE FUNCTION test_fail_insert_at_commit()");
+        try {
+            assertThatThrownBy(() -> saleService.addDetail(saleId, line(piece, 2, "260.00", BigDecimal.ZERO)))
+                    .isInstanceOf(RuntimeException.class)
+                    .hasStackTraceContaining("falla forzada de prueba");
+        } finally {
+            jdbc.execute("DROP TRIGGER IF EXISTS test_fail_insert_at_commit ON sale_detail");
+            jdbc.execute("DROP FUNCTION IF EXISTS test_fail_insert_at_commit()");
+        }
+        assertThat(stateOf(saleId)).isEqualTo(before);
+        assertThat(catalogPriceOf(shop, piece)).isEqualByComparingTo("0.00");
+        assertThat(stockOf(piece, shop)).isEqualTo(3);
+    }
+
+    /**
+     * Q + F. Otro taller no escribe en nuestra venta (404) ni lee nuestro
+     * catalogo: su guia de la misma pieza no tiene precio, y un "sin cargo"
+     * suyo no autoriza nada aqui.
+     */
+    @Test
+    void anotherWorkshopCannotAddToOurSaleNorSeeOurCatalog() {
+        Shop shop = shop();
+        Shop neighbour = shop();
+        Product washer = normalAt250(shop, 2, BigDecimal.ZERO);
+        as(shop.seller());
+        UUID saleId = openSaleWithoutPlate("Nuestra").id();
+        Map<String, Object> before = stateOf(saleId);
+
+        as(neighbour.seller());
+        assertThatThrownBy(() -> saleService.addDetail(saleId, free(washer, 1, SEEN_250)))
+                .isInstanceOf(EntityNotFoundException.class);
+        assertThatThrownBy(() -> saleService.addDetail(saleId, line(washer, 1, null, SEEN_250)))
+                .isInstanceOf(EntityNotFoundException.class);
+        SaleLineGuidanceDTO theirs = guideProduct(washer);
+        assertThat(theirs.catalogPrice()).isNull();
+        assertThat(theirs.noCharge()).isEqualTo(NoChargeEligibility.NO_CATALOG);
+        as(shop.seller());
+        assertThat(stateOf(saleId)).isEqualTo(before);
+    }
+
+    // ── Q0: autoridad, costo registrado, solicitudes ──────────────
+
+    /**
+     * E. Pedir "sin cargo" es decidir un importe. Los roles que no deciden
+     * importes (Control, Operador) reciben 403 al agregar y al corregir, y
+     * nada se escribe. El vendedor y Administracion pueden pedirlo.
+     *
+     * Que el vendedor lo autorice SOLO es el comportamiento que el sistema ya
+     * tenia, no una politica aprobada: ver docs/caja-price-guidance.md
+     * ("Decision pendiente"). Esta prueba fija el comportamiento interino.
+     */
+    @Test
+    void onlyTheRolesThatDecideAmountsCanRequestNoCharge() {
+        Shop shop = shop();
+        Product washer = normalAt250(shop, 5, BigDecimal.ZERO);
+        as(shop.seller());
+        UUID saleId = openSaleWithoutPlate("Autoridad").id();
+        UUID priced = onlyLine(saleService.addDetail(saleId, line(washer, 1, null, SEEN_250))).id();
+        Map<String, Object> before = stateOf(saleId);
+
+        for (Jwt notPricing : List.of(shop.control(), shop.operator())) {
+            as(notPricing);
+            assertThatThrownBy(() -> saleService.addDetail(saleId, free(washer, 1, SEEN_250)))
+                    .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+            assertThatThrownBy(() -> repriceFree(priced, SEEN_250))
+                    .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+        }
+        as(shop.seller());
+        assertThat(stateOf(saleId)).isEqualTo(before);
+
+        as(adminOf(shop));
+        SaleResponseDTO byAdmin = saleService.addDetail(saleId, free(washer, 1, SEEN_250));
+        assertThat(byAdmin.total()).isEqualByComparingTo("250.00");
+        as(shop.seller());
+        SaleResponseDTO bySeller = repriceFree(priced, SEEN_250);
+        assertThat(bySeller.total()).isEqualByComparingTo("0.00");
+        assertThat(linesOfSale(saleId)).isEqualTo(2);
+    }
+
+    /**
+     * D. Costo DESCONOCIDO no es cero. Unidades de un lote de produccion (sin
+     * costo) con catalogo y costo de referencia 0: "sin cargo" se rechaza al
+     * agregar y al corregir, sin tomar stock. Un servicio, igual. El mismo
+     * catalogo con un lote COMPRADO a costo 0 si lo admite.
+     */
+    @Test
+    void anUnknownCostIsNeverTreatedAsZeroForNoCharge() {
+        Shop shop = shop();
+        Product produced = producedAt250(shop, 2);
+        Product bought = normalAt250(shop, 2, BigDecimal.ZERO);
+        Product service = job(shop, "ENGRASE");
+
+        as(shop.seller());
+        UUID saleId = openUnresolvedSale("Desconocido").id();
+        Map<String, Object> before = stateOf(saleId);
+        assertThatThrownBy(() -> saleService.addDetail(saleId, free(produced, 1, SEEN_250)))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("costo desconocido no es cero");
+        assertThatThrownBy(() -> saleService.addDetail(saleId, free(service, 1, new BigDecimal("150.00"))))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("costo desconocido no es cero");
+        assertThat(stateOf(saleId)).isEqualTo(before);
+        assertThat(stockOf(produced, shop)).isEqualTo(2);
+
+        // Agregada con precio, tampoco se puede llevar a Q0 despues.
+        UUID line = onlyLine(saleService.addDetail(saleId, line(produced, 1, null, SEEN_250))).id();
+        assertThat(costTotalOf(line)).isNull();
+        Map<String, Object> priced = stateOf(saleId);
+        assertThatThrownBy(() -> repriceFree(line, SEEN_250))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("costo desconocido no es cero");
+        assertThat(stateOf(saleId)).isEqualTo(priced);
+
+        // La guia lo adelanta: no ofrece "sin cargo" donde el alta lo rechazaria.
+        assertThat(guideProduct(produced).noCharge()).isEqualTo(NoChargeEligibility.COST_UNKNOWN);
+        assertThat(guideProduct(service).noCharge()).isEqualTo(NoChargeEligibility.COST_UNKNOWN);
+        assertThat(guideProduct(bought).noCharge()).isEqualTo(NoChargeEligibility.ALLOWED);
+
+        // Costo registrado en cero: si.
+        SaleResponseDTO free = saleService.addDetail(saleId, free(bought, 1, SEEN_250));
+        assertThat(free.details()).hasSize(2);
+        UUID freeLine = free.details().stream().map(SaleDetailResponseDTO::id)
+                .filter(id -> !id.equals(line)).findFirst().orElseThrow();
+        assertThat(costTotalOf(freeLine)).isEqualByComparingTo("0.00");
+        assertThat(catalogPriceOf(shop, bought)).isEqualByComparingTo("250.00");
+    }
+
+    /**
+     * H + K. Una solicitud al taller (de stock o a fabricar) no puede ir sin
+     * cargo: su unidad y su costo se conocen al cumplirla. Se rechaza al
+     * agregar sin reservar nada, y al corregirla antes de enviar. Una revision
+     * de precio tampoco se resuelve con Q0: su minimo es el costo de origen.
+     */
+    @Test
+    void aWorkshopRequestNeverGoesForFreeNorBypassesThePriceReview() {
+        Shop shop = shop();
+        Product inStock = leaf(shop, 75, 2);
+        InventoryItem reserved = stockedAtCost(shop, inStock, 1, BigDecimal.ZERO).get(0);
+        Product target = leaf(shop, 90, 2);
+        inventoryRepository.save(Inventory.builder().product(target).workshop(shop.workshop())
+                .price(PRICE).cost(BigDecimal.ZERO).stock(0).minStock(0).build());
+        InventoryItem expensive = stockedAtCost(shop, leaf(shop, 180, 2), 1, new BigDecimal("260.00")).get(0);
+
+        as(shop.seller());
+        UUID saleId = openUnresolvedSale("Solicitud").id();
+        Map<String, Object> before = stateOf(saleId);
+        for (Product requested : List.of(inStock, target)) {
+            assertThatThrownBy(() -> saleService.addDetail(saleId, free(requested, 1, PRICE)))
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("solicitud al taller no puede ir sin cargo");
+        }
+        assertThat(stateOf(saleId)).isEqualTo(before);
+        assertThat(itemStatus(reserved.getId())).isEqualTo("AVAILABLE");
+        assertThat(guideProduct(target).noCharge()).isEqualTo(NoChargeEligibility.REQUEST);
+
+        // Agregada con precio: tampoco pasa a Q0 antes de enviar.
+        UUID line = onlyLine(saleService.addDetail(saleId, line(target, 1, "300.00", PRICE))).id();
+        assertThatThrownBy(() -> repriceFree(line, new BigDecimal("300.00")))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("solicitud al taller");
+
+        // Enviada y devuelta a revision: Q0 no salta el costo de origen.
+        saleService.dispatch(saleId, new DispatchSaleRequestDTO(null));
+        jdbc.update("UPDATE sale_detail SET price = 100, sub_total = 100 WHERE id = ?", line);
+        jdbc.update("UPDATE sale SET total = 100 WHERE id = ?", saleId);
+        as(shop.operator());
+        assertThat(fulfillmentService.transform(line,
+                new FulfillTransformationRequestDTO(expensive.getId(), null)).blockReason())
+                .isEqualTo(FulfillmentBlockReason.PRICE_REVIEW);
+        as(shop.seller());
+        Map<String, Object> inReview = stateOf(saleId);
+        assertThatThrownBy(() -> repriceFree(line, new BigDecimal("100.00")))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("Q 260.00");
+        assertThat(stateOf(saleId)).isEqualTo(inReview);
+    }
+
+    /**
+     * B. Un cero SIN "sin cargo" se rechaza en cada puerta: normal, maleta,
+     * servicio, pieza especial, y al corregir.
+     */
+    @Test
+    void aBareZeroIsRejectedOnEveryPath() {
+        Shop shop = shop();
+        Product washer = normalAt250(shop, 2, BigDecimal.ZERO);
+        InventoryItem unit = maletaUnits(shop, 1, BigDecimal.ZERO).get(0);
+        Product service = job(shop, "LAVADO");
+        Product leaf = leaf(shop, 90, 2);
+        emptyInventory(shop, leaf);
+
+        as(shop.seller());
+        UUID saleId = openUnresolvedSale("CeroSuelto").id();
+        Map<String, Object> before = stateOf(saleId);
+        List<Runnable> zeros = List.of(
+                () -> saleService.addDetail(saleId, line(washer, 1, "0", SEEN_250)),
+                () -> saleService.addDetail(saleId, new AddSaleDetailRequestDTO(
+                        productOfItem(unit.getId()), unit.getId(), null, null, BigDecimal.ZERO,
+                        null, null, null, null, null, PRICE)),
+                () -> saleService.addDetail(saleId, line(service, 1, "0", new BigDecimal("150.00"))),
+                () -> saleService.addDetail(saleId, line(leaf, 1, "0", PRICE)));
+        for (Runnable zero : zeros) {
+            assertThatThrownBy(zero::run)
+                    .isInstanceOf(ValidationException.class)
+                    .hasMessageContaining("sin cargo");
+        }
+        assertThat(stateOf(saleId)).isEqualTo(before);
+
+        UUID priced = onlyLine(saleService.addDetail(saleId, line(washer, 1, null, SEEN_250))).id();
+        Map<String, Object> pricedState = stateOf(saleId);
+        assertThatThrownBy(() -> saleService.updateRequestPrice(priced,
+                new UpdateRequestPriceDTO(BigDecimal.ZERO, SEEN_250)))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("sin cargo");
+        assertThat(stateOf(saleId)).isEqualTo(pricedState);
+    }
+
     private record Shop(
             Workshop workshop,
             Model model,
@@ -4229,16 +6525,27 @@ class SaleFulfillmentDatabaseTest {
                 .build());
     }
 
+    /** El token de la cuenta, con su rol en la claim `role`, como lo emite el login. */
     private Jwt token(Workshop workshop, UserAccount account) {
         return Jwt.withTokenValue("token")
                 .header("alg", "HS256")
                 .subject(account.getId().toString())
                 .claim("workshop", workshop.getId().toString())
+                .claim("role", account.getRole().getName())
                 .build();
     }
 
+    /** La autenticacion que arma `JwtConfig` en produccion: `role` -> `ROLE_<rol>`. */
+    private static JwtAuthenticationToken authenticated(Jwt token) {
+        org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter roles =
+                new org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter();
+        roles.setAuthoritiesClaimName("role");
+        roles.setAuthorityPrefix("ROLE_");
+        return new JwtAuthenticationToken(token, roles.convert(token));
+    }
+
     private void as(Jwt token) {
-        SecurityContextHolder.getContext().setAuthentication(new JwtAuthenticationToken(token));
+        SecurityContextHolder.getContext().setAuthentication(authenticated(token));
     }
 
     private Family seededFamily(String code) {
@@ -4535,7 +6842,7 @@ class SaleFulfillmentDatabaseTest {
         List<Callable<Boolean>> tasks = new ArrayList<>();
         for (Map.Entry<Jwt, Supplier<?>> run : runs) {
             tasks.add(() -> {
-                SecurityContextHolder.getContext().setAuthentication(new JwtAuthenticationToken(run.getKey()));
+                SecurityContextHolder.getContext().setAuthentication(authenticated(run.getKey()));
                 try {
                     startTogether.await(15, TimeUnit.SECONDS);
                     run.getValue().get();
@@ -4562,6 +6869,19 @@ class SaleFulfillmentDatabaseTest {
         }
         assertThat(unexpected).isEmpty();
         return outcomes;
+    }
+
+
+    /** Agregar como lo hace la caja: con el catalogo que el vendedor tenia a la vista. */
+    private com.cns.spring_house.sale.dto.SaleResponseDTO addSeen(
+            UUID saleId, com.cns.spring_house.sale.dto.AddSaleDetailRequestDTO dto) {
+        return saleService.addDetail(saleId, com.cns.spring_house.testsupport.SeenCatalog.seen(jdbc, dto));
+    }
+
+    /** Pedir por especificacion como lo hace la caja: una pieza nueva se ve "sin precio" (0). */
+    private com.cns.spring_house.sale.dto.SaleResponseDTO specSeen(
+            UUID saleId, com.cns.spring_house.sale.dto.RequestSpecificationDTO dto) {
+        return saleService.requestSpecification(saleId, com.cns.spring_house.testsupport.SeenCatalog.seenAsNew(dto));
     }
 
 }

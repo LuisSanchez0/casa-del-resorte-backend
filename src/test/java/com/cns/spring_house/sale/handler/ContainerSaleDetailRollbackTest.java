@@ -235,9 +235,11 @@ class ContainerSaleDetailRollbackTest {
     private UUID addBagToSale(UUID saleId, UUID bagId) {
         nextRequest();
         Sale sale = entityManager.find(Sale.class, saleId);
+        // Con el catalogo que el vendedor tenia a la vista, como la caja.
         SaleDetail detail = handler.addDetail(sale, new AddSaleDetailRequestDTO(
                 containerInventory.getProduct().getId(),
-                bagId, null, null, null, null));
+                bagId, null, null, null, null, null, null, null, null,
+                containerInventory.getPrice()));
         entityManager.flush();
         return detail.getId();
     }

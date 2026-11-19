@@ -275,7 +275,7 @@ class FifoConcurrencyDatabaseTest {
                     startTogether.await(15, TimeUnit.SECONDS);
                     SaleResponseDTO sale = saleService.create(
                             new CreateSaleRequestDTO(sharedCustomer, null));
-                    saleService.addDetail(sale.id(), new AddSaleDetailRequestDTO(
+                    addSeen(sale.id(), new AddSaleDetailRequestDTO(
                             inventory.getProduct().getId(), null, null,
                             quantity, null, null));
                     return true;
@@ -417,6 +417,17 @@ class FifoConcurrencyDatabaseTest {
                 .stock(0)
                 .minStock(0)
                 .build());
+    }
+
+
+    /** Solo para leer el catalogo que el vendedor tenia a la vista (ver SeenCatalog). */
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.jdbc.core.JdbcTemplate seenJdbc;
+
+    /** Agregar como lo hace la caja: con el catalogo que el vendedor tenia a la vista. */
+    private com.cns.spring_house.sale.dto.SaleResponseDTO addSeen(
+            UUID saleId, com.cns.spring_house.sale.dto.AddSaleDetailRequestDTO dto) {
+        return saleService.addDetail(saleId, com.cns.spring_house.testsupport.SeenCatalog.seen(seenJdbc, dto));
     }
 
 }

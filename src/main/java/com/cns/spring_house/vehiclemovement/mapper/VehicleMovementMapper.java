@@ -10,6 +10,7 @@ import org.mapstruct.NullValuePropertyMappingStrategy;
 import com.cns.spring_house.vehiclemovement.dto.CreateVehicleMovementRequestDTO;
 import com.cns.spring_house.vehiclemovement.dto.UpdateVehicleMovementRequestDTO;
 import com.cns.spring_house.vehiclemovement.dto.VehicleMovementResponseDTO;
+import com.cns.spring_house.vehiclemovement.dto.WorkTimingDTO;
 import com.cns.spring_house.vehiclemovement.entity.VehicleMovement;
 
 @Mapper(componentModel = ComponentModel.SPRING)
@@ -19,6 +20,11 @@ public interface VehicleMovementMapper {
      * `photos` se ignora en ambos sentidos: el DTO trae MultipartFile y la entidad
      * guarda solo la key devuelta por S3, asi que la coleccion la arma el servicio.
      */
+    @Mapping(target = "mechanic", ignore = true)
+    @Mapping(target = "workStartedAt", ignore = true)
+    @Mapping(target = "workFinishedAt", ignore = true)
+    @Mapping(target = "startedBy", ignore = true)
+    @Mapping(target = "finishedBy", ignore = true)
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "workshop", ignore = true)
     // El actor lo fija el servicio desde la identidad autenticada: si el mapper
@@ -33,6 +39,11 @@ public interface VehicleMovementMapper {
     VehicleMovement toVehicleMovement(CreateVehicleMovementRequestDTO requestDTO);
 
     @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)
+    @Mapping(target = "mechanic", ignore = true)
+    @Mapping(target = "workStartedAt", ignore = true)
+    @Mapping(target = "workFinishedAt", ignore = true)
+    @Mapping(target = "startedBy", ignore = true)
+    @Mapping(target = "finishedBy", ignore = true)
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "workshop", ignore = true)
     // Quien registro la entrada no cambia porque otro edite las notas.
@@ -51,8 +62,21 @@ public interface VehicleMovementMapper {
             UpdateVehicleMovementRequestDTO requestDTO,
             @MappingTarget VehicleMovement movement);
 
-    /** Respuesta completa, telefono incluido: solo para POLICE y ADMIN. */
-    VehicleMovementResponseDTO toResponse(VehicleMovement movement);
+    default com.cns.spring_house.vehiclemovement.dto.MechanicDTO mechanic(
+            com.cns.spring_house.useraccount.entity.UserAccount account) {
+        if (account == null) return null;
+        var employee = account.getEmployee();
+        return new com.cns.spring_house.vehiclemovement.dto.MechanicDTO(account.getId(),
+                employee.getFirstName() + " " + employee.getLastName());
+    }
+
+    /**
+     * Respuesta completa, telefono incluido: solo para POLICE y ADMIN.
+     * {@code work} lo calcula {@code VehicleWorkTimingService} (una consulta para
+     * toda la lista) y se copia tal cual.
+     */
+    @Mapping(target = "work", source = "work")
+    VehicleMovementResponseDTO toResponse(VehicleMovement movement, WorkTimingDTO work);
 
     /**
      * La MISMA respuesta sin el telefono, para cualquier otro rol autenticado.
@@ -69,6 +93,7 @@ public interface VehicleMovementMapper {
      * es exactamente lo que un rol no autorizado debe poder deducir.
      */
     @Mapping(target = "phone", ignore = true)
-    VehicleMovementResponseDTO toResponseWithoutPhone(VehicleMovement movement);
+    @Mapping(target = "work", source = "work")
+    VehicleMovementResponseDTO toResponseWithoutPhone(VehicleMovement movement, WorkTimingDTO work);
 
 }

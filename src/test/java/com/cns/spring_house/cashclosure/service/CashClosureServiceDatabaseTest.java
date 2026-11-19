@@ -531,7 +531,7 @@ class CashClosureServiceDatabaseTest {
                 .workshop(workshop)
                 .employee(employee(workshop))
                 .build());
-        SaleResponseDTO withDetail = saleService.addDetail(
+        SaleResponseDTO withDetail = addSeen(
                 sale.getId(),
                 new AddSaleDetailRequestDTO(
                         jobProduct.getId(), null, workResult.getId(), 1, null, null));
@@ -3003,6 +3003,17 @@ class CashClosureServiceDatabaseTest {
                 .name(name + " " + unique())
                 .attributes(new HashMap<>())
                 .build());
+    }
+
+
+    /** Solo para leer el catalogo que el vendedor tenia a la vista (ver SeenCatalog). */
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.jdbc.core.JdbcTemplate seenJdbc;
+
+    /** Agregar como lo hace la caja: con el catalogo que el vendedor tenia a la vista. */
+    private com.cns.spring_house.sale.dto.SaleResponseDTO addSeen(
+            UUID saleId, com.cns.spring_house.sale.dto.AddSaleDetailRequestDTO dto) {
+        return saleService.addDetail(saleId, com.cns.spring_house.testsupport.SeenCatalog.seen(seenJdbc, dto));
     }
 
 }

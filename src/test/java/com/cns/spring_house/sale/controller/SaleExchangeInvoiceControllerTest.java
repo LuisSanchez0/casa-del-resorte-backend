@@ -65,7 +65,8 @@ class SaleExchangeInvoiceControllerTest {
     @BeforeEach
     void setUp() {
         mockMvc = MockMvcBuilders
-                .standaloneSetup(new SaleController(service, dashboardService))
+                .standaloneSetup(new SaleController(service, dashboardService,
+                        org.mockito.Mockito.mock(com.cns.spring_house.sale.service.SaleLineGuidanceService.class)))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }

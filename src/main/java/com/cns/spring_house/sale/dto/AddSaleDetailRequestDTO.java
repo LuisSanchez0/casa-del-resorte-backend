@@ -64,9 +64,54 @@ public record AddSaleDetailRequestDTO(
     Boolean requestedCurls,
     /** Cuantos: obligatorio si los lleva (entero >= 1); nunca con "no". */
     @Min(value = 0, message = "La cantidad de colochos no puede ser negativa")
-    Integer requestedCurlCount
+    Integer requestedCurlCount,
+    /**
+     * El precio de catalogo que el vendedor tenia a la vista al confirmar
+     * (cero = "lo vi sin precio": inventario con precio 0 o sin inventario).
+     * OBLIGATORIO: sin el, 400; si el catalogo ya no es ese, 409 sin escribir
+     * nada (ver {@code SaleDetailHandler.requireCatalogPriceAsSeen}). No
+     * decide el precio ni su origen: eso lo resuelve siempre el servidor.
+     *
+     * Los constructores cortos lo dejan en null: describen una linea a la que
+     * le falta, y el servidor la rechaza.
+     */
+    @NotNull(message = "Indique el precio de catalogo que tenia a la vista (0 si no tenia precio)")
+    @DecimalMin(value = "0.00", message = "El precio de catalogo esperado no puede ser negativo")
+    @Digits(integer = ColumnLimits.MONEY_INTEGER_DIGITS,
+            fraction = ColumnLimits.MONEY_FRACTION_DIGITS,
+            message = "El precio de catalogo esperado admite hasta {integer} enteros y {fraction} decimales")
+    BigDecimal expectedCatalogPrice,
+    /**
+     * El vendedor eligio expresamente "sin cargo". Es la UNICA forma de que una
+     * linea quede en Q0.00: un cero sin esta intencion se rechaza, y con ella el
+     * precio tiene que ser cero. Si se admite lo deciden las reglas de siempre
+     * (precio de catalogo y costo cero): ver {@code SaleDetailHandler.requireExplicitNoCharge}.
+     */
+    Boolean noCharge
 
 ) {
+
+    /** Sin "sin cargo": un cero se rechaza. */
+    public AddSaleDetailRequestDTO(
+            UUID product,
+            UUID item,
+            UUID workResult,
+            Integer quantity,
+            BigDecimal price,
+            String invoiceDescription,
+            String instructions,
+            String plate,
+            Boolean requestedCurls,
+            Integer requestedCurlCount,
+            BigDecimal expectedCatalogPrice) {
+        this(product, item, workResult, quantity, price, invoiceDescription, instructions, plate,
+                requestedCurls, requestedCurlCount, expectedCatalogPrice, null);
+    }
+
+    /** El vendedor confirmo "sin cargo". */
+    public boolean chargesNothing() {
+        return Boolean.TRUE.equals(noCharge);
+    }
 
     public AddSaleDetailRequestDTO {
         invoiceDescription = invoiceDescription == null || invoiceDescription.isBlank()
@@ -76,6 +121,22 @@ public record AddSaleDetailRequestDTO(
                 ? null
                 : instructions.trim();
         plate = SalePlates.normalize(plate);
+    }
+
+    /** Sin precio de catalogo esperado: el contrato anterior, sin comprobacion de cambio. */
+    public AddSaleDetailRequestDTO(
+            UUID product,
+            UUID item,
+            UUID workResult,
+            Integer quantity,
+            BigDecimal price,
+            String invoiceDescription,
+            String instructions,
+            String plate,
+            Boolean requestedCurls,
+            Integer requestedCurlCount) {
+        this(product, item, workResult, quantity, price, invoiceDescription, instructions, plate,
+                requestedCurls, requestedCurlCount, null, null);
     }
 
     /** Sin decision de colochos: todo lo que no es una pieza especial con colochos. */
@@ -89,7 +150,7 @@ public record AddSaleDetailRequestDTO(
             String instructions,
             String plate) {
         this(product, item, workResult, quantity, price, invoiceDescription, instructions, plate,
-                null, null);
+                null, null, null, null);
     }
 
     /** Sin placa: la venta ya la tiene o la linea no es un servicio. */

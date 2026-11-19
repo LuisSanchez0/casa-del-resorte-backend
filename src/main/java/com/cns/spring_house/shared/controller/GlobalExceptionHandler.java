@@ -23,6 +23,8 @@ import com.cns.spring_house.shared.exception.EntityNotFoundException;
 import com.cns.spring_house.shared.exception.ExceptionUtils;
 import com.cns.spring_house.shared.exception.FileContentTypeException;
 import com.cns.spring_house.shared.exception.FileProcessingException;
+import com.cns.spring_house.shared.exception.PriceConflictException;
+import com.cns.spring_house.shared.exception.StaleStateException;
 import com.cns.spring_house.shared.exception.ValidationException;
 
 import lombok.extern.slf4j.Slf4j;
@@ -81,6 +83,29 @@ public class GlobalExceptionHandler {
     ProblemDetail handleEntityAlreadyExistsException(EntityAlreadyExistsException e) {
         ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, e.getMessage());
         problemDetail.setTitle("Entity Duplicated");
+        problemDetail.setProperty("error_category", "Data Conflict");
+        problemDetail.setProperty("timestamp", Instant.now());
+        return problemDetail;
+    }
+
+    /**
+     * El precio confirmado se decidio sobre un catalogo que ya cambio. Nada se
+     * guardo: la caja vuelve a leer el precio y el vendedor lo reconfirma.
+     */
+    @ExceptionHandler(PriceConflictException.class)
+    ProblemDetail handlePriceConflictException(PriceConflictException e) {
+        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+        problemDetail.setTitle("Price Changed");
+        problemDetail.setProperty("error_category", "Data Conflict");
+        problemDetail.setProperty("timestamp", Instant.now());
+        return problemDetail;
+    }
+
+    /** El registro cambio mientras el cliente decidia. Nada se guardo. */
+    @ExceptionHandler(StaleStateException.class)
+    ProblemDetail handleStaleStateException(StaleStateException e) {
+        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+        problemDetail.setTitle("State Changed");
         problemDetail.setProperty("error_category", "Data Conflict");
         problemDetail.setProperty("timestamp", Instant.now());
         return problemDetail;

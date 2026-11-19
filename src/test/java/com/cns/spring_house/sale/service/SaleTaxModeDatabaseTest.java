@@ -261,7 +261,7 @@ class SaleTaxModeDatabaseTest {
     private Inventory addNormalLine(Workshop workshop, UUID saleId) {
         Product normal = product(FamilyCategory.NORMAL);
         Inventory stock = inventory(workshop, normal, 5);
-        service.addDetail(saleId, new AddSaleDetailRequestDTO(
+        addSeen(saleId, new AddSaleDetailRequestDTO(
                 normal.getId(), null, null, 2, null, null));
         return stock;
     }
@@ -720,7 +720,7 @@ class SaleTaxModeDatabaseTest {
 
         SaleResponseDTO opened = openDraft(null);
         Inventory stock = addNormalLine(workshop, opened.id());
-        service.addDetail(opened.id(), new AddSaleDetailRequestDTO(
+        addSeen(opened.id(), new AddSaleDetailRequestDTO(
                 jobProduct.getId(), null, workResult.getId(), 1, null, null));
         service.completeSale(opened.id(), invoiceCash(TaxMode.CF, null, null));
 
@@ -865,6 +865,13 @@ class SaleTaxModeDatabaseTest {
         assertThatThrownBy(() -> jdbc.update(sql, args))
                 .as(sql)
                 .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+
+    /** Agregar como lo hace la caja: con el catalogo que el vendedor tenia a la vista. */
+    private com.cns.spring_house.sale.dto.SaleResponseDTO addSeen(
+            UUID saleId, com.cns.spring_house.sale.dto.AddSaleDetailRequestDTO dto) {
+        return service.addDetail(saleId, com.cns.spring_house.testsupport.SeenCatalog.seen(jdbc, dto));
     }
 
 }

@@ -1,5 +1,6 @@
 package com.cns.spring_house.acquisition.repository;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
 
@@ -73,6 +74,18 @@ public interface InventoryAcquisitionRepository
     """)
     List<InventoryAcquisition> findAllByIdForUpdate(
             @Param("ids") Iterable<UUID> ids);
+
+    /**
+     * Si a un inventario le quedan unidades de un lote SIN costo (PRODUCTION).
+     * Lo usa la guia de la caja: esas unidades no tienen costo registrado, asi
+     * que una linea que las tome no puede ir "sin cargo". Solo lee.
+     */
+    boolean existsByInventoryIdAndQuantityRemainingGreaterThanAndUnitCostIsNull(
+            UUID inventoryId, int quantityRemaining);
+
+    /** Si le quedan unidades de un lote con costo mayor que `unitCost`. Solo lee. */
+    boolean existsByInventoryIdAndQuantityRemainingGreaterThanAndUnitCostGreaterThan(
+            UUID inventoryId, int quantityRemaining, BigDecimal unitCost);
 
     /** Suma de remanentes de un inventario. Solo la usa la reconciliacion. */
     @Query("""

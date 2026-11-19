@@ -32,13 +32,19 @@ import lombok.RequiredArgsConstructor;
  * QUIEN puede hacer que, por metodo y no por controlador:
  *
  * <ul>
- * <li>CONTROL entrega piezas que ya existen ({@code /control},
- * {@code /eligible-items}, {@code /release}).</li>
- * <li>OPERATOR fabrica piezas y ejecuta servicios ({@code /operator},
- * {@code /start}, {@code /block}, {@code /sources}, {@code /transform},
- * {@code /complete-service}).</li>
+ * <li>OPERATOR entrega piezas que ya existen —"Pedidos por liberar":
+ * {@code /control}, {@code /eligible-items}, {@code /release}—, fabrica piezas
+ * y ejecuta servicios ({@code /operator}, {@code /start}, {@code /block},
+ * {@code /sources}, {@code /transform}, {@code /complete-service}).</li>
  * <li>ADMIN puede todo lo anterior, como supervision.</li>
  * </ul>
+ *
+ * CONTROL ya no esta en ninguna. "Pedidos por liberar" fue suyo hasta que la
+ * liberacion paso al Operador: la ruta {@code /control} conserva el nombre del
+ * AREA de la solicitud ({@link FulfillmentArea#CONTROL}, entrega de stock),
+ * que sigue en el contrato, pero la opera el rol OPERATOR. Las demas
+ * funciones de Control (catalogo, inventario, proveedores...) no viven aqui y
+ * no cambian.
  *
  * El vendedor NO esta en ninguna: crea y envia la comanda y la sigue desde la
  * propia venta, pero no puede dar por entregada ni por fabricada una solicitud.
@@ -51,10 +57,13 @@ public class SaleFulfillmentController {
 
     private final SaleFulfillmentService service;
 
-    /** "Pedidos por liberar". Sin `status`, lo pendiente de Control. */
-    @PreAuthorize("hasAnyRole('CONTROL', 'ADMIN')")
+    /**
+     * "Pedidos por liberar": entregas de stock del taller del token. Sin
+     * `status`, lo pendiente. La ruta lleva el nombre del area, no del rol.
+     */
+    @PreAuthorize("hasAnyRole('OPERATOR', 'ADMIN')")
     @GetMapping("/control")
-    public ResponseEntity<List<FulfillmentTaskResponseDTO>> getControlQueue(
+    public ResponseEntity<List<FulfillmentTaskResponseDTO>> getReleaseQueue(
             @RequestParam(required = false) List<FulfillmentStatus> status,
             @RequestParam(required = false) Integer limit,
             @RequestParam(required = false) Integer page) {
@@ -71,21 +80,25 @@ public class SaleFulfillmentController {
         return ResponseEntity.ok(service.getQueue(FulfillmentArea.OPERATOR, status, limit, page));
     }
 
-    @PreAuthorize("hasAnyRole('CONTROL', 'OPERATOR', 'ADMIN')")
+    /**
+     * Una solicitud por id, de cualquier area. CONTROL ya no cumple ninguna:
+     * leerlas era parte de "Pedidos por liberar" y se fue con ella.
+     */
+    @PreAuthorize("hasAnyRole('OPERATOR', 'ADMIN')")
     @GetMapping("/{id}")
     public ResponseEntity<FulfillmentTaskResponseDTO> get(@PathVariable UUID id) {
         return ResponseEntity.ok(service.get(id));
     }
 
-    // ── Control ──────────────────────────────────────────────────
+    // ── Entrega de stock ("Pedidos por liberar") ─────────────────
 
-    @PreAuthorize("hasAnyRole('CONTROL', 'ADMIN')")
+    @PreAuthorize("hasAnyRole('OPERATOR', 'ADMIN')")
     @GetMapping("/{id}/eligible-items")
     public ResponseEntity<List<InventoryItemResponseDTO>> getEligibleItems(@PathVariable UUID id) {
         return ResponseEntity.ok(service.getEligibleItems(id));
     }
 
-    @PreAuthorize("hasAnyRole('CONTROL', 'ADMIN')")
+    @PreAuthorize("hasAnyRole('OPERATOR', 'ADMIN')")
     @PostMapping("/{id}/release")
     public ResponseEntity<FulfillmentTaskResponseDTO> release(
             @PathVariable UUID id,
@@ -94,7 +107,7 @@ public class SaleFulfillmentController {
                 requestDTO == null ? new ReleaseFulfillmentRequestDTO(null) : requestDTO));
     }
 
-    // ── Operador ─────────────────────────────────────────────────
+    // ── Fabricacion y servicios ("Pedidos del taller") ───────────
 
     @PreAuthorize("hasAnyRole('OPERATOR', 'ADMIN')")
     @PostMapping("/{id}/start")

@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Lock;
@@ -95,6 +96,47 @@ public interface InventoryRepository
     List<Inventory> findAllByProductIdInAndWorkshopId(
             Iterable<UUID> productIds,
             UUID workshop);
+
+    /**
+     * Inventarios CON precio de catalogo de un taller cuyas piezas son de una
+     * familia y un modelo. Son las candidatas a pieza comparable de la caja
+     * (ver {@code ComparablePieces}); la comparacion fina de caracteristicas
+     * se hace en memoria sobre este conjunto ACOTADO por el {@code Pageable}.
+     *
+     * Trae el producto en el mismo viaje: lo que se compara son sus
+     * caracteristicas, y sin el JOIN FETCH seria una lectura por candidata.
+     */
+    @Query("""
+        SELECT inventory
+        FROM Inventory inventory
+        JOIN FETCH inventory.product product
+        WHERE inventory.workshop.id = :workshopId
+          AND product.family.id = :familyId
+          AND product.model.id = :modelId
+          AND inventory.price > 0
+        ORDER BY inventory.updatedAt DESC NULLS LAST, inventory.id ASC
+    """)
+    List<Inventory> findPricedComparables(
+            @Param("workshopId") UUID workshopId,
+            @Param("familyId") UUID familyId,
+            @Param("modelId") UUID modelId,
+            Pageable pageable);
+
+    /** {@link #findPricedComparables} para una familia sin modelo. */
+    @Query("""
+        SELECT inventory
+        FROM Inventory inventory
+        JOIN FETCH inventory.product product
+        WHERE inventory.workshop.id = :workshopId
+          AND product.family.id = :familyId
+          AND product.model IS NULL
+          AND inventory.price > 0
+        ORDER BY inventory.updatedAt DESC NULLS LAST, inventory.id ASC
+    """)
+    List<Inventory> findPricedComparablesWithoutModel(
+            @Param("workshopId") UUID workshopId,
+            @Param("familyId") UUID familyId,
+            Pageable pageable);
 
     boolean existsByProductId(UUID productId);
 

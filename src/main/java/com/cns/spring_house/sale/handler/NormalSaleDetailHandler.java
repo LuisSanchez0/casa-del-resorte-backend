@@ -103,7 +103,8 @@ public class NormalSaleDetailHandler implements SaleDetailHandler {
 
     private SaleDetail createDetail(Inventory inventory, AddSaleDetailRequestDTO requestDTO) {
         PricingOutcome pricing = resolvePricing(
-                requestDTO.price(), inventory.getPrice(), inventory.getCost());
+                requestDTO.price(), inventory.getPrice(), inventory.getCost(),
+                requestDTO.expectedCatalogPrice(), requestDTO.chargesNothing());
         BigDecimal price = pricing.price();
 
         // El inventario ya esta BLOQUEADO y es una entidad gestionada: asignarle

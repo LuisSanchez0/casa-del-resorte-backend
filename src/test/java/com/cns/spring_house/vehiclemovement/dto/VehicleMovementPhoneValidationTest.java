@@ -24,6 +24,7 @@ import jakarta.validation.ValidatorFactory;
  * ni '5845-2136' en una columna que el resto del sistema lee como ocho digitos.
  */
 class VehicleMovementPhoneValidationTest {
+    private static final java.util.UUID MECHANIC = java.util.UUID.randomUUID();
 
     private static final String PLATE = "P123ABC";
 
@@ -43,7 +44,7 @@ class VehicleMovementPhoneValidationTest {
 
     private Set<ConstraintViolation<CreateVehicleMovementRequestDTO>> validate(String phone) {
         return validator.validate(
-                new CreateVehicleMovementRequestDTO(PLATE, phone, null, null));
+                new CreateVehicleMovementRequestDTO(PLATE, phone, MECHANIC, null, null));
     }
 
     private String messagesOf(String phone) {
@@ -132,7 +133,7 @@ class VehicleMovementPhoneValidationTest {
     @DisplayName("recorta el espacio exterior y conserva exactamente lo demas")
     void trimsOuterWhitespaceOnly() {
         CreateVehicleMovementRequestDTO request =
-                new CreateVehicleMovementRequestDTO(PLATE, "  58452136  ", null, null);
+                new CreateVehicleMovementRequestDTO(PLATE, "  58452136  ", MECHANIC, null, null);
 
         assertThat(request.phone()).isEqualTo("58452136");
         assertThat(validator.validate(request)).isEmpty();
@@ -142,7 +143,7 @@ class VehicleMovementPhoneValidationTest {
     @DisplayName("recortar el exterior no salva un numero con espacios dentro")
     void trimmingDoesNotRescueInnerWhitespace() {
         CreateVehicleMovementRequestDTO request =
-                new CreateVehicleMovementRequestDTO(PLATE, "  5845 2136  ", null, null);
+                new CreateVehicleMovementRequestDTO(PLATE, "  5845 2136  ", MECHANIC, null, null);
 
         assertThat(request.phone()).isEqualTo("5845 2136");
         assertThat(validator.validate(request)).isNotEmpty();
@@ -154,7 +155,7 @@ class VehicleMovementPhoneValidationTest {
     void phoneAndPlateAreValidatedIndependently() {
         Set<ConstraintViolation<CreateVehicleMovementRequestDTO>> violations =
                 validator.validate(new CreateVehicleMovementRequestDTO(
-                        "P", "58452136", null, null));
+                        "P", "58452136", MECHANIC, null, null));
 
         assertThat(violations).hasSize(1);
         assertThat(violations.iterator().next().getMessage())
@@ -181,7 +182,7 @@ class VehicleMovementPhoneValidationTest {
 
         assertThat(request.plate())
                 .isEqualTo(new CreateVehicleMovementRequestDTO(
-                        "  p123abc  ", "58452136", null, null).plate());
+                        "  p123abc  ", "58452136", MECHANIC, null, null).plate());
         assertThat(validator.validate(request)).isEmpty();
     }
 }

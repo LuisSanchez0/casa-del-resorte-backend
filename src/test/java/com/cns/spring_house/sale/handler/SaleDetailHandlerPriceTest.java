@@ -1,6 +1,7 @@
 package com.cns.spring_house.sale.handler;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
@@ -15,6 +16,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.authority.AuthorityUtils;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
@@ -33,6 +36,7 @@ import com.cns.spring_house.sale.dto.AddSaleDetailRequestDTO;
 import com.cns.spring_house.sale.entity.Sale;
 import com.cns.spring_house.sale.entity.SaleDetail;
 import com.cns.spring_house.shared.exception.EntityNotFoundException;
+import com.cns.spring_house.shared.exception.PriceConflictException;
 import com.cns.spring_house.shared.exception.ValidationException;
 import com.cns.spring_house.workshop.entity.Workshop;
 
@@ -95,8 +99,19 @@ class SaleDetailHandlerPriceTest {
                 .subject(UUID.randomUUID().toString())
                 .claim("workshop", workshopId.toString())
                 .build();
+        // El vendedor: el rol que decide importes, como en la caja.
         SecurityContextHolder.getContext()
-                .setAuthentication(new JwtAuthenticationToken(jwt));
+                .setAuthentication(new JwtAuthenticationToken(jwt, AuthorityUtils.createAuthorityList("ROLE_SELLER")));
+    }
+
+    private void actingAs(String role) {
+        Jwt jwt = Jwt.withTokenValue("token")
+                .header("alg", "HS256")
+                .subject(UUID.randomUUID().toString())
+                .claim("workshop", workshopId.toString())
+                .build();
+        SecurityContextHolder.getContext()
+                .setAuthentication(new JwtAuthenticationToken(jwt, AuthorityUtils.createAuthorityList("ROLE_" + role)));
     }
 
     @AfterEach
@@ -128,9 +143,10 @@ class SaleDetailHandlerPriceTest {
         return Sale.builder().id(UUID.randomUUID()).workshop(workshop).build();
     }
 
+    /** Con el catalogo que el vendedor tenia a la vista: el que tienen los stubs. */
     private AddSaleDetailRequestDTO request(BigDecimal price, UUID itemId) {
         return new AddSaleDetailRequestDTO(
-                product.getId(), itemId, null, 1, price, null);
+                product.getId(), itemId, null, 1, price, null, null, null, null, null, CATALOG_PRICE);
     }
 
     // ---------------------------------------------------------------- NORMAL
@@ -172,16 +188,79 @@ class SaleDetailHandlerPriceTest {
                 .hasMessage("El precio de venta no puede ser negativo");
     }
 
+    /** Sin cargo expreso: el cero se acepta si la pieza no costo nada. */
     @Test
     void normalAllowsZeroOnlyWhenTheCostIsAlsoZero() {
         when(inventoryRepository.findByProductIdAndWorkshopIdForUpdate(
                 product.getId(), workshopId))
                 .thenReturn(Optional.of(inventory(CATALOG_PRICE, BigDecimal.ZERO)));
 
-        SaleDetail detail = normalHandler.addDetail(
-                sale(), request(BigDecimal.ZERO, null));
+        SaleDetail detail = normalHandler.addDetail(sale(), noCharge(BigDecimal.ZERO));
 
         assertThat(detail.getPrice()).isEqualByComparingTo("0.00");
+        assertThat(detail.getSubTotal()).isEqualByComparingTo("0.00");
+    }
+
+    private AddSaleDetailRequestDTO noCharge(BigDecimal price) {
+        return noCharge(price, CATALOG_PRICE);
+    }
+
+    private AddSaleDetailRequestDTO noCharge(BigDecimal price, BigDecimal seenCatalog) {
+        return new AddSaleDetailRequestDTO(product.getId(), null, null, 1, price,
+                null, null, null, null, null, seenCatalog, true);
+    }
+
+    /** Q0 (a). Un cero suelto —sin la intencion expresa— se rechaza. */
+    @Test
+    void aZeroWithoutTheExplicitNoChargeIsRejected() {
+        when(inventoryRepository.findByProductIdAndWorkshopIdForUpdate(
+                product.getId(), workshopId))
+                .thenReturn(Optional.of(inventory(CATALOG_PRICE, BigDecimal.ZERO)));
+
+        assertThatThrownBy(() -> normalHandler.addDetail(sale(), request(BigDecimal.ZERO, null)))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("sin cargo");
+    }
+
+    /** Q0 (b). "Sin cargo" no puede ir pegado a otro importe. */
+    @Test
+    void noChargeOverANonZeroPriceIsRejected() {
+        when(inventoryRepository.findByProductIdAndWorkshopIdForUpdate(
+                product.getId(), workshopId))
+                .thenReturn(Optional.of(inventory(CATALOG_PRICE, COST)));
+
+        assertThatThrownBy(() -> normalHandler.addDetail(sale(), noCharge(new BigDecimal("80.00"))))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("Q0.00");
+        // Ni siquiera con el precio de catalogo implicito.
+        assertThatThrownBy(() -> normalHandler.addDetail(sale(), noCharge(null)))
+                .isInstanceOf(ValidationException.class);
+    }
+
+    /** Q0 (c). "Sin cargo" no salta el costo: regalar una pieza que costo es perdida. */
+    @Test
+    void noChargeCannotGoBelowTheCost() {
+        when(inventoryRepository.findByProductIdAndWorkshopIdForUpdate(
+                product.getId(), workshopId))
+                .thenReturn(Optional.of(inventory(CATALOG_PRICE, COST)));
+
+        assertThatThrownBy(() -> normalHandler.addDetail(sale(), noCharge(BigDecimal.ZERO)))
+                .isInstanceOf(ValidationException.class)
+                .hasMessage("El precio de venta no puede ser menor al costo de adquisicion del producto");
+    }
+
+    /** Q0 (d). Sin precio de catalogo, el cero es "no tiene precio", nunca "sin cargo". */
+    @Test
+    void noChargeIsRejectedWhenTheProductHasNoCatalogPrice() {
+        Inventory unpriced = inventory(BigDecimal.ZERO, BigDecimal.ZERO);
+        when(inventoryRepository.findByProductIdAndWorkshopIdForUpdate(
+                product.getId(), workshopId))
+                .thenReturn(Optional.of(unpriced));
+
+        assertThatThrownBy(() -> normalHandler.addDetail(sale(), noCharge(BigDecimal.ZERO, BigDecimal.ZERO)))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("no tiene precio de catalogo");
+        assertThat(unpriced.getPrice()).isEqualByComparingTo("0.00");
     }
 
     @Test
@@ -192,7 +271,8 @@ class SaleDetailHandlerPriceTest {
 
         SaleDetail detail = normalHandler.addDetail(sale(),
                 new AddSaleDetailRequestDTO(
-                        product.getId(), null, null, 3, new BigDecimal("70.00"), null));
+                        product.getId(), null, null, 3, new BigDecimal("70.00"), null,
+                        null, null, null, null, CATALOG_PRICE));
 
         assertThat(detail.getSubTotal()).isEqualByComparingTo("210.00");
     }
@@ -205,7 +285,8 @@ class SaleDetailHandlerPriceTest {
 
         SaleDetail detail = normalHandler.addDetail(sale(),
                 new AddSaleDetailRequestDTO(
-                        product.getId(), null, null, 1, null, "Maleta de resorte"));
+                        product.getId(), null, null, 1, null, "Maleta de resorte",
+                        null, null, null, null, CATALOG_PRICE));
 
         assertThat(detail.getInvoiceDescription()).isEqualTo("Maleta de resorte");
         assertThat(detail.resolveInvoiceDescription()).isEqualTo("Maleta de resorte");
@@ -334,6 +415,27 @@ class SaleDetailHandlerPriceTest {
                 .isEqualByComparingTo("1.00");
     }
 
+    /**
+     * Un servicio no tiene costo en el modelo. Desconocido no es cero: ni un
+     * cero suelto ni un "sin cargo" expreso lo dejan gratis. Rebajarlo sigue
+     * permitido (no hay costo que cubrir).
+     */
+    @Test
+    void aJobNeverGoesForFreeBecauseItsCostIsUnknown() {
+        Job job = Job.builder().id(UUID.randomUUID()).workshop(workshop).product(product)
+                .price(CATALOG_PRICE).build();
+        when(jobRepository.findByProductIdAndWorkshopIdForUpdate(product.getId(), workshopId))
+                .thenReturn(Optional.of(job));
+
+        assertThatThrownBy(() -> jobHandler.addDetail(sale(), request(BigDecimal.ZERO, null)))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("sin cargo");
+        assertThatThrownBy(() -> jobHandler.addDetail(sale(), noCharge(BigDecimal.ZERO)))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("costo desconocido no es cero");
+        assertThat(job.getPrice()).isEqualByComparingTo(CATALOG_PRICE);
+    }
+
     @Test
     void jobRejectsANegativePrice() {
         assertThatThrownBy(() -> addJob(new BigDecimal("-50.00")))
@@ -376,6 +478,190 @@ class SaleDetailHandlerPriceTest {
         assertThatThrownBy(() -> jobHandler.addDetail(sale(), request(null, null)))
                 .isInstanceOf(EntityNotFoundException.class)
                 .hasMessage("No existe el servicio especificado");
+    }
+
+
+    // ------------------------------------------------- catalogo que vio el vendedor
+
+    /**
+     * M. El precio se confirma mirando el catalogo de ESE momento. Si cambio,
+     * la decision ya no significa lo mismo y se rechaza con conflicto. Sin el
+     * dato no hay linea: omitirlo ya no salta la comprobacion (antes si).
+     */
+    @Test
+    void aStaleCatalogPriceIsAConflictAndAMatchingOneIsNot() {
+        BigDecimal current = new BigDecimal("100.00");
+
+        assertThatThrownBy(() -> SaleDetailHandler.requireCatalogPriceAsSeen(null, current))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("precio de catalogo que tenia a la vista");
+        assertThatThrownBy(() -> SaleDetailHandler.requireCatalogPriceAsSeen(null, null))
+                .isInstanceOf(ValidationException.class);
+        assertThatCode(() -> SaleDetailHandler.requireCatalogPriceAsSeen(new BigDecimal("100"), current))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> SaleDetailHandler.requireCatalogPriceAsSeen(BigDecimal.ZERO, BigDecimal.ZERO))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> SaleDetailHandler.requireCatalogPriceAsSeen(BigDecimal.ZERO, null))
+                .doesNotThrowAnyException();
+
+        assertThatThrownBy(() -> SaleDetailHandler.requireCatalogPriceAsSeen(new BigDecimal("90.00"), current))
+                .isInstanceOf(PriceConflictException.class)
+                .hasMessageContaining("Q 100.00");
+        assertThatThrownBy(() -> SaleDetailHandler.requireCatalogPriceAsSeen(BigDecimal.ZERO, current))
+                .isInstanceOf(PriceConflictException.class);
+        assertThatThrownBy(() -> SaleDetailHandler.requireCatalogPriceAsSeen(current, BigDecimal.ZERO))
+                .isInstanceOf(PriceConflictException.class)
+                .hasMessageContaining("ya no tiene precio");
+    }
+
+    // --------------------------------------------- precio corregido de una linea
+
+    /**
+     * La misma regla de Q0 y de costo al corregir el precio que al agregar la
+     * linea, y el mismo formato de dinero.
+     */
+    @Test
+    void anEditedPriceFollowsTheSameRulesAsAddingTheLine() {
+        BigDecimal catalog = new BigDecimal("500.00");
+        BigDecimal floor = new BigDecimal("100.00");
+
+        assertThatCode(() -> SaleDetailHandler.validateEditedPrice(new BigDecimal("100"), false, catalog, floor))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> SaleDetailHandler.validateEditedPrice(new BigDecimal("450.50"), false, catalog, floor))
+                .doesNotThrowAnyException();
+        // Bajo el costo vigente.
+        assertThatThrownBy(() -> SaleDetailHandler.validateEditedPrice(new BigDecimal("99.99"), false, catalog, floor))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("Q 100.00");
+        // Negativo, tres decimales, nulo.
+        assertThatThrownBy(() -> SaleDetailHandler.validateEditedPrice(new BigDecimal("-1"), false, catalog, null))
+                .isInstanceOf(ValidationException.class);
+        assertThatThrownBy(() -> SaleDetailHandler.validateEditedPrice(new BigDecimal("120.001"), false, catalog, floor))
+                .isInstanceOf(ValidationException.class);
+        assertThatThrownBy(() -> SaleDetailHandler.validateEditedPrice(null, false, catalog, floor))
+                .isInstanceOf(ValidationException.class);
+        // La regla del servicio va por VALOR: 120.000 es 120.00. (Por HTTP, el
+        // formato de dinero del DTO ya rechaza tres decimales escritos.)
+        assertThatCode(() -> SaleDetailHandler.validateEditedPrice(new BigDecimal("120.000"), false, catalog, floor))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void anEditedZeroNeedsTheExplicitNoChargeACatalogAndNoCost() {
+        BigDecimal catalog = new BigDecimal("500.00");
+
+        // Sin la intencion expresa: rechazado, aunque el costo sea cero.
+        assertThatThrownBy(() -> SaleDetailHandler.validateEditedPrice(BigDecimal.ZERO, false, catalog, BigDecimal.ZERO))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("sin cargo");
+        // Con ella, y sin costo (o costo cero): aceptado.
+        assertThatCode(() -> SaleDetailHandler.validateEditedPrice(new BigDecimal("0.00"), true, catalog, BigDecimal.ZERO))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> SaleDetailHandler.validateEditedPrice(BigDecimal.ZERO, true, catalog, null))
+                .doesNotThrowAnyException();
+        // "Sin cargo" con otro importe.
+        assertThatThrownBy(() -> SaleDetailHandler.validateEditedPrice(BigDecimal.TEN, true, catalog, null))
+                .isInstanceOf(ValidationException.class);
+        // No salta el costo ni el minimo de una revision de precio.
+        assertThatThrownBy(() -> SaleDetailHandler.validateEditedPrice(BigDecimal.ZERO, true, catalog, new BigDecimal("260.00")))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("Q 260.00");
+        // Sin catalogo, el cero es "sin precio": nunca "sin cargo".
+        assertThatThrownBy(() -> SaleDetailHandler.validateEditedPrice(BigDecimal.ZERO, true, BigDecimal.ZERO, null))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("no tiene precio de catalogo");
+        assertThatThrownBy(() -> SaleDetailHandler.validateEditedPrice(BigDecimal.ZERO, true, null, null))
+                .isInstanceOf(ValidationException.class);
+    }
+
+    /** I. Sin el catalogo visto, ningun handler llega a tocar stock ni precio. */
+    @Test
+    void aLineWithoutTheSeenCatalogIsRejectedBeforeTouchingAnything() {
+        Inventory inventory = inventory(BigDecimal.ZERO, COST);
+        when(inventoryRepository.findByProductIdAndWorkshopIdForUpdate(
+                product.getId(), workshopId))
+                .thenReturn(Optional.of(inventory));
+
+        assertThatThrownBy(() -> normalHandler.addDetail(sale(), new AddSaleDetailRequestDTO(
+                product.getId(), null, null, 1, new BigDecimal("90.00"), null)))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("precio de catalogo que tenia a la vista");
+        // El precio confirmado NO paso a ser el de catalogo. (Que el stock
+        // tampoco se mueva lo prueba la base: la transaccion se deshace.)
+        assertThat(inventory.getPrice()).isEqualByComparingTo("0.00");
+    }
+
+    // ------------------------------------------------------ quien pide "sin cargo"
+
+    /**
+     * E. Pedir "sin cargo" es decidir un importe: solo los roles que deciden
+     * importes en la caja (vendedor, Administracion), con el rol del token.
+     * Control, el Operador, Secretaria o Policia: 403, al agregar y al corregir.
+     */
+    @Test
+    void onlyTheRolesThatDecideAmountsMayRequestNoCharge() {
+        when(inventoryRepository.findByProductIdAndWorkshopIdForUpdate(
+                product.getId(), workshopId))
+                .thenReturn(Optional.of(inventory(CATALOG_PRICE, BigDecimal.ZERO)));
+
+        for (String role : new String[] {"CONTROL", "OPERATOR", "SECRETARY", "POLICE"}) {
+            actingAs(role);
+            assertThatThrownBy(() -> normalHandler.addDetail(sale(), noCharge(BigDecimal.ZERO)))
+                    .as(role).isInstanceOf(AccessDeniedException.class);
+            assertThatThrownBy(() -> SaleDetailHandler.validateEditedPrice(
+                    BigDecimal.ZERO, true, CATALOG_PRICE, BigDecimal.ZERO))
+                    .as(role).isInstanceOf(AccessDeniedException.class);
+        }
+        actingAs("ADMIN");
+        assertThat(normalHandler.addDetail(sale(), noCharge(BigDecimal.ZERO)).getPrice())
+                .isEqualByComparingTo("0.00");
+        // Sin pedir "sin cargo" el rol no importa: el resto de reglas de siempre.
+        actingAs("CONTROL");
+        assertThat(normalHandler.addDetail(sale(), request(new BigDecimal("90.00"), null)).getPrice())
+                .isEqualByComparingTo("90.00");
+    }
+
+    /**
+     * D. "Sin cargo" exige el costo REGISTRADO de las unidades de la linea en
+     * cero: una solicitud (sin unidad todavia), un costo sin registrar (lote de
+     * produccion) o uno positivo lo impiden.
+     */
+    @Test
+    void noChargeNeedsARecordedZeroCostForTheLine() {
+        SaleDetail recordedZero = SaleDetail.builder().costTotal(BigDecimal.ZERO).build();
+        SaleDetail unknown = SaleDetail.builder().costTotal(null).build();
+        SaleDetail positive = SaleDetail.builder().costTotal(new BigDecimal("0.01")).build();
+        SaleDetail request = SaleDetail.builder().costTotal(BigDecimal.ZERO)
+                .fulfillment(com.cns.spring_house.sale.entity.Fulfillment.pending(
+                        com.cns.spring_house.sale.entity.FulfillmentType.STOCK_RELEASE))
+                .build();
+
+        assertThatCode(() -> SaleDetailHandler.requireRecordedZeroCost(recordedZero)).doesNotThrowAnyException();
+        assertThatThrownBy(() -> SaleDetailHandler.requireRecordedZeroCost(unknown))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("costo desconocido no es cero");
+        assertThatThrownBy(() -> SaleDetailHandler.requireRecordedZeroCost(positive))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("tienen costo");
+        assertThatThrownBy(() -> SaleDetailHandler.requireRecordedZeroCost(request))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("solicitud al taller");
+    }
+
+    @Test
+    void aNormalLineOverAStaleCatalogTouchesNoStock() {
+        Inventory inventory = inventory(CATALOG_PRICE, COST);
+        when(inventoryRepository.findByProductIdAndWorkshopIdForUpdate(
+                product.getId(), workshopId))
+                .thenReturn(Optional.of(inventory));
+
+        assertThatThrownBy(() -> normalHandler.addDetail(sale(), new AddSaleDetailRequestDTO(
+                product.getId(), null, null, 1, new BigDecimal("90.00"), null, null, null, null, null,
+                new BigDecimal("90.00"))))
+                .isInstanceOf(PriceConflictException.class);
+        // El stock se descuenta despues de resolver el precio: la transaccion
+        // se deshace igual, pero aqui ni siquiera llega a moverse.
+        assertThat(inventory.getPrice()).isEqualByComparingTo(CATALOG_PRICE);
     }
 
 }

@@ -56,6 +56,46 @@ public class VehicleMovement extends Auditable {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "employee_id")
     private Employee employee;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "mechanic_user_id")
+    @ToString.Exclude
+    private com.cns.spring_house.useraccount.entity.UserAccount mechanic;
+    private java.time.Instant workStartedAt;
+    private java.time.Instant workFinishedAt;
+    private UUID startedBy;
+    private UUID finishedBy;
+
+    /**
+     * La visita puede iniciar trabajo: sigue dentro y nunca inicio. El mecanico
+     * responsable se elige en el mismo inicio, asi que no hace falta tenerlo.
+     */
+    public boolean isCanStartWork() {
+        return exit == null && workStartedAt == null && workFinishedAt == null;
+    }
+
+    /**
+     * Si el mecanico asignado (asignacion previa de una visita historica, o el
+     * responsable de un trabajo ya iniciado) sigue siendo un operador activo
+     * del taller de la visita. {@code null} sin mecanico. Solo informativo: el
+     * inicio vuelve a validarlo con bloqueo.
+     */
+    public Boolean getMechanicEligible() {
+        if (mechanic == null) return null;
+        return Boolean.TRUE.equals(mechanic.getIsActive()) && mechanic.getRole() != null
+            && "OPERATOR".equals(mechanic.getRole().getName()) && mechanic.getEmployee() != null
+            && mechanic.getEmployee().getWorkshop().getId().equals(workshop.getId());
+    }
+
+    /**
+     * Reloj de pared entre el PRIMER inicio y el fin definitivo. No es tiempo
+     * de trabajo: incluye pausas. El tiempo activo esta en {@code work} de la
+     * respuesta ({@code WorkTimingDTO}).
+     */
+    public Double getDurationSeconds() {
+        return workStartedAt == null || workFinishedAt == null ? null
+                : java.time.Duration.between(workStartedAt, workFinishedAt).toNanos() / 1_000_000_000d;
+    }
+
     private String plate;
     /**
      * Telefono de la persona asociada a ESTA entrada, capturado en el momento de

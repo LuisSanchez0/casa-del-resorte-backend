@@ -22,6 +22,7 @@ import jakarta.validation.ValidatorFactory;
  * como "P" solo porque Angular no lo impidio.
  */
 class CreateVehicleMovementRequestDTOTest {
+    private static final java.util.UUID MECHANIC = java.util.UUID.randomUUID();
 
     /** Telefono valido, para que la placa sea lo unico que se este probando. */
     private static final String PHONE = "58452136";
@@ -42,7 +43,7 @@ class CreateVehicleMovementRequestDTOTest {
 
     private Set<ConstraintViolation<CreateVehicleMovementRequestDTO>> validate(String plate) {
         return validator.validate(
-                new CreateVehicleMovementRequestDTO(plate, PHONE, null, null));
+                new CreateVehicleMovementRequestDTO(plate, PHONE, MECHANIC, null, null));
     }
 
     private String messagesOf(String plate) {
@@ -77,7 +78,7 @@ class CreateVehicleMovementRequestDTOTest {
     @DisplayName("la normalizacion sigue intacta: se recorta y se pasa a mayusculas")
     void keepsNormalization() {
         CreateVehicleMovementRequestDTO request = new CreateVehicleMovementRequestDTO(
-                "  p122abc  ", PHONE, null, null);
+                "  p122abc  ", PHONE, MECHANIC, null, null);
 
         assertThat(request.plate()).isEqualTo("P122ABC");
         assertThat(validator.validate(request)).isEmpty();

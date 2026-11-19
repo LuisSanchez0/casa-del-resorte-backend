@@ -13,7 +13,8 @@ import com.cns.spring_house.sale.entity.FulfillmentArea;
 import com.cns.spring_house.sale.entity.FulfillmentStatus;
 
 /**
- * Lo que Control y el Operador hacen con las solicitudes de la comanda.
+ * Lo que el Operador hace con las solicitudes de la comanda: liberar lo que
+ * ya existe, fabricar y ejecutar servicios.
  *
  * Ninguna operacion toca precio, identidad fiscal ni cobro: eso es del
  * vendedor.
@@ -29,7 +30,7 @@ public interface SaleFulfillmentService {
 
     FulfillmentTaskResponseDTO get(UUID id);
 
-    /** Unidades que Control puede entregar: la reservada y las disponibles. */
+    /** Unidades que se pueden entregar: la reservada y las disponibles. */
     List<InventoryItemResponseDTO> getEligibleItems(UUID id);
 
     FulfillmentTaskResponseDTO release(UUID id, ReleaseFulfillmentRequestDTO requestDTO);

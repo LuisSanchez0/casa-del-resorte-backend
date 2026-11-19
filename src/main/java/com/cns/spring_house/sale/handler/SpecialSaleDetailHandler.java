@@ -100,7 +100,9 @@ public class SpecialSaleDetailHandler implements SaleDetailHandler {
         PricingOutcome pricing = resolvePricing(
                 requestDTO.price(),
                 inventory.getPrice(),
-                inventory.getCost());
+                inventory.getCost(),
+                requestDTO.expectedCatalogPrice(),
+                requestDTO.chargesNothing());
         BigDecimal price = pricing.price();
 
         // El inventario ya esta BLOQUEADO y es una entidad gestionada: asignarle

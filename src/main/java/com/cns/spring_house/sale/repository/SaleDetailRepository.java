@@ -13,6 +13,8 @@ import org.springframework.data.repository.query.Param;
 import com.cns.spring_house.sale.entity.FulfillmentStatus;
 import com.cns.spring_house.sale.entity.FulfillmentType;
 import com.cns.spring_house.sale.entity.SaleDetail;
+import com.cns.spring_house.sale.entity.SaleStatus;
+import com.cns.spring_house.sale.repository.projection.CompletedPriceRow;
 import com.cns.spring_house.sale.repository.projection.FulfillmentTaskRow;
 import com.cns.spring_house.sale.repository.projection.SaleAreaProgressRow;
 
@@ -196,5 +198,35 @@ public interface SaleDetailRepository extends JpaRepository<SaleDetail, UUID> {
             @Param("saleIds") Collection<UUID> saleIds,
             @Param("types") Collection<FulfillmentType> types,
             @Param("statuses") Collection<FulfillmentStatus> statuses);
+
+
+    /**
+     * Los precios que se cobraron por una pieza en las ventas COMPLETADAS de
+     * un taller, de la mas reciente a la mas antigua. Es la referencia "ultimo
+     * precio cobrado" de la caja.
+     *
+     * Solo ventas completadas: una venta abierta todavia puede cambiar su
+     * precio o anularse, y una anulada o revertida nunca se cobro. Solo
+     * importes mayores que cero: un cero no es un precio que proponer. Acotada
+     * al taller del token, de modo que un taller nunca ve lo que cobra otro.
+     * La entrada es `idx_sale_detail_product` (V45); quien llama pide una sola
+     * fila con el {@code Pageable}.
+     */
+    @Query("""
+        SELECT new com.cns.spring_house.sale.repository.projection.CompletedPriceRow(
+            detail.price, sale.completedAt)
+        FROM SaleDetail detail
+        JOIN detail.sale sale
+        WHERE detail.product.id = :productId
+          AND sale.workshop.id = :workshopId
+          AND sale.status = :status
+          AND detail.price > 0
+        ORDER BY sale.completedAt DESC NULLS LAST, detail.id ASC
+    """)
+    List<CompletedPriceRow> findChargedPrices(
+            @Param("productId") UUID productId,
+            @Param("workshopId") UUID workshopId,
+            @Param("status") SaleStatus status,
+            Pageable pageable);
 
 }

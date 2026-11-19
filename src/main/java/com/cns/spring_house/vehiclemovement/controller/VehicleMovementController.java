@@ -108,6 +108,7 @@ public class VehicleMovementController {
     }
 
     @PostMapping
+    @PreAuthorize("hasRole('POLICE')")
     public ResponseEntity<VehicleMovementResponseDTO> create(
             @ModelAttribute @Valid CreateVehicleMovementRequestDTO requestDTO) {
         VehicleMovementResponseDTO movement = service.create(requestDTO);
@@ -117,6 +118,7 @@ public class VehicleMovementController {
     }
 
     @PatchMapping("/{id}")
+    @PreAuthorize("hasRole('POLICE')")
     public ResponseEntity<VehicleMovementResponseDTO> update(
             @PathVariable UUID id,
             @ModelAttribute @Valid UpdateVehicleMovementRequestDTO requestDTO) {
@@ -127,6 +129,7 @@ public class VehicleMovementController {
     }
 
     @PostMapping("/{id}/register-exit")
+    @PreAuthorize("hasRole('POLICE')")
     public ResponseEntity<VehicleMovementResponseDTO> registerExit(
             @PathVariable UUID id) {
         VehicleMovementResponseDTO movement = service.registerExit(id);

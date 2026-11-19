@@ -87,7 +87,10 @@ import com.cns.spring_house.workresult.service.WorkResultService;
 import lombok.RequiredArgsConstructor;
 
 /**
- * Cumplimiento de las solicitudes de la comanda por Control y el Operador.
+ * Cumplimiento de las solicitudes de la comanda por el Operador: entrega de
+ * stock ("Pedidos por liberar", area CONTROL), fabricacion y servicios (area
+ * OPERATOR). Quien puede llamar cada metodo lo decide el controlador; aqui no
+ * se mira el rol, y el taller sale siempre del token.
  *
  * Toda accion que cambia una solicitud toma PRIMERO el cerrojo de su venta y
  * despues, si toca stock, el de los inventarios en orden de producto —el mismo
@@ -183,13 +186,13 @@ public class SaleFulfillmentServiceImpl implements SaleFulfillmentService {
         return response(id);
     }
 
-    // ── Control ──────────────────────────────────────────────────
+    // ── Entrega de stock ("Pedidos por liberar") ─────────────────
 
     /**
      * La unidad reservada para esta linea —ya es de la venta, aunque el stock
      * libre este en cero— y, mientras no se haya entregado, cualquier otra
-     * unidad disponible del MISMO producto: Control entrega la que tiene a
-     * mano, no necesariamente la que el sistema aparto.
+     * unidad disponible del MISMO producto: quien libera entrega la que tiene
+     * a mano, no necesariamente la que el sistema aparto.
      */
     @Override
     @Transactional(readOnly = true)
@@ -219,7 +222,7 @@ public class SaleFulfillmentServiceImpl implements SaleFulfillmentService {
     }
 
     /**
-     * Control entrega la unidad. Si es otra que la reservada, se cambian: la
+     * Se entrega la unidad. Si es otra que la reservada, se cambian: la
      * elegida sale y la reservada vuelve a estar disponible. El stock y el
      * costo no se mueven —es una unidad del mismo inventario por otra—; lo que
      * cambia es QUE pieza concreta, con su codigo, queda en la venta.
@@ -710,17 +713,22 @@ public class SaleFulfillmentServiceImpl implements SaleFulfillmentService {
         }
     }
 
+    /**
+     * Tomar y bloquear son de "Pedidos del taller" (fabricar, servicios). Una
+     * entrega de stock no pasa por ahi: se libera directamente, y su paso a
+     * manos del Operador no le agrega esos estados.
+     */
     private void requireOperator(SaleDetail detail) {
         if (detail.getFulfillment().area() != FulfillmentArea.OPERATOR) {
             throw new ValidationException(
-                    "La solicitud no corresponde al Operador");
+                    "Una entrega de stock no se toma ni se bloquea: se libera desde Pedidos por liberar");
         }
     }
 
     private void requireType(FulfillmentType actual, FulfillmentType expected) {
         if (actual != expected) {
             throw new ValidationException(switch (expected) {
-                case STOCK_RELEASE -> "La solicitud no es una entrega de Control";
+                case STOCK_RELEASE -> "La solicitud no es una entrega de stock";
                 case TRANSFORMATION -> "La solicitud no es una pieza para fabricar";
                 case SERVICE -> "La solicitud no es un servicio";
             });

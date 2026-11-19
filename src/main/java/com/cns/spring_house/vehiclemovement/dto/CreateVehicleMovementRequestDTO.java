@@ -49,6 +49,15 @@ public record CreateVehicleMovementRequestDTO(
                 regexp = "^[0-9]{8}$",
                 message = "El telefono debe tener exactamente 8 digitos")
         String phone,
+        /**
+         * Ya NO se elige al registrar el ingreso: el mecanico responsable se
+         * asigna en {@code start-work}. El campo se conserva solo para RECHAZAR
+         * explicitamente (400) a un cliente desactualizado que todavia lo envie;
+         * si se quitara, el binding de {@code @ModelAttribute} lo ignoraria en
+         * silencio y la visita quedaria sin el mecanico que ese cliente creyo
+         * asignar.
+         */
+        java.util.UUID mechanicId,
         String notes,
         @Size(max = 10, message = "No se pueden adjuntar mas de 10 fotografias")
         List<MultipartFile> photos
@@ -66,6 +75,10 @@ public record CreateVehicleMovementRequestDTO(
      * Se respeta el null para que @NotBlank sea quien produzca el error de
      * validacion en lugar de un NullPointerException al construir el record.
      */
+    public CreateVehicleMovementRequestDTO(String plate, String phone, String notes, List<MultipartFile> photos) {
+        this(plate, phone, null, notes, photos);
+    }
+
     public CreateVehicleMovementRequestDTO {
         plate = plate == null ? null : plate.trim().toUpperCase(Locale.ROOT);
         // Al telefono se le recorta el espacio exterior y NADA MAS. Es lo mismo

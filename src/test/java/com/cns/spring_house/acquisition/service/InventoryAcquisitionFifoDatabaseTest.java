@@ -612,7 +612,7 @@ class InventoryAcquisitionFifoDatabaseTest {
             Fixture fixture, int quantity, BigDecimal price) {
         SaleResponseDTO sale = saleService.create(
                 new CreateSaleRequestDTO(customer(), null));
-        saleService.addDetail(sale.id(), new AddSaleDetailRequestDTO(
+        addSeen(sale.id(), new AddSaleDetailRequestDTO(
                 fixture.inventory.getProduct().getId(), null, null,
                 quantity, price, null));
         return onlyDetail(sale.id());
@@ -621,7 +621,7 @@ class InventoryAcquisitionFifoDatabaseTest {
     private SaleResponseDTO openSaleWith(Fixture fixture, int quantity) {
         SaleResponseDTO sale = saleService.create(
                 new CreateSaleRequestDTO(customer(), null));
-        saleService.addDetail(sale.id(), new AddSaleDetailRequestDTO(
+        addSeen(sale.id(), new AddSaleDetailRequestDTO(
                 fixture.inventory.getProduct().getId(), null, null,
                 quantity, null, null));
         return sale;
@@ -799,6 +799,17 @@ class InventoryAcquisitionFifoDatabaseTest {
                 .stock(stock)
                 .minStock(0)
                 .build());
+    }
+
+
+    /** Solo para leer el catalogo que el vendedor tenia a la vista (ver SeenCatalog). */
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.jdbc.core.JdbcTemplate seenJdbc;
+
+    /** Agregar como lo hace la caja: con el catalogo que el vendedor tenia a la vista. */
+    private com.cns.spring_house.sale.dto.SaleResponseDTO addSeen(
+            UUID saleId, com.cns.spring_house.sale.dto.AddSaleDetailRequestDTO dto) {
+        return saleService.addDetail(saleId, com.cns.spring_house.testsupport.SeenCatalog.seen(seenJdbc, dto));
     }
 
 }

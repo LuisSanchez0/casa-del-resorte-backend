@@ -2,6 +2,7 @@ package com.cns.spring_house.vehiclemovement.service;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.hibernate.exception.ConstraintViolationException;
@@ -22,6 +23,7 @@ import com.cns.spring_house.vehiclemovement.dto.PhoneSuggestionResponseDTO;
 import com.cns.spring_house.vehiclemovement.dto.SearchVehicleMovementRequestDTO;
 import com.cns.spring_house.vehiclemovement.dto.UpdateVehicleMovementRequestDTO;
 import com.cns.spring_house.vehiclemovement.dto.VehicleMovementResponseDTO;
+import com.cns.spring_house.vehiclemovement.dto.WorkTimingDTO;
 import com.cns.spring_house.vehiclemovement.entity.VehicleMovement;
 import com.cns.spring_house.vehiclemovement.entity.VehicleMovementPhoto;
 import com.cns.spring_house.vehiclemovement.mapper.VehicleMovementMapper;
@@ -66,6 +68,7 @@ public class VehicleMovementServiceImpl implements VehicleMovementService {
     private final WorkshopRepository workshopRepository;
     private final S3Service s3Service;
     private final CurrentUserService currentUserService;
+    private final VehicleWorkTimingService workTimings;
 
     /**
      * El taller del token es el unico scope valido: `requestDTO.workshop()` se
@@ -81,9 +84,12 @@ public class VehicleMovementServiceImpl implements VehicleMovementService {
         // El rol se resuelve UNA vez para toda la lista y no por elemento: la
         // visibilidad depende de quien pregunta, no de cada movimiento.
         boolean withPhone = canSeePhone();
-        return repository.findAll(specs)
-                .stream()
-                .map(movement -> toResponse(movement, withPhone))
+        List<VehicleMovement> movements = repository.findAll(specs);
+        // Tiempos de trabajo de TODA la lista en una sola consulta, con el mismo instante.
+        Map<UUID, WorkTimingDTO> work = workTimings.forVisits(
+                movements.stream().map(VehicleMovement::getId).toList(), workTimings.now());
+        return movements.stream()
+                .map(movement -> toResponse(movement, withPhone, work.get(movement.getId())))
                 .toList();
     }
 
@@ -98,6 +104,13 @@ public class VehicleMovementServiceImpl implements VehicleMovementService {
         // El mismo UUID valida la placa y se asigna al registro: asi no puede
         // validarse contra un taller y persistirse en otro.
         UUID workshopId = SecurityUtils.getWorkshopId();
+        // El mecanico responsable se elige al INICIAR el trabajo, no aqui. Un cliente
+        // desactualizado que aun lo envie recibe un 400 explicito en lugar de una
+        // visita registrada sin el mecanico que creyo asignar.
+        if (requestDTO.mechanicId() != null) {
+            throw new ValidationException("El mecánico ya no se elige al registrar el ingreso: "
+                    + "se asigna al pulsar «Iniciar trabajo». Actualiza la página e intenta de nuevo.");
+        }
         // La placa ya llega normalizada por el record: se valida y se persiste
         // exactamente el mismo texto.
         boolean exists = repository
@@ -124,7 +137,10 @@ public class VehicleMovementServiceImpl implements VehicleMovementService {
         // fila nueva, nunca apuntar a la fila vieja. Asi ninguna entrada futura
         // puede cambiar lo que muestra el historial de esta.
         uploadPhotos(movement, photos);
-        return toResponse(saveDetectingOpenPlate(movement));
+        // Sin mecanico, sin evento de bitacora y sin tiempos: la visita queda
+        // "pendiente de iniciar" hasta que Policia elija al responsable al iniciar.
+        VehicleMovement saved = saveDetectingOpenPlate(movement);
+        return toResponse(saved);
     }
 
     /**
@@ -133,7 +149,7 @@ public class VehicleMovementServiceImpl implements VehicleMovementService {
      */
     @Override
     public VehicleMovementResponseDTO update(UUID id, UpdateVehicleMovementRequestDTO requestDTO) {
-        VehicleMovement movement = findOwnedMovement(id);
+        VehicleMovement movement = lockOwnedMovement(id);
         // Todo lo que puede rechazar la peticion se resuelve antes de subir nada:
         // pertenencia, fotos a eliminar y total resultante.
         List<VehicleMovementPhoto> removedPhotos =
@@ -154,7 +170,10 @@ public class VehicleMovementServiceImpl implements VehicleMovementService {
 
     @Override
     public VehicleMovementResponseDTO registerExit(UUID id) {
-        VehicleMovement movement = findOwnedMovement(id);
+        VehicleMovement movement = lockOwnedMovement(id);
+        if (movement.getWorkStartedAt() != null && movement.getWorkFinishedAt() == null) {
+            throw new ValidationException("Finaliza el trabajo antes de registrar la salida del vehículo.");
+        }
         if (movement.getExit() != null) {
             throw new ValidationException(
                     "Ya se marco una salida para este registro");
@@ -198,13 +217,14 @@ public class VehicleMovementServiceImpl implements VehicleMovementService {
      * aplicar la regla de visibilidad del telefono.
      */
     private VehicleMovementResponseDTO toResponse(VehicleMovement movement) {
-        return toResponse(movement, canSeePhone());
+        return toResponse(movement, canSeePhone(),
+                workTimings.forVisit(movement.getId(), workTimings.now()));
     }
 
-    private VehicleMovementResponseDTO toResponse(VehicleMovement movement, boolean withPhone) {
+    private VehicleMovementResponseDTO toResponse(VehicleMovement movement, boolean withPhone, WorkTimingDTO work) {
         return withPhone
-                ? mapper.toResponse(movement)
-                : mapper.toResponseWithoutPhone(movement);
+                ? mapper.toResponse(movement, work)
+                : mapper.toResponseWithoutPhone(movement, work);
     }
 
     /**
@@ -223,6 +243,11 @@ public class VehicleMovementServiceImpl implements VehicleMovementService {
      * taller responde exactamente igual que uno inexistente: confirmar que "existe
      * pero es ajeno" ya filtraria informacion de otro taller.
      */
+    private VehicleMovement lockOwnedMovement(UUID id) {
+        return repository.lockOwned(id, SecurityUtils.getWorkshopId())
+                .orElseThrow(() -> new EntityNotFoundException("No existe el registro especificado"));
+    }
+
     private VehicleMovement findOwnedMovement(UUID id) {
         return repository
                 .findByIdAndWorkshopId(id, SecurityUtils.getWorkshopId())

@@ -6,6 +6,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Component;
@@ -21,6 +22,7 @@ import com.cns.spring_house.inventory.entity.InventoryItem;
 import com.cns.spring_house.inventory.entity.InventoryItemStatus;
 import com.cns.spring_house.inventory.repository.InventoryItemRepository;
 import com.cns.spring_house.inventory.repository.InventoryRepository;
+import com.cns.spring_house.job.repository.JobRepository;
 import com.cns.spring_house.model.entity.Model;
 import com.cns.spring_house.model.service.CatalogSelection;
 import com.cns.spring_house.product.entity.Product;
@@ -67,6 +69,8 @@ public class SaleRequestLines {
     private final CatalogSelection catalogSelection;
     private final ProductRepository productRepository;
     private final ObjectMapper objectMapper;
+    /** El catalogo de un servicio, para corregir el precio de su linea. */
+    private final JobRepository jobRepository;
 
     /**
      * Una linea por UNIDAD pedida.
@@ -95,10 +99,18 @@ public class SaleRequestLines {
             String invoiceDescription,
             String instructions,
             Boolean requestedCurls,
-            Integer requestedCurlCount) {
+            Integer requestedCurlCount,
+            BigDecimal expectedCatalogPrice,
+            boolean noCharge) {
         if (product.getFamily().getCategory() != FamilyCategory.SPECIAL) {
             throw new ValidationException(
                     "Solo una pieza especial se solicita al taller");
+        }
+        if (noCharge) {
+            // Una solicitud no tiene todavia unidad ni costo: los decide el
+            // taller al cumplirla. No hay costo registrado que pueda ser cero.
+            SaleDetailHandler.requireNoChargeAuthority();
+            throw new ValidationException(SaleDetailHandler.NO_CHARGE_FOR_REQUEST);
         }
         RequestedCurls curls = RequestedCurls.forNewLine(product, requestedCurls, requestedCurlCount);
         int units = quantity == null ? 1 : quantity;
@@ -119,7 +131,9 @@ public class SaleRequestLines {
         PricingOutcome pricing = handler.resolvePricing(
                 requestedPrice,
                 inventory.map(Inventory::getPrice).orElse(null),
-                inventory.map(Inventory::getCost).orElse(null));
+                inventory.map(Inventory::getCost).orElse(null),
+                expectedCatalogPrice,
+                noCharge);
         if (pricing.becomesCatalogPrice()) {
             inventory.ifPresent(found -> found.setPrice(pricing.price()));
         }
@@ -188,16 +202,27 @@ public class SaleRequestLines {
      * Las caracteristicas se validan con la regla del alta de productos: lo que
      * el catalogo rechazaria, aqui tambien se rechaza.
      */
+    /** Precio de catalogo y costo VIGENTES de una pieza o servicio en el taller. */
+    public record LineCatalog(BigDecimal price, BigDecimal cost) {
+    }
+
     /**
-     * El minimo de siempre para el precio de una pieza pedida: el costo de su
-     * inventario en el taller, si lo tiene. Sin inventario no hay costo
-     * conocido todavia, y no se inventa uno.
+     * Lo que hoy vale y cuesta el producto de una linea en el taller del
+     * token: inventario para las piezas, el `Job` para un servicio (que no
+     * tiene costo en el modelo). Sin ninguno, nada: no se inventa un catalogo
+     * ni un costo. Solo lee; corregir el precio de una linea nunca reescribe
+     * el catalogo.
      */
-    public BigDecimal minimumPrice(Product product) {
-        return inventoryRepository
-                .findByProductIdAndWorkshopId(product.getId(), SecurityUtils.getWorkshopId())
-                .map(Inventory::getCost)
-                .orElse(BigDecimal.ZERO);
+    public LineCatalog catalogOf(Product product) {
+        UUID workshopId = SecurityUtils.getWorkshopId();
+        if (product.getFamily().getCategory() == FamilyCategory.JOB) {
+            return jobRepository.findByProductIdAndWorkshopId(product.getId(), workshopId)
+                    .map(job -> new LineCatalog(job.getPrice(), null))
+                    .orElse(new LineCatalog(null, null));
+        }
+        return inventoryRepository.findByProductIdAndWorkshopId(product.getId(), workshopId)
+                .map(found -> new LineCatalog(found.getPrice(), found.getCost()))
+                .orElse(new LineCatalog(null, null));
     }
 
     @Transactional(propagation = Propagation.MANDATORY)

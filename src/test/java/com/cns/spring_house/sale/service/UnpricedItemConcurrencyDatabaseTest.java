@@ -147,7 +147,7 @@ class UnpricedItemConcurrencyDatabaseTest {
     }
 
     @Test
-    void twoSellersPricingTheSameUnpricedProductLeaveADeterministicCatalog()
+    void twoSellersWhoSawTheProductUnpricedCannotBothPriceIt()
             throws Exception {
 
         Workshop workshop = workshopRepository.save(Workshop.builder()
@@ -215,8 +215,10 @@ class UnpricedItemConcurrencyDatabaseTest {
                         .setAuthentication(new JwtAuthenticationToken(token));
                 try {
                     startTogether.await(15, TimeUnit.SECONDS);
+                    // Los dos lo vieron SIN precio (0) antes de confirmar.
                     service.addDetail(saleId, new AddSaleDetailRequestDTO(
-                            product.getId(), null, null, 1, price, null));
+                            product.getId(), null, null, 1, price, null, null, null, null, null,
+                            BigDecimal.ZERO));
                     return true;
                 } catch (RuntimeException failure) {
                     failures.add(failure.getClass().getSimpleName()
@@ -242,32 +244,32 @@ class UnpricedItemConcurrencyDatabaseTest {
             }
         }
 
-        // Las dos ventas prosperan: hay existencias de sobra y el cerrojo solo
-        // las ordena, no las rechaza.
+        // Los dos vieron el producto SIN precio. El primero que toma el
+        // inventario fija el catalogo con su cifra; para el segundo ese "sin
+        // precio" ya no es verdad: su cifra pasaria a ser, en silencio, un
+        // precio especial sobre un catalogo que no vio. Se rechaza con 409 y
+        // reconfirma. Antes —con la precondicion opcional— prosperaban las dos.
         assertThat(succeeded)
-                .as("ambas lineas debian agregarse; fallos: %s", failures)
-                .isEqualTo(2);
+                .as("solo una linea debia agregarse; fallos: %s", failures)
+                .isEqualTo(1);
+        assertThat(failures).singleElement().asString()
+                .startsWith("PriceConflictException")
+                .contains("Revise y confirme el precio de nuevo");
 
-        // Cada linea conserva EL PRECIO DE SU CAJERO. Ninguna hereda el de la
-        // otra ni se recalcula contra el catalogo.
-        BigDecimal firstPrice = onlyDetailOf(first).getPrice();
-        BigDecimal secondPrice = onlyDetailOf(second).getPrice();
-        assertThat(firstPrice).isEqualByComparingTo("250.00");
-        assertThat(secondPrice).isEqualByComparingTo("300.00");
-
-        // El catalogo se queda con UNO de los dos, el de quien entro primero, y
-        // nunca con una mezcla ni con un cero a medias.
+        // El catalogo es exactamente el de quien entro primero, y su linea lo lleva.
         BigDecimal catalog = inventoryRepository.findById(inventory.getId())
                 .orElseThrow()
                 .getPrice();
-        assertThat(catalog)
-                .as("el catalogo conserva el precio de la primera transaccion")
-                .isIn(new BigDecimal("250.00"), new BigDecimal("300.00"));
+        assertThat(catalog).isIn(new BigDecimal("250.00"), new BigDecimal("300.00"));
+        List<SaleDetail> lines = new ArrayList<>();
+        lines.addAll(saleRepository.findById(first.getId()).orElseThrow().getDetails());
+        lines.addAll(saleRepository.findById(second.getId()).orElseThrow().getDetails());
+        assertThat(lines).singleElement()
+                .satisfies(line -> assertThat(line.getPrice()).isEqualByComparingTo(catalog));
 
-        // Y el stock refleja exactamente las dos unidades vendidas: el cerrojo
-        // que ordena el precio es el mismo que impide perder un descuento.
+        // Y el rechazado no tomo nada: una sola unidad salio del stock.
         assertThat(inventoryRepository.findById(inventory.getId())
-                .orElseThrow().getStock()).isEqualTo(8);
+                .orElseThrow().getStock()).isEqualTo(9);
     }
 
     private SaleDetail onlyDetailOf(Sale sale) {
@@ -292,4 +294,15 @@ class UnpricedItemConcurrencyDatabaseTest {
                 .employee(employee)
                 .build());
     }
+
+    /** Solo para leer el catalogo que el vendedor tenia a la vista (ver SeenCatalog). */
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.jdbc.core.JdbcTemplate seenJdbc;
+
+    /** Agregar como lo hace la caja: con el catalogo que el vendedor tenia a la vista. */
+    private com.cns.spring_house.sale.dto.SaleResponseDTO addSeen(
+            UUID saleId, com.cns.spring_house.sale.dto.AddSaleDetailRequestDTO dto) {
+        return service.addDetail(saleId, com.cns.spring_house.testsupport.SeenCatalog.seen(seenJdbc, dto));
+    }
+
 }

@@ -69,7 +69,8 @@ public class JobSaleDetailHandler implements SaleDetailHandler {
      */
     private SaleDetail createDetail(Job job, AddSaleDetailRequestDTO requestDTO) {
         PricingOutcome pricing = resolvePricing(
-                requestDTO.price(), job.getPrice(), null);
+                requestDTO.price(), job.getPrice(), null, requestDTO.expectedCatalogPrice(),
+                requestDTO.chargesNothing());
         BigDecimal price = pricing.price();
 
         // `job.price` es el precio de catalogo del servicio y tiene el MISMO

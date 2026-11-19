@@ -275,11 +275,11 @@ class SaleServiceImplTest {
         assertThatThrownBy(() -> service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
                 specialProduct.getId(), itemId, null, 1, null, null)))
                 .isInstanceOf(ValidationException.class)
-                .hasMessageContaining("Control entrega la unidad");
+                .hasMessageContaining("el Operador entrega la unidad");
         assertThatThrownBy(() -> service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
                 specialProduct.getId(), itemId, UUID.randomUUID(), 1, null, null)))
                 .isInstanceOf(ValidationException.class)
-                .hasMessageContaining("Control entrega la unidad");
+                .hasMessageContaining("el Operador entrega la unidad");
 
         verify(registry, never()).get(any());
         verify(workResultService, never()).resolvePending(any(), any(), any());

@@ -19,6 +19,13 @@ import com.cns.spring_house.vehiclemovement.repository.projection.TopPlateProjec
 
 public interface VehicleMovementRepository extends JpaRepository<VehicleMovement, UUID>, JpaSpecificationExecutor<VehicleMovement> {
 
+    @Override
+    @org.springframework.data.jpa.repository.EntityGraph(attributePaths = {"workshop", "photos", "mechanic.employee.workshop", "mechanic.role"})
+    List<VehicleMovement> findAll(org.springframework.data.jpa.domain.Specification<VehicleMovement> spec);
+
+    @Query(value = "SELECT * FROM vehicle_movement WHERE id = :id AND workshop_id = :workshopId FOR UPDATE", nativeQuery = true)
+    Optional<VehicleMovement> lockOwned(@Param("id") UUID id, @Param("workshopId") UUID workshopId);
+
     /**
      * Toda lectura de un movimiento concreto pasa por aqui: buscar solo por id
      * permitia que un taller leyera o modificara registros de otro conociendo el

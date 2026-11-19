@@ -24,11 +24,14 @@ import com.cns.spring_house.sale.dto.SaveForLaterRequestDTO;
 import com.cns.spring_house.sale.dto.UpdateRequestPriceDTO;
 import com.cns.spring_house.sale.dto.ReverseSaleRequestDTO;
 import com.cns.spring_house.sale.dto.SaleDashboardResponseDTO;
+import com.cns.spring_house.sale.dto.SaleLineGuidanceDTO;
+import com.cns.spring_house.sale.dto.SaleLineGuidanceRequestDTO;
 import com.cns.spring_house.sale.dto.SaleResponseDTO;
 import com.cns.spring_house.sale.dto.SaleSummaryDTO;
 import com.cns.spring_house.sale.dto.SearchSaleRequestDTO;
 import com.cns.spring_house.sale.entity.PaymentStatus;
 import com.cns.spring_house.sale.service.SaleDashboardService;
+import com.cns.spring_house.sale.service.SaleLineGuidanceService;
 import com.cns.spring_house.sale.service.SaleService;
 
 import jakarta.validation.Valid;
@@ -47,6 +50,7 @@ public class SaleController {
 
     private final SaleService service;
     private final SaleDashboardService dashboardService;
+    private final SaleLineGuidanceService guidanceService;
 
     /**
      * Estadisticas agregadas del taller autenticado, en una sola peticion.
@@ -152,6 +156,22 @@ public class SaleController {
         return ResponseEntity
                 .status(HttpStatus.OK)
                 .body(service.getReady(q));
+    }
+
+    /**
+     * Guia de la caja ANTES de agregar una linea: estado del precio con sus
+     * referencias reales y su procedencia, y unidades terminadas libres. Solo
+     * lee; el precio y el stock que cuentan se deciden de nuevo al agregar.
+     *
+     * POST por el cuerpo: una especificacion trae caracteristicas dinamicas que
+     * no caben con orden ni tipo en una query string. Acotada al taller del
+     * token, como todo lo de la venta.
+     */
+    @PreAuthorize("hasRole('SELLER')")
+    @PostMapping("/line-guidance")
+    public ResponseEntity<SaleLineGuidanceDTO> lineGuidance(
+            @RequestBody @Valid SaleLineGuidanceRequestDTO requestDTO) {
+        return ResponseEntity.ok(guidanceService.guide(requestDTO));
     }
 
     /**

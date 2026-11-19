@@ -2,6 +2,7 @@ package com.cns.spring_house.vehiclemovement.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -73,6 +74,9 @@ class VehicleMovementPhoneServiceTest {
     @Mock
     private CurrentUserService currentUserService;
 
+    @Mock
+    private VehicleWorkTimingService workTimings;
+
     @InjectMocks
     private VehicleMovementServiceImpl service;
 
@@ -138,8 +142,8 @@ class VehicleMovementPhoneServiceTest {
 
         service.getAll(new SearchVehicleMovementRequestDTO(null, null, null, null));
 
-        verify(mapper).toResponse(first);
-        verify(mapper, never()).toResponseWithoutPhone(any());
+        verify(mapper).toResponse(eq(first), any());
+        verify(mapper, never()).toResponseWithoutPhone(any(), any());
     }
 
     /**
@@ -158,8 +162,8 @@ class VehicleMovementPhoneServiceTest {
 
         service.getAll(new SearchVehicleMovementRequestDTO(null, null, null, null));
 
-        verify(mapper).toResponseWithoutPhone(first);
-        verify(mapper, never()).toResponse(any());
+        verify(mapper).toResponseWithoutPhone(eq(first), any());
+        verify(mapper, never()).toResponse(any(), any());
     }
 
     @Test
@@ -172,8 +176,8 @@ class VehicleMovementPhoneServiceTest {
 
         service.get(first.getId());
 
-        verify(mapper).toResponseWithoutPhone(first);
-        verify(mapper, never()).toResponse(any());
+        verify(mapper).toResponseWithoutPhone(eq(first), any());
+        verify(mapper, never()).toResponse(any(), any());
     }
 
     @Test
@@ -194,8 +198,8 @@ class VehicleMovementPhoneServiceTest {
 
         service.getAll(new SearchVehicleMovementRequestDTO(null, null, null, null));
 
-        verify(mapper).toResponseWithoutPhone(first);
-        verify(mapper, never()).toResponse(any());
+        verify(mapper).toResponseWithoutPhone(eq(first), any());
+        verify(mapper, never()).toResponse(any(), any());
     }
 
     // ── Alta ─────────────────────────────────────────────────────
@@ -309,7 +313,7 @@ class VehicleMovementPhoneServiceTest {
     void registeringExitDoesNotTouchThePhone() {
         authenticateAs("POLICE");
         VehicleMovement open = movement();
-        when(repository.findByIdAndWorkshopId(open.getId(), workshopAId))
+        when(repository.lockOwned(open.getId(), workshopAId))
                 .thenReturn(Optional.of(open));
         when(repository.save(any())).thenAnswer(call -> call.getArgument(0));
 
@@ -327,7 +331,7 @@ class VehicleMovementPhoneServiceTest {
     void updatingNotesDoesNotChangeThePhone() {
         authenticateAs("POLICE");
         VehicleMovement existing = movement();
-        when(repository.findByIdAndWorkshopId(existing.getId(), workshopAId))
+        when(repository.lockOwned(existing.getId(), workshopAId))
                 .thenReturn(Optional.of(existing));
         when(repository.save(any())).thenAnswer(call -> call.getArgument(0));
 

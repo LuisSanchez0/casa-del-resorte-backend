@@ -425,7 +425,7 @@ class SaleServiceDatabaseTest {
      */
     private UUID requestAndDispatchSpecial(
             Sale sale, Product product, BigDecimal price, String invoiceDescription) {
-        SaleResponseDTO added = service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+        SaleResponseDTO added = addSeen(sale.getId(), new AddSaleDetailRequestDTO(
                 product.getId(), null, null, 1, price, invoiceDescription));
         UUID line = added.details().stream()
                 .filter(detail -> detail.product().id().equals(product.getId()))
@@ -502,7 +502,7 @@ class SaleServiceDatabaseTest {
         WorkResult workResult = pendingJobWorkResult(workshop, jobProduct);
         Sale sale = openSale(workshop);
 
-        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+        addSeen(sale.getId(), new AddSaleDetailRequestDTO(
                 jobProduct.getId(), null, workResult.getId(), 2, null, null));
 
         SaleDetailResponseDTO detail = onlyDetailOf(service.get(sale.getId()));
@@ -520,7 +520,7 @@ class SaleServiceDatabaseTest {
         inventory(workshop, normalProduct, 5);
         Sale sale = openSale(workshop);
 
-        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+        addSeen(sale.getId(), new AddSaleDetailRequestDTO(
                 normalProduct.getId(), null, null, 2, null, null));
 
         assertThat(onlyDetailOf(service.get(sale.getId())).workResult()).isNull();
@@ -538,7 +538,7 @@ class SaleServiceDatabaseTest {
         WorkResult workResult = pendingJobWorkResult(workshop, jobProduct);
         Sale sale = openSale(workshop);
 
-        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+        addSeen(sale.getId(), new AddSaleDetailRequestDTO(
                 jobProduct.getId(), null, workResult.getId(), 1, null, null));
         service.completeSale(sale.getId(), new CompleteSaleRequestDTO(
                 InvoiceType.INVOICE, PaymentMethod.CASH));
@@ -564,7 +564,7 @@ class SaleServiceDatabaseTest {
         WorkResult workResult = pendingJobWorkResult(workshop, jobProduct);
         Sale sale = openSale(workshop);
 
-        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+        addSeen(sale.getId(), new AddSaleDetailRequestDTO(
                 jobProduct.getId(), null, workResult.getId(), 1, null, null));
 
         UUID detailId = reload(sale).getDetails().get(0).getId();
@@ -596,9 +596,9 @@ class SaleServiceDatabaseTest {
         AddSaleDetailRequestDTO requestDTO = new AddSaleDetailRequestDTO(
                 jobProduct.getId(), null, workResult.getId(), 1, null, null);
 
-        service.addDetail(first.getId(), requestDTO);
+        addSeen(first.getId(), requestDTO);
         service.removeDetail(reload(first).getDetails().get(0).getId());
-        service.addDetail(second.getId(), requestDTO);
+        addSeen(second.getId(), requestDTO);
 
         assertThat(reload(second).getDetails())
                 .singleElement()
@@ -617,7 +617,7 @@ class SaleServiceDatabaseTest {
         Product jobProduct = product(FamilyCategory.JOB);
         WorkResult workResult = pendingJobWorkResult(workshop, jobProduct);
         Sale sale = openSale(workshop);
-        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+        addSeen(sale.getId(), new AddSaleDetailRequestDTO(
                 jobProduct.getId(), null, workResult.getId(), 1, null, null));
 
         service.delete(sale.getId());
@@ -639,7 +639,7 @@ class SaleServiceDatabaseTest {
         Product normalProduct = product(FamilyCategory.NORMAL);
         Inventory stock = inventory(workshop, normalProduct, 10);
         Sale sale = openSale(workshop);
-        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+        addSeen(sale.getId(), new AddSaleDetailRequestDTO(
                 normalProduct.getId(), null, null, 3, null, null));
 
         assertThat(inventoryRepository.findById(stock.getId())
@@ -674,7 +674,7 @@ class SaleServiceDatabaseTest {
                         .build());
         Sale sale = openSale(workshop);
 
-        assertThatThrownBy(() -> service.addDetail(
+        assertThatThrownBy(() -> addSeen(
                 sale.getId(),
                 new AddSaleDetailRequestDTO(
                         specialProduct.getId(), item.getId(),
@@ -706,9 +706,9 @@ class SaleServiceDatabaseTest {
         WorkResult healthy = pendingJobWorkResult(workshop, firstProduct);
         WorkResult alreadySold = pendingJobWorkResult(workshop, secondProduct);
         Sale sale = openSale(workshop);
-        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+        addSeen(sale.getId(), new AddSaleDetailRequestDTO(
                 firstProduct.getId(), null, healthy.getId(), 1, null, null));
-        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+        addSeen(sale.getId(), new AddSaleDetailRequestDTO(
                 secondProduct.getId(), null, alreadySold.getId(), 1, null, null));
 
         // Otra venta se lo llevo primero: markAsSold ya no lo encuentra PENDING.
@@ -746,7 +746,7 @@ class SaleServiceDatabaseTest {
         Product jobProduct = product(FamilyCategory.JOB);
         WorkResult workResult = pendingJobWorkResult(workshop, jobProduct);
         Sale sale = openSale(workshop);
-        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+        addSeen(sale.getId(), new AddSaleDetailRequestDTO(
                 jobProduct.getId(), null, workResult.getId(), 1, null, null));
 
         service.completeSale(sale.getId(), new CompleteSaleRequestDTO(
@@ -844,7 +844,7 @@ class SaleServiceDatabaseTest {
         Product normalProduct = product(FamilyCategory.NORMAL);
         Inventory stock = inventory(workshop, normalProduct, 10);
         Sale sale = openSale(workshop);
-        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+        addSeen(sale.getId(), new AddSaleDetailRequestDTO(
                 normalProduct.getId(), null, null, 3, new BigDecimal("50.00"), null));
 
         service.cancel(sale.getId(), new CancelSaleRequestDTO("Cliente desistio de la compra"));
@@ -906,7 +906,7 @@ class SaleServiceDatabaseTest {
         Product jobProduct = product(FamilyCategory.JOB);
         job(workshop, jobProduct);
         Sale sale = openSale(workshop);
-        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+        addSeen(sale.getId(), new AddSaleDetailRequestDTO(
                 jobProduct.getId(), null, null, 2, null, null));
 
         service.cancel(sale.getId(), new CancelSaleRequestDTO("Motivo de prueba"));
@@ -925,7 +925,7 @@ class SaleServiceDatabaseTest {
         Product jobProduct = product(FamilyCategory.JOB);
         WorkResult workResult = pendingJobWorkResult(workshop, jobProduct);
         Sale cancelled = openSale(workshop);
-        service.addDetail(cancelled.getId(), new AddSaleDetailRequestDTO(
+        addSeen(cancelled.getId(), new AddSaleDetailRequestDTO(
                 jobProduct.getId(), null, workResult.getId(), 1, null, null));
 
         service.cancel(cancelled.getId(), new CancelSaleRequestDTO("Motivo de prueba"));
@@ -943,7 +943,7 @@ class SaleServiceDatabaseTest {
 
         // Y el trabajo se puede vender de verdad en otra venta.
         Sale second = openSale(workshop);
-        service.addDetail(second.getId(), new AddSaleDetailRequestDTO(
+        addSeen(second.getId(), new AddSaleDetailRequestDTO(
                 jobProduct.getId(), null, workResult.getId(), 1, null, null));
         service.completeSale(second.getId(), new CompleteSaleRequestDTO(
                 InvoiceType.INVOICE, PaymentMethod.CASH));
@@ -958,12 +958,12 @@ class SaleServiceDatabaseTest {
         Product jobProduct = product(FamilyCategory.JOB);
         job(workshop, jobProduct);
         Sale sale = openSale(workshop);
-        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+        addSeen(sale.getId(), new AddSaleDetailRequestDTO(
                 jobProduct.getId(), null, null, 1, null, null));
         UUID detailId = reload(sale).getDetails().get(0).getId();
         service.cancel(sale.getId(), new CancelSaleRequestDTO("Motivo de prueba"));
 
-        assertThatThrownBy(() -> service.addDetail(
+        assertThatThrownBy(() -> addSeen(
                 sale.getId(), new AddSaleDetailRequestDTO(
                         jobProduct.getId(), null, null, 1, null, null)))
                 .isInstanceOf(ValidationException.class);
@@ -1015,7 +1015,7 @@ class SaleServiceDatabaseTest {
         Inventory specialStock = inventory(workshop, specialProduct, 1);
         InventoryItem item = availableItem(specialStock);
         Sale sale = openSale(workshop);
-        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+        addSeen(sale.getId(), new AddSaleDetailRequestDTO(
                 normalProduct.getId(), null, null, 3, null, null));
         requestAndDispatchSpecial(sale, specialProduct, null, null);
 
@@ -1047,13 +1047,13 @@ class SaleServiceDatabaseTest {
                 normalProduct.getId(), null, null, 2, null, null);
 
         Sale deleted = openSale(workshop);
-        service.addDetail(deleted.getId(), line);
+        addSeen(deleted.getId(), line);
         // Sin accion todavia: borrar no debe necesitar ni generar una.
         assertThat(reload(deleted).getAction()).isNull();
         service.delete(deleted.getId());
 
         Sale cancelled = openSale(workshop);
-        service.addDetail(cancelled.getId(), line);
+        addSeen(cancelled.getId(), line);
         service.cancel(cancelled.getId(), new CancelSaleRequestDTO("Motivo de prueba"));
 
         // El borrador desaparece por completo: ni la venta ni una accion falsa
@@ -1076,7 +1076,7 @@ class SaleServiceDatabaseTest {
         Product jobProduct = product(FamilyCategory.JOB);
         job(workshop, jobProduct);
         Sale sale = openSale(workshop);
-        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+        addSeen(sale.getId(), new AddSaleDetailRequestDTO(
                 jobProduct.getId(), null, null, 1, null, null));
 
         service.cancel(sale.getId(), new CancelSaleRequestDTO("Motivo de prueba"));
@@ -1093,7 +1093,7 @@ class SaleServiceDatabaseTest {
         Product normalProduct = product(FamilyCategory.NORMAL);
         Inventory stock = inventory(workshop, normalProduct, 10);
         Sale sale = openSale(workshop);
-        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+        addSeen(sale.getId(), new AddSaleDetailRequestDTO(
                 normalProduct.getId(), null, null, 4, null, null));
         service.completeSale(sale.getId(), new CompleteSaleRequestDTO(
                 InvoiceType.INVOICE, PaymentMethod.CASH));
@@ -1153,7 +1153,7 @@ class SaleServiceDatabaseTest {
         Product jobProduct = product(FamilyCategory.JOB);
         WorkResult workResult = pendingJobWorkResult(workshop, jobProduct);
         Sale sale = openSale(workshop);
-        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+        addSeen(sale.getId(), new AddSaleDetailRequestDTO(
                 jobProduct.getId(), null, workResult.getId(), 1, null, null));
         service.completeSale(sale.getId(), new CompleteSaleRequestDTO(
                 InvoiceType.INVOICE, PaymentMethod.CASH));
@@ -1187,7 +1187,7 @@ class SaleServiceDatabaseTest {
         Product normalProduct = product(FamilyCategory.NORMAL);
         inventory(workshop, normalProduct, 10);
         Sale sale = openSale(workshop);
-        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+        addSeen(sale.getId(), new AddSaleDetailRequestDTO(
                 normalProduct.getId(), null, null, 1, null, null));
         service.cancel(sale.getId(), new CancelSaleRequestDTO("Motivo"));
 
@@ -1203,7 +1203,7 @@ class SaleServiceDatabaseTest {
         Product normalProduct = product(FamilyCategory.NORMAL);
         inventory(workshop, normalProduct, 10);
         Sale sale = openSale(workshop);
-        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+        addSeen(sale.getId(), new AddSaleDetailRequestDTO(
                 normalProduct.getId(), null, null, 1, null, null));
         service.completeSale(sale.getId(), new CompleteSaleRequestDTO(
                 InvoiceType.INVOICE, PaymentMethod.CASH));
@@ -1307,7 +1307,7 @@ class SaleServiceDatabaseTest {
         Product jobProduct = product(FamilyCategory.JOB);
         WorkResult done = pendingJobWorkResult(workshop, jobProduct);
         Sale sale = openSale(workshop);
-        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+        addSeen(sale.getId(), new AddSaleDetailRequestDTO(
                 jobProduct.getId(), null, done.getId(), 1, new BigDecimal("1250.00"), null));
         service.completeSale(sale.getId(), new CompleteSaleRequestDTO(
                 InvoiceType.EXCHANGE_INVOICE, null));
@@ -1504,7 +1504,7 @@ class SaleServiceDatabaseTest {
         Inventory stock = unpricedInventory(workshop, product, 10, true);
         Sale sale = openSale(workshop);
 
-        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+        addSeen(sale.getId(), new AddSaleDetailRequestDTO(
                 product.getId(), null, null, 2, new BigDecimal("250.50"), null));
 
         // La linea cobra lo que el cajero indico...
@@ -1531,7 +1531,7 @@ class SaleServiceDatabaseTest {
         Inventory stock = unpricedInventory(workshop, product, 10, true);
         Sale sale = openSale(workshop);
 
-        assertThatThrownBy(() -> service.addDetail(
+        assertThatThrownBy(() -> addSeen(
                 sale.getId(), new AddSaleDetailRequestDTO(
                         product.getId(), null, null, 1, null, null)))
                 .isInstanceOf(ValidationException.class)
@@ -1551,7 +1551,7 @@ class SaleServiceDatabaseTest {
         Inventory stock = unpricedInventory(workshop, product, 10, true);
         Sale sale = openSale(workshop);
 
-        assertThatThrownBy(() -> service.addDetail(
+        assertThatThrownBy(() -> addSeen(
                 sale.getId(), new AddSaleDetailRequestDTO(
                         product.getId(), null, null, 1, BigDecimal.ZERO, null)))
                 .isInstanceOf(ValidationException.class)
@@ -1572,7 +1572,7 @@ class SaleServiceDatabaseTest {
         Sale sale = openSale(workshop);
 
         // Por debajo del costo de adquisicion (10.00).
-        assertThatThrownBy(() -> service.addDetail(
+        assertThatThrownBy(() -> addSeen(
                 sale.getId(), new AddSaleDetailRequestDTO(
                         product.getId(), null, null, 1, new BigDecimal("5.00"), null)))
                 .isInstanceOf(ValidationException.class)
@@ -1600,7 +1600,7 @@ class SaleServiceDatabaseTest {
         Inventory stock = unpricedInventory(workshop, product, 10, false);
         Sale sale = openSale(workshop);
 
-        assertThatThrownBy(() -> service.addDetail(
+        assertThatThrownBy(() -> addSeen(
                 sale.getId(), new AddSaleDetailRequestDTO(
                         product.getId(), null, null, 1, new BigDecimal("250.00"), null)))
                 .isInstanceOf(RuntimeException.class);
@@ -1623,7 +1623,7 @@ class SaleServiceDatabaseTest {
         Inventory stock = inventory(workshop, product, 10);
         Sale sale = openSale(workshop);
 
-        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+        addSeen(sale.getId(), new AddSaleDetailRequestDTO(
                 product.getId(), null, null, 1, new BigDecimal("80.00"), null));
 
         assertThat(reload(sale).getDetails())
@@ -1644,7 +1644,7 @@ class SaleServiceDatabaseTest {
         Inventory stock = unpricedInventory(workshop, product, 10, true);
         Sale sale = openSale(workshop);
 
-        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+        addSeen(sale.getId(), new AddSaleDetailRequestDTO(
                 product.getId(), null, null, 1, new BigDecimal("250.00"), null));
 
         Inventory reloaded = inventoryRepository.findById(stock.getId()).orElseThrow();
@@ -1669,7 +1669,7 @@ class SaleServiceDatabaseTest {
         Sale sale = openSale(workshop);
 
         // Se pide sin unidad: el precio se fija al pedirla.
-        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+        addSeen(sale.getId(), new AddSaleDetailRequestDTO(
                 product.getId(), null, null, null,
                 new BigDecimal("330.00"), null));
 
@@ -1697,7 +1697,7 @@ class SaleServiceDatabaseTest {
                 .build());
         Sale sale = openSale(workshop);
 
-        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+        addSeen(sale.getId(), new AddSaleDetailRequestDTO(
                 jobProduct.getId(), null, null, 2, new BigDecimal("90.00"), null));
 
         assertThat(reload(sale).getDetails())
@@ -1721,7 +1721,7 @@ class SaleServiceDatabaseTest {
                 .build());
         Sale sale = openSale(workshop);
 
-        assertThatThrownBy(() -> service.addDetail(
+        assertThatThrownBy(() -> addSeen(
                 sale.getId(), new AddSaleDetailRequestDTO(
                         jobProduct.getId(), null, null, 1, null, null)))
                 .isInstanceOf(ValidationException.class)
@@ -1740,7 +1740,7 @@ class SaleServiceDatabaseTest {
         Job service_ = job(workshop, jobProduct);
         Sale sale = openSale(workshop);
 
-        service.addDetail(sale.getId(), new AddSaleDetailRequestDTO(
+        addSeen(sale.getId(), new AddSaleDetailRequestDTO(
                 jobProduct.getId(), null, null, 1, new BigDecimal("20.00"), null));
 
         assertThat(reload(sale).getDetails())
@@ -1749,6 +1749,17 @@ class SaleServiceDatabaseTest {
                         assertThat(detail.getPrice()).isEqualByComparingTo("20.00"));
         assertThat(jobRepository.findById(service_.getId())
                 .orElseThrow().getPrice()).isEqualByComparingTo("150.00");
+    }
+
+
+    /** Solo para leer el catalogo que el vendedor tenia a la vista (ver SeenCatalog). */
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.jdbc.core.JdbcTemplate seenJdbc;
+
+    /** Agregar como lo hace la caja: con el catalogo que el vendedor tenia a la vista. */
+    private com.cns.spring_house.sale.dto.SaleResponseDTO addSeen(
+            UUID saleId, com.cns.spring_house.sale.dto.AddSaleDetailRequestDTO dto) {
+        return service.addDetail(saleId, com.cns.spring_house.testsupport.SeenCatalog.seen(seenJdbc, dto));
     }
 
 }

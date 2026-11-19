@@ -1,6 +1,7 @@
 package com.cns.spring_house.sale.service;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -61,6 +62,7 @@ import com.cns.spring_house.sale.repository.SaleDetailRepository;
 import com.cns.spring_house.sale.repository.SaleRepository;
 import com.cns.spring_house.sale.repository.SaleSpecs;
 import com.cns.spring_house.shared.exception.EntityNotFoundException;
+import com.cns.spring_house.shared.exception.PriceConflictException;
 import com.cns.spring_house.shared.exception.ValidationException;
 import com.cns.spring_house.shared.security.CurrentUserService;
 import com.cns.spring_house.shared.security.SecurityUtils;
@@ -111,7 +113,7 @@ public class SaleServiceImpl implements SaleService {
             + "no se puede completar hasta que todas esten listas";
 
     private static final String SPECIAL_UNIT_MESSAGE =
-            "Una pieza especial se pide al taller: Control entrega la unidad fisica "
+            "Una pieza especial se pide al taller: el Operador entrega la unidad fisica "
             + "al enviar la comanda. No se puede elegir la unidad desde la caja";
 
     private static final String SERVICE_PERFORMED_MESSAGE =
@@ -418,7 +420,9 @@ public class SaleServiceImpl implements SaleService {
                     requestDTO.invoiceDescription(),
                     requestDTO.instructions(),
                     requestDTO.requestedCurls(),
-                    requestDTO.requestedCurlCount());
+                    requestDTO.requestedCurlCount(),
+                    requestDTO.expectedCatalogPrice(),
+                    requestDTO.chargesNothing());
         } else {
             if (requestDTO.requestedCurls() != null || requestDTO.requestedCurlCount() != null) {
                 throw new ValidationException("Solo una pieza especial lleva colochos");
@@ -441,6 +445,12 @@ public class SaleServiceImpl implements SaleService {
                 // las instrucciones solo lo complementan.
                 detail.setInstructions(requestDTO.instructions());
                 detail.setFulfillment(Fulfillment.pending(FulfillmentType.SERVICE));
+            }
+            // "Sin cargo" con las unidades ya tomadas: su costo registrado
+            // tiene que ser cero. Si no, se rechaza y la transaccion deshace la
+            // reserva, los lotes y cualquier precio de catalogo fijado.
+            if (requestDTO.chargesNothing()) {
+                SaleDetailHandler.requireRecordedZeroCost(detail);
             }
         }
         sale.refreshFulfillmentStatus();
@@ -467,7 +477,10 @@ public class SaleServiceImpl implements SaleService {
                 requestDTO.invoiceDescription(),
                 requestDTO.instructions(),
                 requestDTO.requestedCurls(),
-                requestDTO.requestedCurlCount());
+                requestDTO.requestedCurlCount(),
+                requestDTO.expectedCatalogPrice(),
+                // Una pieza pedida por especificacion nunca va sin cargo (>= 0.01).
+                false);
         sale.refreshFulfillmentStatus();
         sale = repository.save(sale);
         return mapper.toResponse(sale);
@@ -515,7 +528,7 @@ public class SaleServiceImpl implements SaleService {
         if (referenceName == null) {
             throw new ValidationException(
                     "Indique el nombre del cliente antes de enviar la comanda: "
-                    + "Control y el Operador necesitan saber de quien es el pedido");
+                    + "el Operador necesita saber de quien es el pedido");
         }
         sale.setCustomerName(referenceName);
     }
@@ -561,14 +574,32 @@ public class SaleServiceImpl implements SaleService {
     }
 
     /**
-     * El vendedor revisa el precio de una solicitud.
+     * Corrige el precio de UNA linea de una venta abierta, sin quitarla ni
+     * volver a agregarla: la MISMA `SaleDetail`, con su producto, cantidad,
+     * unidad, reserva, costo FIFO y cumplimiento intactos. Solo cambian el
+     * precio, el subtotal (cantidad x precio) y el total de la venta.
      *
-     * Solo mientras no hay nada fisico hecho: antes de enviarla, o cuando el
-     * taller la devolvio a revision porque la pieza de origen cuesta mas que lo
-     * autorizado. El nuevo precio pasa por los mismos minimos de siempre —el
-     * costo del inventario pedido— y, en revision, ademas por el costo real que
-     * informo el taller. Si la cubre, la solicitud vuelve a la cola del
-     * Operador, libre para cualquiera.
+     * Cuando se puede, y por que:
+     *
+     * <ul>
+     * <li><b>Linea directa</b> (pieza normal de stock, maleta, servicio ya
+     * ejecutado): mientras la venta esta abierta. Es la misma ventana en la
+     * que se puede quitar: su stock y su costo se tomaron al agregarla y nadie
+     * del taller interviene, asi que cambiar el precio no deshace nada.</li>
+     * <li><b>Solicitud al taller</b>: antes de enviarla (PENDING), o cuando el
+     * taller la devolvio a revision de precio. Una vez enviada, el precio lo
+     * mueve solo esa revision.</li>
+     * </ul>
+     *
+     * Las reglas del importe son las de agregar la linea
+     * ({@link SaleDetailHandler#validateEditedPrice}): el costo vigente es el
+     * minimo (en revision, el de la pieza de origen si es mayor), y Q0.00 solo
+     * con "sin cargo" expreso y donde el alta lo admite. Nunca reescribe el
+     * catalogo del taller.
+     *
+     * `expectedPrice` es obligatorio y se compara bajo el MISMO cerrojo de la
+     * venta que hace la escritura: si la linea ya tiene otro precio, 409 sin
+     * escribir nada. Repetir el mismo precio no escribe nada.
      */
     @Override
     public SaleResponseDTO updateRequestPrice(UUID saleDetailId, UpdateRequestPriceDTO requestDTO) {
@@ -584,27 +615,49 @@ public class SaleServiceImpl implements SaleService {
             throw new ValidationException("La venta no se encuentra abierta");
         }
         Fulfillment fulfillment = detail.getFulfillment();
-        if (!detail.isRequest() || !(fulfillment.isPending() || fulfillment.awaitsPriceReview())) {
+        boolean inReview = detail.isRequest() && fulfillment.awaitsPriceReview();
+        if (detail.isRequest() && !(fulfillment.isPending() || inReview)) {
             throw new ValidationException(
                     "Solo se puede revisar el precio de una solicitud sin enviar "
                     + "o devuelta por el taller para revision de precio");
         }
+        // La precondicion es obligatoria: sin ella no hay forma de saber si la
+        // linea cambio desde que el vendedor la vio. Nada se escribe a ciegas.
+        if (requestDTO.expectedPrice() == null) {
+            throw new ValidationException(
+                    "Indique el precio que tenia a la vista: sin el no se puede saber si la linea cambio");
+        }
+        if (detail.getPrice().compareTo(requestDTO.expectedPrice()) != 0) {
+            throw new PriceConflictException(
+                    "El precio de esta linea cambio a Q "
+                    + detail.getPrice().setScale(2, RoundingMode.HALF_UP).toPlainString()
+                    + " en otra pantalla. Revise y confirme de nuevo.");
+        }
+
         BigDecimal price = requestDTO.price();
-        BigDecimal floor = requestLines.minimumPrice(detail.getProduct());
-        if (fulfillment.awaitsPriceReview() && fulfillment.getRequiredPrice() != null
-                && fulfillment.getRequiredPrice().compareTo(floor) > 0) {
+        SaleRequestLines.LineCatalog catalog = requestLines.catalogOf(detail.getProduct());
+        BigDecimal floor = catalog.cost();
+        if (inReview && fulfillment.getRequiredPrice() != null
+                && (floor == null || fulfillment.getRequiredPrice().compareTo(floor) > 0)) {
             floor = fulfillment.getRequiredPrice();
         }
-        if (price.compareTo(floor) < 0) {
-            throw new ValidationException(
-                    "El precio no puede ser menor al costo de la pieza (Q " + floor.toPlainString() + ")");
+        SaleDetailHandler.validateEditedPrice(price, requestDTO.chargesNothing(), catalog.price(), floor);
+        if (requestDTO.chargesNothing()) {
+            // La misma regla que al agregar: el costo registrado de las
+            // unidades de ESTA linea, no el de referencia del catalogo.
+            SaleDetailHandler.requireRecordedZeroCost(detail);
+        }
+
+        // El mismo precio: nada que escribir (ni siquiera la fecha de la venta).
+        if (price.compareTo(detail.getPrice()) == 0) {
+            return mapper.toResponse(sale);
         }
         BigDecimal subTotal = price.multiply(BigDecimal.valueOf(
                 detail.getQuantity() == null ? 1 : detail.getQuantity()));
         sale.setTotal(sale.getTotal().subtract(detail.getSubTotal()).add(subTotal));
         detail.setPrice(price);
         detail.setSubTotal(subTotal);
-        if (fulfillment.awaitsPriceReview()) {
+        if (inReview) {
             fulfillment.clearBlock();
             fulfillment.setStatus(FulfillmentStatus.QUEUED);
             fulfillment.setEmployee(null);

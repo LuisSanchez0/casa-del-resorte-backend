@@ -30,6 +30,7 @@ import com.cns.spring_house.sale.dto.RefundRequestDTO;
 import com.cns.spring_house.sale.dto.ReverseSaleRequestDTO;
 import com.cns.spring_house.sale.entity.PaymentMethod;
 import com.cns.spring_house.sale.service.SaleDashboardService;
+import com.cns.spring_house.sale.service.SaleLineGuidanceService;
 import com.cns.spring_house.sale.service.SaleService;
 
 /**
@@ -176,9 +177,16 @@ class SaleReversalAuthorizationTest {
         }
 
         @Bean
+        SaleLineGuidanceService saleLineGuidanceService() {
+            return Mockito.mock(SaleLineGuidanceService.class);
+        }
+
+        @Bean
         SaleController saleController(
-                SaleService service, SaleDashboardService dashboardService) {
-            return new SaleController(service, dashboardService);
+                SaleService service,
+                SaleDashboardService dashboardService,
+                SaleLineGuidanceService guidanceService) {
+            return new SaleController(service, dashboardService, guidanceService);
         }
     }
 }

@@ -37,8 +37,25 @@ public record VehicleMovementResponseDTO(
         LocalDateTime exit,
         String phone,
         String notes,
-        List<VehicleMovementPhotoResponseDTO> photos
+        List<VehicleMovementPhotoResponseDTO> photos,
+        MechanicDTO mechanic,
+        java.time.Instant workStartedAt,
+        java.time.Instant workFinishedAt,
+        /** Reloj de pared inicio→fin (incluye pausas); NO es tiempo de trabajo. Ver {@code work}. */
+        Double durationSeconds,
+        /** Sigue dentro y sin iniciar: el mecanico se elige al iniciar. */
+        boolean canStartWork,
+        /** El mecanico asignado sigue siendo operador activo del taller; null sin mecanico. */
+        Boolean mechanicEligible,
+        /** Estado y tiempos del trabajo calculados por el servidor (activo, pausado, transcurrido). */
+        WorkTimingDTO work
 
 ) {
+    public VehicleMovementResponseDTO(UUID id, String plate, WorkshopResponseDTO workshop,
+            LocalDateTime entry, LocalDateTime exit, String phone, String notes,
+            List<VehicleMovementPhotoResponseDTO> photos) {
+        this(id, plate, workshop, entry, exit, phone, notes, photos, null, null, null, null, false, null, null);
+    }
+
 
 }
