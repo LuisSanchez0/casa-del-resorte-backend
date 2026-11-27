@@ -5,10 +5,12 @@ import com.cns.spring_house.shared.constants.ColumnLimits;
 import jakarta.validation.constraints.Size;
 
 /**
- * "Enviar comanda". El cuerpo es opcional: solo hace falta para darle a una
- * venta sin NIT el nombre de referencia con el que Control y el Operador
- * sabran de quien es el pedido, o la placa a una venta que envia un servicio
- * sin tenerla todavia.
+ * "Enviar comanda". El cuerpo es opcional y solo COMPLETA lo que falta: el
+ * nombre de referencia de una venta sin NIT que todavia no lo tiene, o la
+ * placa (opcional) de una venta que no la tiene. Nunca reemplaza un nombre ni
+ * una placa ya guardados: un nombre distinto es 409 (otra sesion lo cambio) y
+ * una placa distinta, 400. La caja actual guarda ambos antes con
+ * `update-identification` y envia sin cuerpo.
  */
 public record DispatchSaleRequestDTO(
 
@@ -26,7 +28,7 @@ public record DispatchSaleRequestDTO(
         plate = SalePlates.normalize(plate);
     }
 
-    /** Sin placa: la venta ya la tiene o no envia ningun servicio. */
+    /** Sin placa en el cuerpo: la venta conserva la que tenga, o ninguna. */
     public DispatchSaleRequestDTO(String customerName) {
         this(customerName, null);
     }

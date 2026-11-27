@@ -22,6 +22,7 @@ import com.cns.spring_house.sale.dto.ExchangeInvoiceSummaryDTO;
 import com.cns.spring_house.sale.dto.RegisterPaymentRequestDTO;
 import com.cns.spring_house.sale.dto.SaveForLaterRequestDTO;
 import com.cns.spring_house.sale.dto.UpdateRequestPriceDTO;
+import com.cns.spring_house.sale.dto.UpdateSaleIdentificationDTO;
 import com.cns.spring_house.sale.dto.ReverseSaleRequestDTO;
 import com.cns.spring_house.sale.dto.SaleDashboardResponseDTO;
 import com.cns.spring_house.sale.dto.SaleLineGuidanceDTO;
@@ -202,6 +203,23 @@ public class SaleController {
                 .status(HttpStatus.OK)
                 .body(service.dispatch(id,
                         requestDTO == null ? new DispatchSaleRequestDTO(null) : requestDTO));
+    }
+
+    /**
+     * "Cliente y vehiculo" de una venta abierta: nombre de referencia y placa,
+     * sin rehacer la venta. Solo el vendedor, como "Enviar comanda": el nombre
+     * es justo lo que el envio exige. El taller sale del token, nunca del
+     * cuerpo; una venta de otro taller responde 404. Precondiciones
+     * `expectedCustomerName`/`expectedPlate`: 409 si otra sesion los cambio.
+     */
+    @PreAuthorize("hasRole('SELLER')")
+    @PostMapping("/{id}/update-identification")
+    public ResponseEntity<SaleResponseDTO> updateIdentification(
+            @PathVariable UUID id,
+            @RequestBody @Valid UpdateSaleIdentificationDTO requestDTO) {
+        return ResponseEntity
+                .status(HttpStatus.OK)
+                .body(service.updateIdentification(id, requestDTO));
     }
 
     /**

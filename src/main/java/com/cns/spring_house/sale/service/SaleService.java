@@ -15,6 +15,7 @@ import com.cns.spring_house.sale.dto.ExchangeInvoiceSummaryDTO;
 import com.cns.spring_house.sale.dto.RegisterPaymentRequestDTO;
 import com.cns.spring_house.sale.dto.SaveForLaterRequestDTO;
 import com.cns.spring_house.sale.dto.UpdateRequestPriceDTO;
+import com.cns.spring_house.sale.dto.UpdateSaleIdentificationDTO;
 import com.cns.spring_house.sale.dto.ReverseSaleRequestDTO;
 import com.cns.spring_house.sale.dto.SaleResponseDTO;
 import com.cns.spring_house.sale.dto.SaleSummaryDTO;
@@ -66,6 +67,13 @@ public interface SaleService {
 
     /** El vendedor revisa el precio de una solicitud sin trabajo fisico hecho. */
     SaleResponseDTO updateRequestPrice(UUID saleDetailId, UpdateRequestPriceDTO requestDTO);
+
+    /**
+     * "Cliente y vehiculo" de una venta abierta: nombre de referencia y placa,
+     * con las precondiciones de lo que el vendedor vio (409 si cambio). No toca
+     * lineas, precios, reservas, cumplimiento, total ni la identidad fiscal.
+     */
+    SaleResponseDTO updateIdentification(UUID id, UpdateSaleIdentificationDTO requestDTO);
 
     /** Pedidos abiertos cuyo trabajo ya termino, listos para facturar. */
     List<SaleResponseDTO> getReady(String query);

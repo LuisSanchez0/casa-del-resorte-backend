@@ -49,9 +49,9 @@ public record AddSaleDetailRequestDTO(
             message = "Las instrucciones no pueden exceder {max} caracteres")
     String instructions,
     /**
-     * Placa del vehiculo, para registrarla en una venta que todavia no la
-     * tiene. Un servicio se hace sobre un vehiculo: solicitarlo exige que la
-     * venta tenga placa, y esta es la forma de darsela en el mismo paso.
+     * Placa del vehiculo, OPCIONAL, para registrarla en una venta que todavia
+     * no la tiene en el mismo paso que la linea (por ejemplo, al pedir un
+     * servicio). Ninguna linea la exige.
      */
     @Size(max = ColumnLimits.PLATE,
             message = "La placa no puede superar los {max} caracteres")
@@ -153,7 +153,7 @@ public record AddSaleDetailRequestDTO(
                 null, null, null, null);
     }
 
-    /** Sin placa: la venta ya la tiene o la linea no es un servicio. */
+    /** Sin placa en la linea: la venta conserva la que tenga, o ninguna. */
     public AddSaleDetailRequestDTO(
             UUID product,
             UUID item,

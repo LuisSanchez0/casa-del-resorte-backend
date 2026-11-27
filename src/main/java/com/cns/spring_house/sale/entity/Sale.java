@@ -183,11 +183,7 @@ public class Sale extends Auditable {
      * </ul>
      */
     public void refreshFulfillmentStatus() {
-        boolean anyDispatched = details.stream()
-                .filter(SaleDetail::isRequest)
-                .anyMatch(detail -> detail.getFulfillment().getStatus()
-                        != FulfillmentStatus.PENDING);
-        if (!anyDispatched) {
+        if (!hasDispatchedRequest()) {
             this.fulfillmentStatus = SaleFulfillmentStatus.NONE;
             return;
         }
@@ -196,6 +192,17 @@ public class Sale extends Auditable {
         this.fulfillmentStatus = anyOutstanding
                 ? SaleFulfillmentStatus.IN_PROGRESS
                 : SaleFulfillmentStatus.READY_TO_COMPLETE;
+    }
+
+    /**
+     * Alguna solicitud de la venta ya llego al taller (cualquier estado distinto
+     * de PENDING, que es "agregada sin enviar").
+     */
+    public boolean hasDispatchedRequest() {
+        return details.stream()
+                .filter(SaleDetail::isRequest)
+                .anyMatch(detail -> detail.getFulfillment().getStatus()
+                        != FulfillmentStatus.PENDING);
     }
 
     public void addDetail(SaleDetail detail) {

@@ -1936,26 +1936,39 @@ class SaleFulfillmentDatabaseTest {
 
     // ── Placa para los servicios ─────────────────────────────────
 
-    /** Un servicio se hace sobre un vehiculo: sin placa no se solicita. */
+    /**
+     * La placa es opcional tambien para un servicio (25 de noviembre de 2026):
+     * no toda venta es sobre un vehiculo. Se pide, se envia y el Operador lo
+     * ve "sin placa", sin inventarle una.
+     */
     @Test
-    void aServiceCannotBeRequestedForASaleWithoutAPlate() {
+    void aServiceIsRequestedAndSentWithoutAPlate() {
         Shop shop = shop();
         Product installation = job(shop, "CAMBIO DE BUJES");
 
         as(shop.seller());
         UUID saleId = openSaleWithoutPlate("Sin placa").id();
-        assertThatThrownBy(() -> addSeen(saleId, serviceRequest(installation, null)))
-                .isInstanceOf(ValidationException.class)
-                .hasMessageContaining("placa del vehiculo es obligatoria");
-        // En blanco es lo mismo que nada.
-        assertThatThrownBy(() -> addSeen(saleId, serviceRequest(installation, "   ")))
-                .isInstanceOf(ValidationException.class)
-                .hasMessageContaining("placa del vehiculo es obligatoria");
-
-        SaleResponseDTO sale = saleService.get(saleId);
-        assertThat(sale.details()).isEmpty();
+        SaleResponseDTO sale = addSeen(saleId, serviceRequest(installation, null));
+        // En blanco es lo mismo que nada: tampoco se rechaza.
+        sale = addSeen(saleId, serviceRequest(installation, "   "));
+        assertThat(sale.details()).hasSize(2);
         assertThat(sale.plate()).isNull();
-        assertThat(sale.total()).isEqualByComparingTo("0");
+        assertThat(sale.total()).isEqualByComparingTo("300.00");
+
+        sale = saleService.dispatch(saleId, new DispatchSaleRequestDTO(null));
+        assertThat(sale.plate()).isNull();
+        assertThat(sale.details()).allSatisfy(detail ->
+                assertThat(detail.fulfillment().status()).isEqualTo(FulfillmentStatus.QUEUED));
+        assertThat(jdbc.queryForObject("SELECT plate FROM sale WHERE id = ?", String.class, saleId))
+                .isNull();
+
+        as(shop.operator());
+        assertThat(fulfillmentService.getQueue(FulfillmentArea.OPERATOR, null, null))
+                .hasSize(2)
+                .allSatisfy(task -> {
+                    assertThat(task.saleId()).isEqualTo(saleId);
+                    assertThat(task.plate()).isNull();
+                });
     }
 
     /** La placa que falta se registra en el mismo paso que el servicio y llega al Operador. */
@@ -1993,7 +2006,7 @@ class SaleFulfillmentDatabaseTest {
         assertThat(fulfillmentService.get(line).plate()).isEqualTo("P512KLM");
     }
 
-    /** Lo fisico se vende sin placa: la exige solo el servicio. */
+    /** Lo fisico se vende sin placa, igual que un servicio. */
     @Test
     void aProductOnlySaleNeedsNoPlate() {
         Shop shop = shop();
@@ -2016,29 +2029,32 @@ class SaleFulfillmentDatabaseTest {
     }
 
     /**
-     * Un servicio pedido antes de exigir la placa al agregarlo, en una venta
-     * abierta sin placa: el envio la pide y la registra.
+     * El envio ya no exige placa para un servicio, pero un cliente anterior de
+     * la caja que la manda al enviar la sigue registrando en una venta que no
+     * la tenia. Una venta que ya tiene otra placa no se reescribe por esa via.
      */
     @Test
-    void aServiceAddedBeforeThePlateRuleIsOnlySentWithAPlate() {
+    void theDispatchStillRecordsAnOptionalPlateButNeverRewritesOne() {
         Shop shop = shop();
         Product installation = job(shop, "ALINEACION");
 
         as(shop.seller());
-        UUID saleId = openUnresolvedSale("Anterior").id();
+        UUID saleId = openSaleWithoutPlate("Anterior").id();
         UUID line = onlyLine(addSeen(saleId, serviceRequest(installation, null))).id();
-        // Como quedaron las ventas abiertas de antes de la regla.
-        jdbc.update("UPDATE sale SET plate = NULL WHERE id = ?", saleId);
-
-        assertThatThrownBy(() -> saleService.dispatch(saleId, new DispatchSaleRequestDTO(null)))
-                .isInstanceOf(ValidationException.class)
-                .hasMessageContaining("placa del vehiculo es obligatoria");
-        assertThat(onlyLine(saleService.get(saleId)).fulfillment().status())
-                .isEqualTo(FulfillmentStatus.PENDING);
 
         SaleResponseDTO sale = saleService.dispatch(saleId, new DispatchSaleRequestDTO(null, "p777aaa"));
         assertThat(sale.plate()).isEqualTo("P777AAA");
         assertThat(lineById(sale, line).fulfillment().status()).isEqualTo(FulfillmentStatus.QUEUED);
+
+        UUID added = addSeen(saleId, serviceRequest(installation, null)).details().stream()
+                .filter(detail -> !detail.id().equals(line))
+                .findFirst().orElseThrow().id();
+        assertThatThrownBy(() -> saleService.dispatch(saleId, new DispatchSaleRequestDTO(null, "C111BBB")))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("P777AAA");
+        assertThat(lineById(saleService.get(saleId), added).fulfillment().status())
+                .isEqualTo(FulfillmentStatus.PENDING);
+        assertThat(saleService.get(saleId).plate()).isEqualTo("P777AAA");
     }
 
     /** Otro taller no puede ponerle placa a nuestra venta ni ver la del servicio. */

@@ -8,6 +8,7 @@ import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 
 import org.springframework.data.domain.Page;
@@ -35,6 +36,7 @@ import com.cns.spring_house.sale.dto.ExchangeInvoiceSummaryDTO;
 import com.cns.spring_house.sale.dto.RegisterPaymentRequestDTO;
 import com.cns.spring_house.sale.dto.SaveForLaterRequestDTO;
 import com.cns.spring_house.sale.dto.UpdateRequestPriceDTO;
+import com.cns.spring_house.sale.dto.UpdateSaleIdentificationDTO;
 import com.cns.spring_house.refund.entity.SaleRefund;
 import com.cns.spring_house.refund.entity.SaleRefundType;
 import com.cns.spring_house.refund.repository.SaleRefundRepository;
@@ -63,6 +65,7 @@ import com.cns.spring_house.sale.repository.SaleRepository;
 import com.cns.spring_house.sale.repository.SaleSpecs;
 import com.cns.spring_house.shared.exception.EntityNotFoundException;
 import com.cns.spring_house.shared.exception.PriceConflictException;
+import com.cns.spring_house.shared.exception.StaleStateException;
 import com.cns.spring_house.shared.exception.ValidationException;
 import com.cns.spring_house.shared.security.CurrentUserService;
 import com.cns.spring_house.shared.security.SecurityUtils;
@@ -120,8 +123,9 @@ public class SaleServiceImpl implements SaleService {
             "La venta tiene un servicio ya realizado por el taller: no se puede anular. "
             + "Facturelo o regularicelo por otra via";
 
-    private static final String SERVICE_PLATE_MESSAGE =
-            "La placa del vehiculo es obligatoria para solicitar un servicio";
+    private static final String IDENTIFICATION_CHANGED_MESSAGE =
+            "El nombre o la placa de esta venta cambio en otra pantalla. "
+            + "Revise los datos actuales y vuelva a intentarlo";
 
     private static final String WORK_IN_PROGRESS_MESSAGE =
             "El taller esta trabajando en una solicitud de esta venta: "
@@ -387,9 +391,10 @@ public class SaleServiceImpl implements SaleService {
      * este momento (ver {@link SaleRequestLines#addSpecial}).</li>
      * </ul>
      *
-     * Un servicio se hace sobre un vehiculo: no se solicita sin placa. Si la
-     * venta todavia no la tiene, viaja con la linea y se registra en la misma
-     * transaccion.
+     * La placa es OPCIONAL, tambien para un servicio: no toda venta es sobre un
+     * vehiculo. Si la linea trae una y la venta todavia no la tiene, se
+     * registra en la misma transaccion; una venta que ya la tiene no la cambia
+     * por esta via (ver {@link #registerPlate}).
      *
      * El cerrojo de la venta va primero, antes que el del inventario —el mismo
      * orden que enviar, quitar o anular—: una anulacion simultanea no puede
@@ -432,9 +437,6 @@ public class SaleServiceImpl implements SaleService {
             if (!serviceRequest && requestDTO.instructions() != null) {
                 throw new ValidationException(
                         "Las instrucciones solo aplican a lo que se solicita al taller");
-            }
-            if (serviceRequest) {
-                requireServicePlate(sale);
             }
             SaleDetailHandler handler = registry.get(category);
             SaleDetail detail = handler.addDetail(sale, requestDTO);
@@ -510,7 +512,8 @@ public class SaleServiceImpl implements SaleService {
             return mapper.toResponse(sale);
         }
         requireReferenceName(sale, requestDTO.customerName());
-        requirePlateForServices(sale, pending, requestDTO.plate());
+        // La placa es opcional: si llega y la venta no tiene, se registra.
+        registerPlate(sale, requestDTO.plate());
         // Al microsegundo, que es lo que guarda la base: la hora que ve el
         // vendedor al enviar es la misma que vera al recargar.
         router.route(pending, LocalDateTime.now(clock).truncatedTo(ChronoUnit.MICROS));
@@ -520,37 +523,32 @@ public class SaleServiceImpl implements SaleService {
         return mapper.toResponse(sale);
     }
 
+    /**
+     * Una venta sin NIT no sale al taller sin el nombre de quien la pide. Lo que
+     * cuenta es el nombre PERSISTIDO en la venta, leido bajo su cerrojo: la caja
+     * lo guarda antes con "Cliente y vehiculo" ({@link #updateIdentification}).
+     *
+     * El nombre del cuerpo se acepta solo para completar una venta que todavia
+     * no tiene ninguno (clientes anteriores de la caja). Nunca reemplaza uno ya
+     * guardado: si es distinto, otra sesion lo guardo despues de que esta
+     * pantalla lo leyera, y enviar pisaria ese cambio sin que nadie lo viera.
+     */
     private void requireReferenceName(Sale sale, String customerName) {
         if (sale.getTaxMode() != TaxMode.UNRESOLVED) {
             return;
         }
-        String referenceName = customerName != null ? customerName : sale.getCustomerName();
-        if (referenceName == null) {
-            throw new ValidationException(
-                    "Indique el nombre del cliente antes de enviar la comanda: "
-                    + "el Operador necesita saber de quien es el pedido");
-        }
-        sale.setCustomerName(referenceName);
-    }
-
-    /**
-     * El taller tiene que saber sobre que vehiculo hace el servicio. Una
-     * solicitud de servicio agregada antes de exigir la placa al agregarla
-     * puede llegar aqui sin ella: se completa con la del envio.
-     */
-    private void requirePlateForServices(Sale sale, List<SaleDetail> pending, String plate) {
-        boolean sendsService = pending.stream()
-                .anyMatch(detail -> detail.getFulfillment().getType() == FulfillmentType.SERVICE);
-        if (!sendsService) {
+        String persisted = sale.getCustomerName();
+        if (persisted == null) {
+            if (customerName == null) {
+                throw new ValidationException(
+                        "Indique el nombre del cliente antes de enviar la comanda: "
+                        + "el Operador necesita saber de quien es el pedido");
+            }
+            sale.setCustomerName(customerName);
             return;
         }
-        registerPlate(sale, plate);
-        requireServicePlate(sale);
-    }
-
-    private void requireServicePlate(Sale sale) {
-        if (sale.getPlate() == null || sale.getPlate().isBlank()) {
-            throw new ValidationException(SERVICE_PLATE_MESSAGE);
+        if (customerName != null && !customerName.equals(persisted)) {
+            throw new StaleStateException(IDENTIFICATION_CHANGED_MESSAGE);
         }
     }
 
@@ -571,6 +569,73 @@ public class SaleServiceImpl implements SaleService {
             throw new ValidationException(
                     "La venta ya tiene registrada la placa " + sale.getPlate());
         }
+    }
+
+    /**
+     * "Cliente y vehiculo" de una venta ABIERTA, sin rehacerla: el nombre con el
+     * que el taller reconoce el pedido y la placa del vehiculo. Es la MISMA venta
+     * con sus lineas, precios, reservas, cumplimiento y total intactos; NIT o
+     * Consumidor Final siguen decidiendose al completarla.
+     *
+     * El cerrojo de la venta va primero, el mismo que toma "Enviar comanda": un
+     * envio simultaneo espera a que este cambio confirme (o se deshaga) y valida
+     * el nombre ya persistido. Las precondiciones se comparan bajo ese cerrojo:
+     * si otra sesion cambio el nombre o la placa desde que el vendedor los leyo,
+     * 409 y nada se guarda.
+     *
+     * Reglas:
+     * <ul>
+     * <li>Nombre: solo en una venta sin NIT (una con NIT se reconoce por su
+     * cliente registrado). Se puede escribir o corregir mientras la venta este
+     * abierta, tambien despues de enviar la comanda —el taller lee el nombre
+     * vigente—, pero no dejar en blanco uno ya guardado: la venta guardada o
+     * enviada dejaria de ser reconocible.</li>
+     * <li>Placa: opcional. Una venta sin placa la puede recibir mientras este
+     * abierta. Cambiar o quitar una placa ya guardada solo se admite antes de
+     * enviar la comanda: despues el taller ya puede estar trabajando sobre ese
+     * vehiculo, la misma razon por la que {@link #registerPlate} no la
+     * reescribe.</li>
+     * </ul>
+     */
+    @Override
+    public SaleResponseDTO updateIdentification(UUID id, UpdateSaleIdentificationDTO requestDTO) {
+        lockSale(id);
+        Sale sale = findOpenSale(id);
+        if (!Objects.equals(sale.getCustomerName(), requestDTO.expectedCustomerName())
+                || !Objects.equals(sale.getPlate(), requestDTO.expectedPlate())) {
+            throw new StaleStateException(IDENTIFICATION_CHANGED_MESSAGE);
+        }
+        applyIdentificationName(sale, requestDTO.customerName());
+        applyIdentificationPlate(sale, requestDTO.plate());
+        sale = repository.save(sale);
+        return mapper.toResponse(sale);
+    }
+
+    private void applyIdentificationName(Sale sale, String customerName) {
+        if (Objects.equals(sale.getCustomerName(), customerName)) {
+            return;
+        }
+        if (sale.getTaxMode() != TaxMode.UNRESOLVED) {
+            throw new ValidationException(
+                    "Una venta con NIT usa el nombre del cliente registrado");
+        }
+        if (customerName == null) {
+            throw new ValidationException(
+                    "El nombre del cliente no puede quedar en blanco: corrijalo en su lugar");
+        }
+        sale.setCustomerName(customerName);
+    }
+
+    private void applyIdentificationPlate(Sale sale, String plate) {
+        if (Objects.equals(sale.getPlate(), plate)) {
+            return;
+        }
+        if (sale.getPlate() != null && sale.hasDispatchedRequest()) {
+            throw new ValidationException(
+                    "La comanda ya se envio al taller con la placa " + sale.getPlate()
+                    + ": no se puede cambiar ni quitar");
+        }
+        sale.setPlate(plate);
     }
 
     /**
